@@ -1,0 +1,21 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "backend:dev",
+			"type": "shell",
+			"command": "Push-Location .\\school-mgmt\\backend; npx nest start --watch; Pop-Location",
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "frontend:dev",
+			"type": "shell",
+			"command": "Push-Location .\\school-mgmt\\frontend; npm start; Pop-Location",
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		}
+	]
+}

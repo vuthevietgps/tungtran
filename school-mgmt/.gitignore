@@ -1,0 +1,11 @@
+# Node
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+uploads/
+backend/uploads/
+.env
+**/.env
+npm-debug.log*
+yarn-error.log*
