@@ -15,6 +15,12 @@ export interface ClassItem {
   teacher?: ClassMember | null;
   sale?: ClassMember | null;
   students?: ClassMember[];
+  revenuePerStudent?: number; // Doanh thu mỗi học sinh (VNĐ)
+  teacherSalaryCost?: number; // Chi phí lương giáo viên mỗi học sinh (VNĐ)
+  totalRevenue?: number; // Tổng doanh thu = revenuePerStudent * số học sinh
+  totalCost?: number; // Tổng chi phí = teacherSalaryCost * số học sinh
+  profit?: number; // Lợi nhuận = totalRevenue - totalCost
+  studentCount?: number; // Tổng số học sinh
 }
 
 export interface ClassPayload {
@@ -23,6 +29,8 @@ export interface ClassPayload {
   teacherId: string;
   saleId: string;
   studentIds: string[];
+  revenuePerStudent?: number; // Doanh thu mỗi học sinh (VNĐ)
+  teacherSalaryCost?: number; // Chi phí lương giáo viên mỗi học sinh (VNĐ)
 }
 
 @Injectable({ providedIn: 'root' })

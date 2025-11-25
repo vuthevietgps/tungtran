@@ -4,14 +4,20 @@ import { AppShellComponent } from './components/app-shell.component';
 import { UsersManagementComponent } from './components/users-management.component';
 import { NotAuthorizedComponent } from './components/not-authorized.component';
 import { ProductsComponent } from './components/products.component';
-import { StudentsComponent } from './components/students.component';
 import { ClassesComponent } from './components/classes.component';
+import { AttendanceComponent } from './components/attendance.component';
+import { AttendanceReportComponent } from './components/attendance-report.component';
+import { StudentReportComponent } from './components/student-report.component';
+import { StudentAttendanceComponent } from './components/student-attendance.component';
+import { InvoicesComponent } from './components/invoices.component';
+import { OrdersComponent } from './components/orders.component';
 import { authGuard } from './guards/auth.guard';
 import { roleGuard } from './guards/role.guard';
 
 export const routes: Routes = [
 	{ path: 'login', component: LoginComponent },
 	{ path: 'not-authorized', component: NotAuthorizedComponent },
+	{ path: 'student-attendance/:token', component: StudentAttendanceComponent },
 	{
 		path: 'app',
 		component: AppShellComponent,
@@ -19,9 +25,13 @@ export const routes: Routes = [
 		children: [
 			{ path: 'users', component: UsersManagementComponent, canActivate: [roleGuard(['DIRECTOR'])] },
 			{ path: 'products', component: ProductsComponent, canActivate: [roleGuard(['DIRECTOR'])] },
-			{ path: 'students', component: StudentsComponent, canActivate: [roleGuard(['DIRECTOR','SALE'])] },
-			{ path: 'classes', component: ClassesComponent, canActivate: [roleGuard(['DIRECTOR','SALE'])] },
-			{ path: '', pathMatch: 'full', redirectTo: 'users' }
+			{ path: 'classes', component: ClassesComponent, canActivate: [roleGuard(['DIRECTOR','SALE','TEACHER'])] },
+			{ path: 'attendance', component: AttendanceComponent },
+			{ path: 'attendance-report', component: AttendanceReportComponent },
+			{ path: 'student-report', component: StudentReportComponent },
+			{ path: 'invoices', component: InvoicesComponent, canActivate: [roleGuard(['DIRECTOR','SALE'])] },
+			{ path: 'orders', component: OrdersComponent, canActivate: [roleGuard(['DIRECTOR','SALE'])] },
+			{ path: '', pathMatch: 'full', redirectTo: 'classes' }
 		]
 	},
 	{ path: '', pathMatch: 'full', redirectTo: 'login' },

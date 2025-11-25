@@ -27,6 +27,10 @@ import { AuthService } from '../services/auth.service';
         <th>Giáo viên</th>
         <th>Sale</th>
         <th>Học viên</th>
+        <th>Doanh thu/HV</th>
+        <th>Chi phí/HV</th>
+        <th>Tổng DT</th>
+        <th>Lợi nhuận</th>
         <th>Hành động</th>
       </tr>
     </thead>
@@ -40,6 +44,10 @@ import { AuthService } from '../services/auth.service';
           <span class="chip" *ngFor="let s of c.students">{{s.fullName}}</span>
           <span *ngIf="!c.students?.length">Chưa có</span>
         </td>
+        <td>{{formatCurrency(c.revenuePerStudent)}}</td>
+        <td>{{formatCurrency(c.teacherSalaryCost)}}</td>
+        <td class="total-revenue">{{formatCurrency(c.totalRevenue)}}</td>
+        <td [class]="getProfitClass(c.profit)">{{formatCurrency(c.profit)}}</td>
         <td class="actions-cell">
           <ng-container *ngIf="isDirector(); else saleActions">
             <button class="ghost" (click)="edit(c)">Sửa</button>
@@ -76,6 +84,25 @@ import { AuthService } from '../services/auth.service';
             <option *ngFor="let s of sales()" [value]="s._id">{{s.fullName}} ({{s.email}})</option>
           </select>
         </label>
+        
+        <div class="financial-info" *ngIf="isDirector()">
+          <h4>Thông tin tài chính</h4>
+          <label>Doanh thu mỗi học sinh (VNĐ)
+            <input name="revenuePerStudent" [(ngModel)]="form.revenuePerStudent" type="number" min="0" step="1000" />
+          </label>
+          <label>Chi phí lương giáo viên mỗi học sinh (VNĐ)
+            <input name="teacherSalaryCost" [(ngModel)]="form.teacherSalaryCost" type="number" min="0" step="1000" />
+          </label>
+          <div class="financial-summary" *ngIf="form.revenuePerStudent || form.teacherSalaryCost">
+            <p><strong>Số học sinh:</strong> {{selectedStudents().length}}</p>
+            <p><strong>Tổng doanh thu:</strong> {{formatCurrency((form.revenuePerStudent || 0) * selectedStudents().length)}}</p>
+            <p><strong>Tổng chi phí:</strong> {{formatCurrency((form.teacherSalaryCost || 0) * selectedStudents().length)}}</p>
+            <p [class]="getProfitClass(((form.revenuePerStudent || 0) - (form.teacherSalaryCost || 0)) * selectedStudents().length)">
+              <strong>Lợi nhuận:</strong> {{formatCurrency(((form.revenuePerStudent || 0) - (form.teacherSalaryCost || 0)) * selectedStudents().length)}}
+            </p>
+          </div>
+        </div>
+        
         <section class="student-picker">
           <div class="student-column">
             <div class="column-header">
@@ -138,6 +165,14 @@ import { AuthService } from '../services/auth.service';
     .student-row button { border:1px solid #2563eb; background:#2563eb; color:#fff; border-radius:4px; padding:4px 10px; cursor:pointer; }
     .student-row button.remove { background:#dc2626; border-color:#dc2626; }
     .muted { text-align:center; padding:12px; color:#94a3b8; font-size:13px; margin:0; }
+    .financial-info { border-top:1px solid #e2e8f0; padding-top:16px; margin-top:16px; }
+    .financial-info h4 { margin:0 0 12px 0; color:#334155; }
+    .financial-summary { background:#f1f5f9; padding:12px; border-radius:6px; margin-top:12px; }
+    .financial-summary p { margin:4px 0; font-size:14px; }
+    .profit-positive { color:#059669; font-weight:600; }
+    .profit-negative { color:#dc2626; font-weight:600; }
+    .profit-zero { color:#6b7280; }
+    .total-revenue { font-weight:600; color:#059669; }
   `]
 })
 export class ClassesComponent {
@@ -163,7 +198,15 @@ export class ClassesComponent {
   }
 
   blankForm() {
-    return { name: '', code: '', teacherId: '', saleId: '', studentIds: [] as string[] };
+    return { 
+      name: '', 
+      code: '', 
+      teacherId: '', 
+      saleId: '', 
+      studentIds: [] as string[],
+      revenuePerStudent: 0,
+      teacherSalaryCost: 0
+    };
   }
 
   async loadLookups() {
@@ -221,6 +264,8 @@ export class ClassesComponent {
       teacherId: this.form.teacherId,
       saleId: this.form.saleId,
       studentIds: [...this.form.studentIds],
+      revenuePerStudent: this.form.revenuePerStudent || 0,
+      teacherSalaryCost: this.form.teacherSalaryCost || 0,
     };
     const ok = this.editingId
       ? await this.classService.update(this.editingId, payload)
@@ -244,6 +289,8 @@ export class ClassesComponent {
       teacherId: classItem.teacher?._id || '',
       saleId: classItem.sale?._id || '',
       studentIds: this.isSale() ? classStudentIds.filter((id) => myStudents.has(id)) : classStudentIds,
+      revenuePerStudent: classItem.revenuePerStudent || 0,
+      teacherSalaryCost: classItem.teacherSalaryCost || 0,
     };
     this.error.set('');
     this.studentSearch = '';
@@ -295,5 +342,20 @@ export class ClassesComponent {
   canSaleAssign(classItem: ClassItem) {
     const current = this.auth.userSignal();
     return current?.role === 'SALE' && classItem.sale?._id === current.sub;
+  }
+
+  formatCurrency(amount?: number): string {
+    if (!amount && amount !== 0) return '—';
+    return new Intl.NumberFormat('vi-VN', {
+      style: 'currency',
+      currency: 'VND'
+    }).format(amount);
+  }
+
+  getProfitClass(profit?: number): string {
+    if (!profit && profit !== 0) return '';
+    if (profit > 0) return 'profit-positive';
+    if (profit < 0) return 'profit-negative';
+    return 'profit-zero';
   }
 }

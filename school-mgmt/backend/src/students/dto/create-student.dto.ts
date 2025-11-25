@@ -1,6 +1,10 @@
-import { IsInt, IsNotEmpty, IsString, Matches, Max, Min } from 'class-validator';
+import { IsInt, IsNotEmpty, IsOptional, IsString, Matches, Max, Min } from 'class-validator';
 
 export class CreateStudentDto {
+  @IsString()
+  @IsNotEmpty()
+  studentCode!: string;
+
   @IsString()
   @IsNotEmpty()
   fullName!: string;
@@ -20,4 +24,9 @@ export class CreateStudentDto {
 
   @IsString()
   faceImage!: string;
+
+  @IsOptional()
+  @IsString()
+  productPackage?: string;
+
 }

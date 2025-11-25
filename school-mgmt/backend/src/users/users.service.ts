@@ -30,6 +30,10 @@ export class UsersService {
     return this.userModel.find().lean();
   }
 
+  async findByRole(role: Role): Promise<User[]> {
+    return this.userModel.find({ role }).lean();
+  }
+
   async findByEmail(email: string): Promise<UserDocument | null> {
     return this.userModel.findOne({ email }).exec();
   }

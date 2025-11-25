@@ -21,7 +21,7 @@ export class ClassesController {
   }
 
   @Get()
-  @Roles(Role.DIRECTOR, Role.SALE)
+  @Roles(Role.DIRECTOR, Role.SALE, Role.TEACHER)
   findAll(@Req() req: Request) {
     return this.classesService.findAll(req.user as any);
   }

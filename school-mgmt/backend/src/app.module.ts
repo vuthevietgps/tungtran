@@ -7,6 +7,9 @@ import { AdminSeeder } from './seed/admin.seeder';
 import { ProductsModule } from './products/products.module';
 import { StudentsModule } from './students/students.module';
 import { ClassesModule } from './classes/classes.module';
+import { AttendanceModule } from './attendance/attendance.module';
+import { InvoicesModule } from './invoices/invoices.module';
+import { OrdersModule } from './orders/orders.module';
 
 @Module({
   imports: [
@@ -23,6 +26,9 @@ import { ClassesModule } from './classes/classes.module';
     ProductsModule,
     StudentsModule,
     ClassesModule,
+    AttendanceModule,
+    InvoicesModule,
+    OrdersModule,
   ],
   providers: [AdminSeeder],
 })

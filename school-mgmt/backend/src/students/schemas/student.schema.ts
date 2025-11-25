@@ -1,11 +1,14 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, SchemaTypes, Types } from 'mongoose';
-import { User } from '../../users/schemas/user.schema';
+import { Product } from '../../products/schemas/product.schema';
 
 export type StudentDocument = HydratedDocument<Student>;
 
 @Schema({ timestamps: true })
 export class Student {
+  @Prop({ required: true, trim: true, unique: true })
+  studentCode!: string;
+
   @Prop({ required: true, trim: true })
   fullName!: string;
 
@@ -21,8 +24,8 @@ export class Student {
   @Prop({ required: true, trim: true })
   faceImage!: string;
 
-  @Prop({ type: SchemaTypes.ObjectId, ref: User.name, required: true })
-  createdBy!: Types.ObjectId;
+  @Prop({ type: SchemaTypes.ObjectId, ref: Product.name })
+  productPackage?: Types.ObjectId;
 }
 
 export const StudentSchema = SchemaFactory.createForClass(Student);

@@ -14,5 +14,6 @@ import { StudentsModule } from '../students/students.module';
   ],
   controllers: [ClassesController],
   providers: [ClassesService],
+  exports: [ClassesService, MongooseModule],
 })
 export class ClassesModule {}

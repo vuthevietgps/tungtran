@@ -31,6 +31,22 @@ export class UserService {
     return res.json();
   }
 
+  async listTeachers(): Promise<UserItem[]> {
+    const res = await fetch(`${environment.apiBase}/users/teachers`, {
+      headers: { ...this.authHeaders() }
+    });
+    if (!res.ok) return [];
+    return res.json();
+  }
+
+  async listSales(): Promise<UserItem[]> {
+    const res = await fetch(`${environment.apiBase}/users/sales`, {
+      headers: { ...this.authHeaders() }
+    });
+    if (!res.ok) return [];
+    return res.json();
+  }
+
   async create(payload: { email: string; password: string; fullName: string; role: string }): Promise<boolean> {
     const res = await fetch(`${environment.apiBase}/users`, {
       method: 'POST',

@@ -24,6 +24,18 @@ export class UsersController {
     return this.usersService.findAll();
   }
 
+  @Get('teachers')
+  @Roles(Role.DIRECTOR, Role.SALE)
+  findTeachers() {
+    return this.usersService.findByRole(Role.TEACHER);
+  }
+
+  @Get('sales')
+  @Roles(Role.DIRECTOR, Role.SALE)
+  findSales() {
+    return this.usersService.findByRole(Role.SALE);
+  }
+
   @Get('me')
   me(@Request() req: any) {
     const user = req.user;

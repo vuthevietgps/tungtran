@@ -31,14 +31,38 @@ export class ClassesService {
   }
 
   async findAll(actor: UserDocument) {
-    const filter = actor.role === Role.SALE ? { sale: actor._id } : {};
-    return this.classModel
+    let filter = {};
+    
+    if (actor.role === Role.SALE) {
+      filter = { sale: actor._id };
+    } else if (actor.role === Role.TEACHER) {
+      filter = { teacher: actor._id };
+    }
+    // DIRECTOR có thể xem tất cả lớp (filter rỗng)
+    
+    const classrooms = await this.classModel
       .find(filter)
       .sort({ createdAt: -1 })
       .populate('teacher', 'fullName email role')
       .populate('sale', 'fullName email role')
       .populate('students', 'fullName age parentName')
       .lean();
+    
+    // Tính toán thông tin tài chính cho từng lớp
+    return classrooms.map(classroom => {
+      const studentCount = classroom.students?.length || 0;
+      const totalRevenue = ((classroom as any).revenuePerStudent || 0) * studentCount;
+      const totalCost = ((classroom as any).teacherSalaryCost || 0) * studentCount;
+      const profit = totalRevenue - totalCost;
+      
+      return {
+        ...classroom,
+        totalRevenue,
+        totalCost,
+        profit,
+        studentCount,
+      };
+    });
   }
 
   async update(id: string, dto: UpdateClassDto) {
@@ -50,14 +74,18 @@ export class ClassesService {
     }
     const members = await this.buildPayload(dto, true);
     Object.assign(update, members);
+
     const updated = await this.classModel.findByIdAndUpdate(id, update, { new: true }).lean();
     if (!updated) throw new NotFoundException('Class not found');
+
     return this.findByIdPopulated(id);
   }
 
   async remove(id: string) {
+    const classroom = await this.classModel.findById(id).lean();
+    if (!classroom) throw new NotFoundException('Class not found');
+
     const deleted = await this.classModel.findByIdAndDelete(id).lean();
-    if (!deleted) throw new NotFoundException('Class not found');
     return deleted;
   }
 
@@ -71,15 +99,19 @@ export class ClassesService {
     const studentIds = dto.studentIds || [];
     if (!studentIds.length) throw new BadRequestException('Vui lòng chọn học viên');
     const valid = await this.studentModel
-      .find({ _id: { $in: studentIds }, createdBy: actor._id }, '_id')
+      .find({ _id: { $in: studentIds } }, '_id')
       .lean();
     if (valid.length !== studentIds.length) {
-      throw new BadRequestException('Chỉ được thêm học viên do bạn tạo');
+      throw new BadRequestException('Một số học viên không hợp lệ');
     }
+    const existingStudentIds = classroom.students?.map((s: any) => s.toString()) || [];
     const merged = Array.from(
-      new Set([...(classroom.students?.map((s: any) => s.toString()) || []), ...studentIds])
+      new Set([...existingStudentIds, ...studentIds])
     ).map((sid) => new Types.ObjectId(sid));
+    
+    // Cập nhật danh sách học sinh trong lớp
     await this.classModel.findByIdAndUpdate(id, { students: merged });
+    
     return this.findByIdPopulated(id);
   }
 
@@ -115,6 +147,15 @@ export class ClassesService {
 
     if (!allowPartial || dto.name) payload.name = dto.name;
     if (!allowPartial || dto.code) payload.code = dto.code?.toUpperCase();
+    
+    // Handle financial information
+    if (!allowPartial || dto.revenuePerStudent !== undefined) {
+      payload.revenuePerStudent = dto.revenuePerStudent ?? 0;
+    }
+    
+    if (!allowPartial || dto.teacherSalaryCost !== undefined) {
+      payload.teacherSalaryCost = dto.teacherSalaryCost ?? 0;
+    }
 
     return payload;
   }
@@ -135,13 +176,30 @@ export class ClassesService {
     }
     return studentIds.map((id) => new Types.ObjectId(id));
   }
-
   private async findByIdPopulated(id: string | Types.ObjectId) {
-    return this.classModel
+    const classroom = await this.classModel
       .findById(id)
       .populate('teacher', 'fullName email role')
       .populate('sale', 'fullName email role')
       .populate('students', 'fullName age parentName')
       .lean();
+    
+    if (classroom) {
+      // Tính toán tổng doanh thu và chi phí
+      const studentCount = classroom.students?.length || 0;
+      const totalRevenue = (classroom.revenuePerStudent || 0) * studentCount;
+      const totalCost = (classroom.teacherSalaryCost || 0) * studentCount;
+      const profit = totalRevenue - totalCost;
+      
+      return {
+        ...classroom,
+        totalRevenue,
+        totalCost,
+        profit,
+        studentCount,
+      };
+    }
+    
+    return classroom;
   }
 }
