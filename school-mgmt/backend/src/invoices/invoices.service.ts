@@ -6,11 +6,13 @@ import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { UpdateInvoiceDto } from './dto/update-invoice.dto';
 import { UserDocument } from '../users/schemas/user.schema';
 import { Role } from '../common/interfaces/role.enum';
+import { Student, StudentDocument } from '../students/schemas/student.schema';
 
 @Injectable()
 export class InvoicesService {
   constructor(
     @InjectModel(Invoice.name) private readonly invoiceModel: Model<InvoiceDocument>,
+    @InjectModel(Student.name) private readonly studentModel: Model<StudentDocument>,
   ) {}
 
   async create(dto: CreateInvoiceDto, actor: UserDocument) {
@@ -76,5 +78,59 @@ export class InvoicesService {
       .populate('createdBy', 'fullName email')
       .sort({ createdAt: -1 })
       .lean();
+  }
+
+  async getAllPaymentInvoices() {
+    const students = await this.studentModel.find()
+      .populate('productPackage', 'name price')
+      .lean();
+
+    const invoices: any[] = [];
+
+    for (const student of students) {
+      if (student.payments && student.payments.length > 0) {
+        for (const payment of student.payments) {
+          invoices.push({
+            _id: `${student._id}_${payment.frameIndex}`,
+            studentId: student._id,
+            studentCode: student.studentCode,
+            studentName: student.fullName,
+            frameIndex: payment.frameIndex,
+            invoiceCode: payment.invoiceCode || '',
+            sessionsRegistered: payment.sessionsRegistered || 0,
+            pricePerSession: payment.pricePerSession || 0,
+            amountCollected: payment.amountCollected || 0,
+            sessionsCollected: payment.sessionsCollected || 0,
+            invoiceImage: payment.invoiceImage || '',
+            confirmStatus: payment.confirmStatus || 'PENDING',
+            createdAt: (student as any).createdAt,
+          });
+        }
+      }
+    }
+
+    return invoices.sort((a, b) => 
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  }
+
+  async confirmPayment(studentId: string, frameIndex: number, action: 'CONFIRM' | 'REJECT') {
+    const student = await this.studentModel.findById(studentId);
+    if (!student) {
+      throw new NotFoundException('Học sinh không tồn tại');
+    }
+
+    const payment = student.payments?.find(p => p.frameIndex === frameIndex);
+    if (!payment) {
+      throw new NotFoundException('Không tìm thấy thông tin thanh toán');
+    }
+
+    payment.confirmStatus = action === 'CONFIRM' ? 'CONFIRMED' : 'PENDING';
+    await student.save();
+
+    return { 
+      success: true, 
+      message: action === 'CONFIRM' ? 'Đã duyệt hóa đơn' : 'Đã từ chối hóa đơn' 
+    };
   }
 }

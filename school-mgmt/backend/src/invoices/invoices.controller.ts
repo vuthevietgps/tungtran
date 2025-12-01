@@ -50,6 +50,22 @@ export class InvoicesController {
     return this.invoicesService.getInvoicesByStudent(studentId);
   }
 
+  @Get('payments/all')
+  @Roles(Role.DIRECTOR, Role.MANAGER, Role.SALE)
+  getAllPaymentInvoices() {
+    return this.invoicesService.getAllPaymentInvoices();
+  }
+
+  @Post('payments/:studentId/:frameIndex/confirm')
+  @Roles(Role.DIRECTOR, Role.MANAGER)
+  confirmPayment(
+    @Param('studentId') studentId: string,
+    @Param('frameIndex') frameIndex: string,
+    @Body() body: { action: 'CONFIRM' | 'REJECT' }
+  ) {
+    return this.invoicesService.confirmPayment(studentId, parseInt(frameIndex), body.action);
+  }
+
   @Patch(':id')
   update(@Param('id') id: string, @Body() updateInvoiceDto: UpdateInvoiceDto) {
     return this.invoicesService.update(id, updateInvoiceDto);

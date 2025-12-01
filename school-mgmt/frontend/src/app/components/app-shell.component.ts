@@ -14,7 +14,8 @@ import { AuthService } from '../services/auth.service';
       <h3 *ngIf="!sidebarCollapsed">Chức năng</h3>
       <nav>
         <a routerLink="/app/users" routerLinkActive="active" *ngIf="isDirector()" title="Quản lý User"><span class="label">Quản lý User</span></a>
-        <a routerLink="/app/products" routerLinkActive="active" *ngIf="isDirector()" title="Quản lý Sản phẩm"><span class="label">Quản lý Sản phẩm</span></a>
+        <a routerLink="/app/products" routerLinkActive="active" *ngIf="isDirector()" title="Quản lý Khóa học"><span class="label">Quản lý Khóa học</span></a>
+        <a routerLink="/app/students" routerLinkActive="active" title="Quản lý Học sinh"><span class="label">Quản lý Học sinh</span></a>
         <a routerLink="/app/classes" routerLinkActive="active" title="Quản lý Lớp học"><span class="label">Quản lý Lớp học</span></a>
         <a routerLink="/app/invoices" routerLinkActive="active" *ngIf="canManageInvoices()" title="Quản lý Hóa đơn"><span class="label">Quản lý Hóa đơn</span></a>
         <a routerLink="/app/orders" routerLinkActive="active" *ngIf="canManageOrders()" title="Quản lý Đơn hàng"><span class="label">Quản lý Đơn hàng</span></a>

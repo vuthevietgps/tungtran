@@ -66,6 +66,8 @@ export class StudentsService {
       parentName: student.parentName,
       parentPhone: student.parentPhone,
       faceImage: student.faceImage,
+      approvalStatus: (student as any).approvalStatus || 'PENDING',
+      payments: (student as any).payments || [],
       productPackage: productPackage && typeof productPackage === 'object'
         ? {
             _id: productPackage._id?.toString?.() ?? productPackage.toString(),
@@ -181,5 +183,99 @@ export class StudentsService {
     }).filter(item => item !== null);
 
     return reportData;
+  }
+
+  async create(createStudentDto: any) {
+    const student = new this.studentModel(createStudentDto);
+    return student.save();
+  }
+
+  async update(id: string, updateStudentDto: any) {
+    return this.studentModel.findByIdAndUpdate(id, updateStudentDto, { new: true });
+  }
+
+  async remove(id: string) {
+    try {
+      console.log('=== DELETE STUDENT REQUEST ===');
+      console.log('Student ID:', id);
+      
+      // Check if student exists in DB
+      const existingStudent = await this.studentModel.findById(id);
+      console.log('Student exists in DB:', !!existingStudent);
+      
+      let deletedCount = 0;
+      
+      if (existingStudent) {
+        console.log('Student code:', existingStudent.studentCode);
+        console.log('Student name:', existingStudent.fullName);
+        
+        // Delete related data first
+        const studentObjectId = new Types.ObjectId(id);
+        
+        // Delete attendance records
+        const attendanceResult = await this.attendanceModel.deleteMany({ studentId: studentObjectId });
+        console.log('Deleted attendance records:', attendanceResult.deletedCount);
+        
+        // Delete order records  
+        const orderResult = await this.orderModel.deleteMany({ studentId: studentObjectId });
+        console.log('Deleted order records:', orderResult.deletedCount);
+        
+        // Finally delete the student
+        const result = await this.studentModel.findByIdAndDelete(id);
+        console.log('Deleted student from DB');
+        deletedCount++;
+      } else {
+        // This is a virtual student from orders - try to delete by studentId in orders
+        console.log('Virtual student detected - searching in orders...');
+        const orderResult = await this.orderModel.deleteMany({ studentId: new Types.ObjectId(id) });
+        console.log('Deleted orders with studentId:', orderResult.deletedCount);
+        deletedCount += orderResult.deletedCount;
+        
+        // If no orders found by ID, this student might not exist at all
+        if (orderResult.deletedCount === 0) {
+          console.log('No records found to delete');
+        }
+      }
+      
+      console.log('=== DELETE COMPLETED ===');
+      console.log('Total records affected:', deletedCount);
+      
+      return { deletedCount };
+    } catch (error) {
+      console.error('Error deleting student:', error);
+      throw error;
+    }
+  }
+
+  async findOne(id: string) {
+    return this.studentModel.findById(id).populate('productPackage', 'name price');
+  }
+
+  async approve(id: string, action: 'APPROVE' | 'REJECT', userId: string) {
+    const updateData: any = {
+      approvalStatus: action === 'APPROVE' ? 'APPROVED' : 'REJECTED',
+      approvedBy: userId,
+      approvedAt: new Date(),
+    };
+    return this.studentModel.findByIdAndUpdate(id, updateData, { new: true });
+  }
+
+  async findPendingApproval() {
+    return this.studentModel.find({ approvalStatus: 'PENDING' })
+      .populate('productPackage', 'name price')
+      .sort({ createdAt: -1 });
+  }
+
+  async clearAllStudentData() {
+    // Delete all students
+    await this.studentModel.deleteMany({});
+    
+    // Delete all related attendance records
+    await this.attendanceModel.deleteMany({});
+    
+    // Delete all orders (if they reference students)
+    await this.orderModel.deleteMany({});
+    
+    return { message: 'All student data cleared successfully' };
   }
 }

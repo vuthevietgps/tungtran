@@ -1,9 +1,23 @@
 import { PartialType } from '@nestjs/mapped-types';
-import { IsOptional, IsString } from 'class-validator';
+import { IsOptional, IsString, IsMongoId } from 'class-validator';
 import { CreateStudentDto } from './create-student.dto';
+import { PaymentFrameDto } from './create-student.dto';
 
 export class UpdateStudentDto extends PartialType(CreateStudentDto) {
   @IsOptional()
   @IsString()
   studentCode?: string;
+
+  @IsOptional()
+  @IsString()
+  approvalStatus?: 'PENDING' | 'APPROVED' | 'REJECTED';
+
+  @IsOptional()
+  @IsMongoId()
+  approvedBy?: string;
+}
+
+export class UpdatePaymentsDto {
+  @IsOptional()
+  payments?: PaymentFrameDto[];
 }
