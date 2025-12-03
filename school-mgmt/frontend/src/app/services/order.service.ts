@@ -34,6 +34,12 @@ export interface OrderItem {
   sessionsByInvoice?: number;
   dataStatus?: string;
   trialOrGift?: string;
+  totalAttendedSessions?: number;
+  teacherEarnedSalary?: number;
+  paymentStatus?: string;
+  paymentInvoiceCode?: string;
+  paymentProofImage?: string;
+  status?: string;
   createdAt: string;
   updatedAt: string;
   sessions: OrderSessionEntry[];
@@ -59,6 +65,10 @@ export interface OrderPayload {
   sessionsByInvoice?: number;
   dataStatus?: string;
   trialOrGift?: string;
+  paymentStatus?: string;
+  paymentInvoiceCode?: string;
+  paymentProofImage?: string;
+  status?: string;
 }
 
 export interface OrderMutationResult {

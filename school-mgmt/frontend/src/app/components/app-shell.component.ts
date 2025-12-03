@@ -19,6 +19,8 @@ import { AuthService } from '../services/auth.service';
         <a routerLink="/app/classes" routerLinkActive="active" title="Quản lý Lớp học"><span class="label">Quản lý Lớp học</span></a>
         <a routerLink="/app/invoices" routerLinkActive="active" *ngIf="canManageInvoices()" title="Quản lý Hóa đơn"><span class="label">Quản lý Hóa đơn</span></a>
         <a routerLink="/app/orders" routerLinkActive="active" *ngIf="canManageOrders()" title="Quản lý Đơn hàng"><span class="label">Quản lý Đơn hàng</span></a>
+        <a routerLink="/app/classroom-status" routerLinkActive="active" *ngIf="canManageOrders()" title="Trạng thái lớp học"><span class="label">Trạng thái lớp học</span></a>
+        <a routerLink="/app/payment-requests" routerLinkActive="active" *ngIf="canAccessPaymentRequests()" title="Đề nghị thanh toán"><span class="label">Đề nghị thanh toán</span></a>
         <a routerLink="/app/attendance" routerLinkActive="active" title="Điểm danh"><span class="label">Điểm danh</span></a>
         <a routerLink="/app/attendance-report" routerLinkActive="active" title="Báo cáo điểm danh"><span class="label">Báo cáo điểm danh</span></a>
         <a routerLink="/app/student-report" routerLinkActive="active" title="Báo cáo học sinh"><span class="label">Báo cáo học sinh</span></a>
@@ -36,14 +38,15 @@ import { AuthService } from '../services/auth.service';
   `,
   styles: [`
     .layout { display:flex; min-height:100vh; background:#e2e8f0; font-family:'Segoe UI',sans-serif; }
-    .sidebar { width:220px; background:#0f172a; color:#e2e8f0; padding:16px; display:flex; flex-direction:column; position:relative; transition:width 0.2s ease; }
+    .sidebar { width:220px; min-width:220px; background:#0f172a; color:#e2e8f0; padding:16px; display:flex; flex-direction:column; position:relative; transition:width 0.2s ease; }
     .sidebar.collapsed { width:68px; align-items:center; }
     .toggle { position:absolute; top:12px; right:12px; border:none; background:#1e293b; color:#e2e8f0; border-radius:999px; width:36px; height:36px; cursor:pointer; font-size:16px; }
     .sidebar.collapsed .toggle { right:16px; }
     .sidebar h3 { margin-top:44px; }
     .sidebar.collapsed h3 { display:none; }
     nav { margin-top:24px; width:100%; }
-    nav a { display:flex; align-items:center; justify-content:center; padding:8px 10px; margin-bottom:4px; text-decoration:none; border-radius:4px; color:#cbd5f5; transition:background 0.15s ease; }
+    nav a { display:flex; align-items:center; justify-content:center; padding:8px 10px; margin-bottom:4px; text-decoration:none; border-radius:4px; color:#cbd5f5; transition:background 0.15s ease; white-space:nowrap; }
+    nav a .label { white-space:nowrap; }
     .sidebar:not(.collapsed) nav a { justify-content:flex-start; }
     .sidebar.collapsed nav a .label { display:none; }
     nav a.active, nav a:hover { background:#1e293b; color:#fff; }
@@ -79,6 +82,11 @@ export class AppShellComponent {
 
   canManageOrders(): boolean {
     return this.canManageInvoices();
+  }
+
+  canAccessPaymentRequests(): boolean {
+    const role = this.auth.userSignal()?.role;
+    return role === 'DIRECTOR' || role === 'TEACHER';
   }
 
   toggleSidebar(): void {

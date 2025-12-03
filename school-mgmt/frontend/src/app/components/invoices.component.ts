@@ -1,31 +1,46 @@
 import { CommonModule } from '@angular/common';
-import { Component, computed, signal } from '@angular/core';
+import { Component, signal, computed, inject, OnInit, OnDestroy } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { InvoiceItem, InvoiceService } from '../services/invoice.service';
-import { StudentItem, StudentService } from '../services/student.service';
 import { AuthService } from '../services/auth.service';
+import { InvoiceService } from '../services/invoice.service';
 import { environment } from '../../environments/environment';
+import { HttpClient } from '@angular/common/http';
+import { Subscription } from 'rxjs';
+
+interface PaymentInvoice {
+  _id: string;
+  studentId: string;
+  studentCode: string;
+  studentName: string;
+  frameIndex: number;
+  invoiceCode: string;
+  sessionsRegistered: number;
+  pricePerSession: number;
+  amountCollected: number;
+  sessionsCollected: number;
+  invoiceImage: string;
+  confirmStatus: 'PENDING' | 'CONFIRMED';
+  createdAt: string;
+}
 
 @Component({
-  selector: 'app-invoices',
+  selector: 'app-payment-invoices',
   standalone: true,
   imports: [CommonModule, FormsModule],
   template: `
   <header class="page-header">
     <div>
-      <h2>Quản lý hóa đơn</h2>
-      <p>Theo dõi các hóa đơn thu tiền và chứng từ.</p>
+      <h2>Quản lý hóa đơn thu tiền</h2>
+      <p>Theo dõi và duyệt các khoản thu tiền từ học sinh.</p>
     </div>
-    <button class="primary" (click)="openModal()">+ Thêm hóa đơn</button>
   </header>
 
   <section class="filters">
-    <input placeholder="Tìm theo số hóa đơn, tên học sinh" [(ngModel)]="keyword" />
-    <select [(ngModel)]="statusFilter">
+    <input placeholder="Tìm theo mã học sinh, tên, mã hóa đơn..." [(ngModel)]="keyword" (ngModelChange)="filterData()" />
+    <select [(ngModel)]="statusFilter" (ngModelChange)="filterData()">
       <option value="">Tất cả trạng thái</option>
-      <option value="PAID">Đã thanh toán</option>
-      <option value="PENDING">Chờ thanh toán</option>
-      <option value="CANCELLED">Đã hủy</option>
+      <option value="PENDING">Chờ duyệt</option>
+      <option value="CONFIRMED">Đã duyệt</option>
     </select>
     <button (click)="reload()">Làm mới</button>
   </section>
@@ -33,319 +48,374 @@ import { environment } from '../../environments/environment';
   <table class="data" *ngIf="filtered().length; else empty">
     <thead>
       <tr>
-        <th>Số hóa đơn</th>
-        <th>Học sinh</th>
-        <th>Số tiền</th>
-        <th>Ngày thanh toán</th>
+        <th>Mã HS</th>
+        <th>Tên học sinh</th>
+        <th>Đợt thu</th>
+        <th>Mã hóa đơn</th>
+        <th>Số buổi ĐK</th>
+        <th>Giá/buổi</th>
+        <th>Số tiền đã thu</th>
+        <th>Số buổi đã thu</th>
+        <th>Ảnh hóa đơn</th>
         <th>Trạng thái</th>
-        <th>Chứng từ</th>
-        <th>Người tạo</th>
-        <th>Hành động</th>
+        <th *ngIf="canApprove()">Hành động</th>
       </tr>
     </thead>
     <tbody>
-      <tr *ngFor="let invoice of filtered()">
-        <td><strong>{{ invoice.invoiceNumber }}</strong></td>
-        <td>
-          <div>{{ invoice.studentId.fullName }}</div>
-          <small>PH: {{ invoice.studentId.parentName }}</small>
-        </td>
-        <td>{{ formatCurrency(invoice.amount) }}</td>
-        <td>{{ formatDate(invoice.paymentDate) }}</td>
-        <td>
-          <span class="status" [class]="getStatusClass(invoice.status)">
-            {{ getStatusText(invoice.status) }}
-          </span>
-        </td>
+      <tr *ngFor="let inv of filtered()">
+        <td><strong>{{ inv.studentCode }}</strong></td>
+        <td>{{ inv.studentName }}</td>
+        <td>Đợt {{ inv.frameIndex }}</td>
+        <td>{{ inv.invoiceCode || 'Chưa có' }}</td>
+        <td>{{ inv.sessionsRegistered }}</td>
+        <td>{{ formatCurrency(inv.pricePerSession) }}</td>
+        <td>{{ formatCurrency(inv.amountCollected) }}</td>
+        <td>{{ inv.sessionsCollected }}</td>
         <td>
           <img 
-            *ngIf="invoice.receiptImage" 
-            [src]="getImageUrl(invoice.receiptImage)" 
-            alt="Chứng từ" 
+            *ngIf="inv.invoiceImage" 
+            [src]="getImageUrl(inv.invoiceImage)" 
+            alt="Hóa đơn" 
             class="receipt-thumb"
-            (click)="showImageModal(getImageUrl(invoice.receiptImage))"
+            (click)="showImageModal(getImageUrl(inv.invoiceImage))"
           />
-          <span *ngIf="!invoice.receiptImage">Không có</span>
+          <span *ngIf="!inv.invoiceImage">Không có</span>
         </td>
-        <td>{{ invoice.createdBy.fullName }}</td>
-        <td class="actions-cell">
-          <button class="ghost" (click)="edit(invoice)">Sửa</button>
-          <button class="ghost" (click)="remove(invoice)" *ngIf="canDeleteInvoices">Xóa</button>
+        <td>
+          <span class="status" [class.pending]="inv.confirmStatus === 'PENDING'" [class.confirmed]="inv.confirmStatus === 'CONFIRMED'">
+            {{ inv.confirmStatus === 'PENDING' ? 'Chờ duyệt' : 'Đã duyệt' }}
+          </span>
+        </td>
+        <td class="actions-cell" *ngIf="canApprove()">
+          <button 
+            class="primary" 
+            (click)="confirmPayment(inv)" 
+            *ngIf="inv.confirmStatus === 'PENDING'"
+            [disabled]="loading()"
+          >
+            Duyệt
+          </button>
+          <span *ngIf="inv.confirmStatus === 'CONFIRMED'">✓ Đã duyệt</span>
         </td>
       </tr>
     </tbody>
   </table>
-  <ng-template #empty><p>Chưa có hóa đơn.</p></ng-template>
+  <ng-template #empty><p>Chưa có dữ liệu hóa đơn.</p></ng-template>
 
-  <!-- Modal thêm/sửa hóa đơn -->
-  <div class="modal-backdrop" *ngIf="showModal()">
-    <div class="modal">
-      <h3>{{ editingInvoice ? 'Sửa hóa đơn' : 'Thêm hóa đơn' }}</h3>
-      <form (ngSubmit)="submit()" #f="ngForm">
-        <label>Số hóa đơn
-          <input name="invoiceNumber" [(ngModel)]="form.invoiceNumber" required />
-        </label>
-        <label>Học sinh
-          <select name="studentId" [(ngModel)]="form.studentId" required>
-            <option value="">-- Chọn học sinh --</option>
-            <option *ngFor="let s of students()" [value]="s._id">{{ s.fullName }} ({{ s.parentName }})</option>
-          </select>
-        </label>
-        <label>Số tiền (VNĐ)
-          <input name="amount" type="number" min="0" [(ngModel)]="form.amount" required />
-        </label>
-        <label>Ngày thanh toán
-          <input name="paymentDate" type="date" [(ngModel)]="form.paymentDate" required />
-        </label>
-        <label>Trạng thái
-          <select name="status" [(ngModel)]="form.status">
-            <option value="PAID">Đã thanh toán</option>
-            <option value="PENDING">Chờ thanh toán</option>
-            <option value="CANCELLED">Đã hủy</option>
-          </select>
-        </label>
-        <label>Mô tả
-          <textarea name="description" [(ngModel)]="form.description" rows="3" placeholder="Mô tả hóa đơn (tùy chọn)"></textarea>
-        </label>
-        <label>Ảnh chứng từ
-          <input name="receiptImage" type="file" accept="image/*" (change)="handleFileChange($event)" />
-        </label>
-        <div class="upload-status">
-          <span *ngIf="uploading()">Đang tải ảnh...</span>
-          <span class="error" *ngIf="uploadError()">{{uploadError()}}</span>
-          <img *ngIf="form.receiptImage && !uploading()" [src]="getImageUrl(form.receiptImage)" alt="Xem trước" class="preview" />
-        </div>
-        <div class="actions">
-          <button type="submit" class="primary" [disabled]="uploading() || !form.receiptImage">Lưu</button>
-          <button type="button" (click)="closeModal()">Hủy</button>
-        </div>
-        <p class="error" *ngIf="error()">{{error()}}</p>
-      </form>
-    </div>
-  </div>
-
-  <!-- Modal xem ảnh -->
-  <div class="modal-backdrop" *ngIf="modalImage()" (click)="closeImageModal()">
-    <div class="image-modal">
-      <span class="close" (click)="closeImageModal()">&times;</span>
-      <img [src]="modalImage()" alt="Chứng từ" />
+  <!-- Modal xem ảnh hóa đơn -->
+  <div class="modal-backdrop" *ngIf="imageModalUrl()" (click)="closeImageModal()">
+    <div class="modal image-modal" (click)="$event.stopPropagation()">
+      <button class="close-btn" (click)="closeImageModal()">×</button>
+      <img [src]="imageModalUrl()" alt="Hóa đơn" />
     </div>
   </div>
   `,
   styles: [`
-    .page-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
-    .filters { display:flex; gap:10px; margin-bottom:16px; }
-    input, select, textarea { padding:6px 8px; border:1px solid #cbd5f5; border-radius:4px; width:100%; }
-    .data { width:100%; border-collapse:collapse; background:#fff; }
-    th, td { padding:8px; border:1px solid #e2e8f0; vertical-align:middle; }
-    thead { background:#f1f5f9; }
-    .receipt-thumb { width:60px; height:40px; object-fit:cover; border-radius:4px; cursor:pointer; border:1px solid #cbd5f5; }
-    .status { padding:4px 8px; border-radius:12px; font-size:12px; font-weight:600; }
-    .status.paid { background:#d1fae5; color:#065f46; }
-    .status.pending { background:#fef3c7; color:#92400e; }
-    .status.cancelled { background:#fee2e2; color:#991b1b; }
-    .primary { background:#2563eb; color:#fff; border:none; padding:8px 12px; border-radius:4px; cursor:pointer; }
-    .ghost { border:1px solid #94a3b8; background:transparent; padding:6px 10px; border-radius:4px; cursor:pointer; }
-    .modal-backdrop { position:fixed; inset:0; background:rgba(15,23,42,.55); display:flex; align-items:center; justify-content:center; z-index:1000; }
-    .modal { background:#fff; padding:20px; border-radius:8px; width:500px; max-height:90vh; overflow-y:auto; box-shadow:0 8px 24px rgba(15,23,42,.2); }
-    .modal form { display:flex; flex-direction:column; gap:12px; }
-    .actions { display:flex; gap:8px; justify-content:flex-end; }
-    .actions-cell { width:120px; text-align:right; }
-    .actions-cell button { margin-left:4px; }
-    .error { color:#dc2626; }
-    .upload-status { display:flex; flex-direction:column; gap:6px; font-size:13px; }
-    .preview { width:120px; height:80px; object-fit:cover; border-radius:8px; border:1px solid #cbd5f5; }
-    .image-modal { position:relative; max-width:90%; max-height:90%; }
-    .image-modal img { max-width:100%; max-height:90vh; border-radius:8px; }
-    .close { position:absolute; top:-40px; right:0; color:white; font-size:30px; cursor:pointer; }
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 2rem;
+    }
+    .page-header h2 {
+      margin: 0 0 0.5rem 0;
+      font-size: 1.75rem;
+      font-weight: 600;
+    }
+    .page-header p {
+      margin: 0;
+      color: #666;
+    }
+
+    .filters {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+      flex-wrap: wrap;
+    }
+    .filters input,
+    .filters select {
+      padding: 0.625rem;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 0.9375rem;
+    }
+    .filters input {
+      flex: 1;
+      min-width: 250px;
+    }
+    .filters select {
+      min-width: 180px;
+    }
+    .filters button {
+      padding: 0.625rem 1.25rem;
+      background: #007bff;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .filters button:hover {
+      background: #0056b3;
+    }
+
+    .data {
+      width: 100%;
+      border-collapse: collapse;
+      background: white;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .data thead {
+      background: #f8f9fa;
+    }
+    .data th,
+    .data td {
+      padding: 1rem;
+      text-align: left;
+      border-bottom: 1px solid #e9ecef;
+    }
+    .data th {
+      font-weight: 600;
+      font-size: 0.875rem;
+      text-transform: uppercase;
+      color: #495057;
+      letter-spacing: 0.5px;
+    }
+    .data tbody tr:hover {
+      background: #f8f9fa;
+    }
+    .data tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    .receipt-thumb {
+      width: 60px;
+      height: 60px;
+      object-fit: cover;
+      border-radius: 4px;
+      cursor: pointer;
+      border: 1px solid #ddd;
+      transition: transform 0.2s;
+    }
+    .receipt-thumb:hover {
+      transform: scale(1.05);
+      box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    }
+
+    .status {
+      display: inline-block;
+      padding: 0.375rem 0.75rem;
+      border-radius: 12px;
+      font-size: 0.8125rem;
+      font-weight: 600;
+    }
+    .status.pending {
+      background: #fff3cd;
+      color: #856404;
+    }
+    .status.confirmed {
+      background: #d4edda;
+      color: #155724;
+    }
+
+    .actions-cell {
+      white-space: nowrap;
+    }
+    .actions-cell button {
+      padding: 0.5rem 1rem;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: 500;
+      font-size: 0.875rem;
+    }
+    .actions-cell button.primary {
+      background: #28a745;
+      color: white;
+    }
+    .actions-cell button.primary:hover:not(:disabled) {
+      background: #218838;
+    }
+    .actions-cell button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .modal {
+      background: white;
+      padding: 2rem;
+      border-radius: 8px;
+      max-width: 90vw;
+      max-height: 90vh;
+      position: relative;
+      overflow: auto;
+    }
+    .modal.image-modal {
+      padding: 1rem;
+    }
+    .modal.image-modal img {
+      max-width: 100%;
+      max-height: 80vh;
+      display: block;
+    }
+    .close-btn {
+      position: absolute;
+      top: 0.5rem;
+      right: 0.5rem;
+      background: rgba(0, 0, 0, 0.5);
+      color: white;
+      border: none;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      font-size: 1.5rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+    }
+    .close-btn:hover {
+      background: rgba(0, 0, 0, 0.7);
+    }
+
+    button.primary {
+      background: #007bff;
+      color: white;
+      border: none;
+      padding: 0.625rem 1.25rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    button.primary:hover {
+      background: #0056b3;
+    }
   `]
 })
-export class InvoicesComponent {
-  items = signal<InvoiceItem[]>([]);
-  students = signal<StudentItem[]>([]);
+export class InvoicesComponent implements OnInit, OnDestroy {
+  private http = inject(HttpClient);
+  private auth = inject(AuthService);
+  private invoiceService = inject(InvoiceService);
+  private subscription?: Subscription;
+
+  invoices = signal<PaymentInvoice[]>([]);
   keyword = '';
   statusFilter = '';
-  showModal = signal(false);
-  modalImage = signal('');
-  error = signal('');
-  uploadError = signal('');
-  uploading = signal(false);
-  form = this.blankForm();
-  canDeleteInvoices = false;
-  editingInvoice: InvoiceItem | null = null;
-
-  constructor(
-    private invoiceService: InvoiceService,
-    private studentService: StudentService,
-    private auth: AuthService
-  ) {
-    this.reload();
-    this.loadStudents();
-    this.canDeleteInvoices = this.auth.userSignal()?.role === 'DIRECTOR';
-  }
+  loading = signal(false);
+  imageModalUrl = signal('');
 
   filtered = computed(() => {
-    let result = this.items();
+    let result = this.invoices();
     
-    const kw = this.keyword.trim().toLowerCase();
-    if (kw) {
-      result = result.filter((invoice) => 
-        invoice.invoiceNumber.toLowerCase().includes(kw) ||
-        invoice.studentId.fullName.toLowerCase().includes(kw)
+    if (this.keyword.trim()) {
+      const kw = this.keyword.toLowerCase();
+      result = result.filter(inv =>
+        inv.studentCode.toLowerCase().includes(kw) ||
+        inv.studentName.toLowerCase().includes(kw) ||
+        inv.invoiceCode?.toLowerCase().includes(kw)
       );
     }
     
     if (this.statusFilter) {
-      result = result.filter((invoice) => invoice.status === this.statusFilter);
+      result = result.filter(inv => inv.confirmStatus === this.statusFilter);
     }
     
     return result;
   });
 
-  async reload() {
-    const data = await this.invoiceService.list();
-    this.items.set(data);
+  ngOnInit() {
+    this.loadInvoices();
+    
+    // Subscribe để tự động reload khi có payment được duyệt
+    this.subscription = this.invoiceService.onPaymentConfirmed.subscribe(() => {
+      this.loadInvoices();
+    });
   }
 
-  async loadStudents() {
-    const data = await this.studentService.list();
-    this.students.set(data);
+  ngOnDestroy() {
+    this.subscription?.unsubscribe();
+  }
+
+  loadInvoices() {
+    this.loading.set(true);
+    this.http.get<PaymentInvoice[]>(`${environment.apiBase}/invoices/payments/all`).subscribe({
+      next: (data) => {
+        this.invoices.set(data);
+        this.loading.set(false);
+      },
+      error: (err) => {
+        console.error('Load invoices error:', err);
+        alert('Lỗi tải dữ liệu hóa đơn');
+        this.loading.set(false);
+      }
+    });
+  }
+
+  reload() {
+    this.loadInvoices();
+  }
+
+  filterData() {
+    // Trigger computed signal update
+  }
+
+  canApprove(): boolean {
+    const user = this.auth.userSignal();
+    return user?.role === 'DIRECTOR' || user?.role === 'MANAGER';
+  }
+
+  confirmPayment(invoice: PaymentInvoice) {
+    if (!confirm(`Xác nhận duyệt khoản thu tiền đợt ${invoice.frameIndex} của học sinh ${invoice.studentName}?`)) {
+      return;
+    }
+
+    this.loading.set(true);
+    this.invoiceService.confirmPayment(invoice.studentId, invoice.frameIndex).subscribe({
+      next: () => {
+        alert('Đã duyệt thành công');
+        // Service sẽ tự broadcast event, component này và StudentsComponent đều reload
+        this.loading.set(false);
+      },
+      error: (err) => {
+        console.error('Confirm payment error:', err);
+        alert('Lỗi duyệt thanh toán: ' + (err.error?.message || 'Unknown error'));
+        this.loading.set(false);
+      }
+    });
   }
 
   formatCurrency(amount: number): string {
-    return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(amount);
+    if (!amount) return '0 đ';
+    return amount.toLocaleString('vi-VN') + ' đ';
   }
 
-  formatDate(dateStr: string): string {
-    return new Date(dateStr).toLocaleDateString('vi-VN');
+  getImageUrl(path: string): string {
+    if (!path) return '';
+    if (path.startsWith('http')) return path;
+    return `${environment.apiBase}/${path}`;
   }
 
-  getStatusText(status: string): string {
-    const statusMap: Record<string, string> = {
-      'PAID': 'Đã thanh toán',
-      'PENDING': 'Chờ thanh toán',
-      'CANCELLED': 'Đã hủy'
-    };
-    return statusMap[status] || status;
-  }
-
-  getStatusClass(status: string): string {
-    return status.toLowerCase();
-  }
-
-  getImageUrl(imagePath: string): string {
-    if (imagePath.startsWith('http')) {
-      return imagePath;
-    }
-    return `${environment.apiBase}${imagePath}`;
-  }
-
-  showImageModal(imageUrl: string) {
-    this.modalImage.set(imageUrl);
+  showImageModal(url: string) {
+    this.imageModalUrl.set(url);
   }
 
   closeImageModal() {
-    this.modalImage.set('');
-  }
-
-  openModal() {
-    this.editingInvoice = null;
-    this.form = this.blankForm();
-    this.error.set('');
-    this.uploadError.set('');
-    this.uploading.set(false);
-    this.showModal.set(true);
-  }
-
-  edit(invoice: InvoiceItem) {
-    this.editingInvoice = invoice;
-    this.form = {
-      invoiceNumber: invoice.invoiceNumber,
-      studentId: invoice.studentId._id,
-      amount: invoice.amount,
-      paymentDate: invoice.paymentDate.split('T')[0],
-      status: invoice.status,
-      description: invoice.description || '',
-      receiptImage: invoice.receiptImage,
-    };
-    this.error.set('');
-    this.uploadError.set('');
-    this.uploading.set(false);
-    this.showModal.set(true);
-  }
-
-  closeModal() {
-    this.showModal.set(false);
-  }
-
-  async submit() {
-    const payload: any = {
-      invoiceNumber: this.form.invoiceNumber.trim(),
-      studentId: this.form.studentId,
-      amount: Number(this.form.amount),
-      paymentDate: this.form.paymentDate,
-      status: this.form.status,
-      receiptImage: this.form.receiptImage.trim(),
-    };
-    
-    if (this.form.description) {
-      payload.description = this.form.description.trim();
-    }
-    
-    let result;
-    if (this.editingInvoice) {
-      result = await this.invoiceService.update(this.editingInvoice._id, payload);
-      if (!result.ok) {
-        this.error.set(result.message || 'Không thể cập nhật hóa đơn');
-        return;
-      }
-    } else {
-      result = await this.invoiceService.create(payload);
-      if (!result.ok) {
-        this.error.set(result.message || 'Không thể tạo hóa đơn');
-        return;
-      }
-    }
-    
-    this.closeModal();
-    this.reload();
-  }
-
-  async handleFileChange(event: Event) {
-    const input = event.target as HTMLInputElement;
-    const file = input.files?.[0];
-    input.value = '';
-    if (!file) return;
-    this.uploadError.set('');
-    this.uploading.set(true);
-    const result = await this.invoiceService.uploadReceipt(file);
-    this.uploading.set(false);
-    if (!result.ok || !result.url) {
-      this.uploadError.set(result.message || 'Tải ảnh thất bại');
-      return;
-    }
-    this.form.receiptImage = result.url;
-  }
-
-  async remove(invoice: InvoiceItem) {
-    if (!confirm(`Xóa hóa đơn ${invoice.invoiceNumber}?`)) return;
-    const result = await this.invoiceService.remove(invoice._id);
-    if (!result.ok) {
-      alert(result.message || 'Không thể xóa hóa đơn');
-      return;
-    }
-    this.reload();
-  }
-
-  private blankForm() {
-    return {
-      invoiceNumber: '',
-      studentId: '',
-      amount: 0,
-      paymentDate: new Date().toISOString().split('T')[0],
-      status: 'PAID',
-      description: '',
-      receiptImage: '',
-    };
+    this.imageModalUrl.set('');
   }
 }

@@ -1,4 +1,7 @@
-import { Injectable } from '@angular/core';
+import { Injectable, inject } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Subject } from 'rxjs';
+import { tap } from 'rxjs/operators';
 import { environment } from '../../environments/environment';
 import { AuthService } from './auth.service';
 
@@ -36,7 +39,11 @@ export interface ReceiptUploadResult extends InvoiceMutationResult {
 
 @Injectable({ providedIn: 'root' })
 export class InvoiceService {
-  constructor(private auth: AuthService) {}
+  private http = inject(HttpClient);
+  private auth = inject(AuthService);
+  
+  private paymentConfirmed$ = new Subject<{ studentId: string; frameIndex: number }>();
+  onPaymentConfirmed = this.paymentConfirmed$.asObservable();
 
   private authHeaders(): Record<string, string> {
     const token = this.auth.getToken();
@@ -105,6 +112,18 @@ export class InvoiceService {
       return [];
     }
     return res.json();
+  }
+
+  confirmPayment(studentId: string, frameIndex: number) {
+    return this.http.post(
+      `${environment.apiBase}/invoices/payments/${studentId}/${frameIndex}/confirm`,
+      { action: 'CONFIRM' }
+    ).pipe(
+      tap(() => {
+        // Broadcast event để các component khác reload
+        this.paymentConfirmed$.next({ studentId, frameIndex });
+      })
+    );
   }
 
   private async fail(res: Response, fallback = 'Không thể thực hiện thao tác'): Promise<InvoiceMutationResult> {

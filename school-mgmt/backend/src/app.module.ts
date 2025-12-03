@@ -10,6 +10,8 @@ import { ClassesModule } from './classes/classes.module';
 import { AttendanceModule } from './attendance/attendance.module';
 import { InvoicesModule } from './invoices/invoices.module';
 import { OrdersModule } from './orders/orders.module';
+import { ClassroomStatusModule } from './classroom-status/classroom-status.module';
+import { PaymentRequestsModule } from './payment-requests/payment-requests.module';
 
 @Module({
   imports: [
@@ -29,6 +31,8 @@ import { OrdersModule } from './orders/orders.module';
     AttendanceModule,
     InvoicesModule,
     OrdersModule,
+    ClassroomStatusModule,
+    PaymentRequestsModule,
   ],
   providers: [AdminSeeder],
 })

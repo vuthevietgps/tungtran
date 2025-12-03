@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Order, OrderDocument } from './schemas/order.schema';
@@ -9,6 +9,8 @@ import { Classroom, ClassDocument } from '../classes/schemas/class.schema';
 import { Attendance, AttendanceDocument } from '../attendance/schemas/attendance.schema';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { ConfigService } from '@nestjs/config';
+import { ClassroomStatusService } from '../classroom-status/classroom-status.service';
+import { PaymentRequestsService } from '../payment-requests/payment-requests.service';
 
 type StudentLean = (Student & { _id: Types.ObjectId });
 type ClassLean = (Classroom & { _id: Types.ObjectId });
@@ -46,6 +48,12 @@ export interface OrderView {
   sessionsByInvoice?: number;
   dataStatus?: string;
   trialOrGift?: string;
+  totalAttendedSessions?: number;
+  teacherEarnedSalary?: number;
+  paymentStatus?: string;
+  paymentInvoiceCode?: string;
+  paymentProofImage?: string;
+  status?: string;
   createdAt: string;
   updatedAt: string;
   sessions: OrderSessionView[];
@@ -62,6 +70,10 @@ export class OrdersService {
     @InjectModel(Attendance.name) private readonly attendanceModel: Model<AttendanceDocument>,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     private readonly config: ConfigService,
+    @Inject(forwardRef(() => ClassroomStatusService))
+    private readonly classroomStatusService: ClassroomStatusService,
+    @Inject(forwardRef(() => PaymentRequestsService))
+    private readonly paymentRequestsService: PaymentRequestsService,
   ) {
     this.frontendBaseUrl = this.config.get<string>('FRONTEND_URL', 'http://localhost:4200');
   }
@@ -72,7 +84,37 @@ export class OrdersService {
     if (payload.classCode) payload.classCode = payload.classCode.trim().toUpperCase();
 
     const created = await this.orderModel.create(payload);
-    return this.enrich(created.toObject());
+    const enriched = await this.enrich(created.toObject());
+    
+    // Sync to classroom status
+    await this.classroomStatusService.syncFromOrder(created._id, {
+      studentCode: created.studentCode,
+      studentName: created.studentName,
+      classCode: created.classCode || '',
+      status: created.status,
+      paymentStatus: created.paymentStatus,
+    });
+    
+    // Sync to payment requests
+    await this.paymentRequestsService.syncFromOrder(created._id, {
+      studentCode: enriched.studentCode,
+      studentName: enriched.studentName,
+      classCode: enriched.classCode || '',
+      teacherSalary: enriched.teacherSalary,
+      sessions: enriched.sessions.map(s => ({
+        sessionIndex: s.sessionIndex,
+        date: s.date,
+        attendedAt: s.attendedAt,
+        imageUrl: s.imageUrl,
+      })),
+      totalAttendedSessions: enriched.totalAttendedSessions || 0,
+      teacherEarnedSalary: enriched.teacherEarnedSalary || 0,
+      paymentStatus: enriched.paymentStatus,
+      paymentInvoiceCode: enriched.paymentInvoiceCode,
+      paymentProofImage: enriched.paymentProofImage,
+    });
+    
+    return enriched;
   }
 
   async findAll(): Promise<OrderView[]> {
@@ -93,12 +135,49 @@ export class OrdersService {
 
     const updated = await this.orderModel.findByIdAndUpdate(id, payload, { new: true }).lean();
     if (!updated) throw new NotFoundException('Không tìm thấy đơn hàng');
-    return this.enrich(updated);
+    const enriched = await this.enrich(updated);
+    
+    // Sync to classroom status
+    await this.classroomStatusService.syncFromOrder(updated._id, {
+      studentCode: updated.studentCode,
+      studentName: updated.studentName,
+      classCode: updated.classCode || '',
+      status: updated.status,
+      paymentStatus: updated.paymentStatus,
+    });
+    
+    // Sync to payment requests
+    await this.paymentRequestsService.syncFromOrder(updated._id, {
+      studentCode: enriched.studentCode,
+      studentName: enriched.studentName,
+      classCode: enriched.classCode || '',
+      teacherSalary: enriched.teacherSalary,
+      sessions: enriched.sessions.map(s => ({
+        sessionIndex: s.sessionIndex,
+        date: s.date,
+        attendedAt: s.attendedAt,
+        imageUrl: s.imageUrl,
+      })),
+      totalAttendedSessions: enriched.totalAttendedSessions || 0,
+      teacherEarnedSalary: enriched.teacherEarnedSalary || 0,
+      paymentStatus: enriched.paymentStatus,
+      paymentInvoiceCode: enriched.paymentInvoiceCode,
+      paymentProofImage: enriched.paymentProofImage,
+    });
+    
+    return enriched;
   }
 
   async remove(id: string): Promise<{ success: true }> {
     const deleted = await this.orderModel.findByIdAndDelete(id).lean();
     if (!deleted) throw new NotFoundException('Không tìm thấy đơn hàng');
+    
+    // Delete corresponding classroom status
+    await this.classroomStatusService.deleteByOrderId(deleted._id);
+    
+    // Delete corresponding payment request
+    await this.paymentRequestsService.deleteByOrderId(deleted._id);
+    
     return { success: true };
   }
 
@@ -217,6 +296,16 @@ export class OrdersService {
 
     const sessions = await this.buildSessions(student, classroom);
 
+    // Calculate total attended sessions
+    // Find the last session with attendance data
+    const lastAttendedIndex = sessions.length > 0 ? sessions[sessions.length - 1].sessionIndex : 0;
+    // Parse trial/gift sessions from trialOrGift field
+    const trialGiftSessions = this.parseTrialGiftSessions(order.trialOrGift);
+    const totalAttendedSessions = Math.max(0, lastAttendedIndex - trialGiftSessions);
+
+    // Calculate teacher earned salary
+    const teacherEarnedSalary = (order.teacherSalary || 0) * totalAttendedSessions;
+
     return {
       _id: order._id.toString(),
       studentId: student?._id?.toString() || order.studentId?.toString(),
@@ -238,6 +327,12 @@ export class OrdersService {
       sessionsByInvoice: order.sessionsByInvoice,
       dataStatus: order.dataStatus,
       trialOrGift: order.trialOrGift,
+      totalAttendedSessions,
+      teacherEarnedSalary,
+      paymentStatus: order.paymentStatus,
+      paymentInvoiceCode: order.paymentInvoiceCode,
+      paymentProofImage: order.paymentProofImage,
+      status: order.status || 'Đang hoạt động',
       createdAt: this.toIso((order as any).createdAt),
       updatedAt: this.toIso((order as any).updatedAt),
       sessions,
@@ -286,7 +381,7 @@ export class OrdersService {
     const attendances = await this.attendanceModel
       .find({ studentId: student._id, classId: classroom._id, attendedAt: { $ne: null } })
       .sort({ date: 1 })
-      .limit(20)
+      .limit(30)
       .lean();
 
     return attendances.map((attendance, index) => ({
@@ -308,6 +403,16 @@ export class OrdersService {
       attendanceId: attendanceId.toString(),
     });
     return `${this.frontendBaseUrl.replace(/\/$/, '')}/attendance-report?${params.toString()}`;
+  }
+
+  private parseTrialGiftSessions(trialOrGift?: string): number {
+    if (!trialOrGift) return 0;
+    // Try to extract number from string like "2 buổi", "3", "1 buổi học thử", etc.
+    const match = trialOrGift.match(/(\d+)/);
+    if (match) {
+      return parseInt(match[1], 10);
+    }
+    return 0;
   }
 
   private toIso(value: unknown): string {

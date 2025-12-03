@@ -64,6 +64,18 @@ export class Order {
 
   @Prop({ trim: true })
   trialOrGift?: string;
+
+  @Prop({ trim: true })
+  paymentStatus?: string;
+
+  @Prop({ trim: true })
+  paymentInvoiceCode?: string;
+
+  @Prop({ trim: true })
+  paymentProofImage?: string;
+
+  @Prop({ trim: true, default: 'Đang hoạt động' })
+  status?: string;
 }
 
 export const OrderSchema = SchemaFactory.createForClass(Order);

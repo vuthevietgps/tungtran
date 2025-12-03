@@ -89,4 +89,24 @@ export class CreateOrderDto {
   @IsString()
   @MaxLength(160)
   trialOrGift?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  paymentStatus?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  paymentInvoiceCode?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  paymentProofImage?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  status?: string;
 }
