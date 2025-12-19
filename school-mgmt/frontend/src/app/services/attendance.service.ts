@@ -3,10 +3,10 @@ import { environment } from '../../environments/environment';
 import { AuthService } from './auth.service';
 
 export enum AttendanceStatus {
-  PRESENT = 'PRESENT',    // Có mặt
-  ABSENT = 'ABSENT',      // Vắng mặt
-  LATE = 'LATE',          // Đi muộn
-  EXCUSED = 'EXCUSED',    // Xin phép
+  PRESENT = 'PRESENT',                        // Có mặt
+  ABSENT_WITH_PERMISSION = 'ABSENT_WITH_PERMISSION',     // Vắng mặt xin phép
+  LATE = 'LATE',                              // Đi muộn
+  ABSENT_WITHOUT_PERMISSION = 'ABSENT_WITHOUT_PERMISSION', // Vắng mặt không phép
 }
 
 export interface StudentAttendanceItem {
@@ -23,6 +23,9 @@ export interface StudentAttendanceItem {
     date: string;
     status: AttendanceStatus | null;
     notes: string;
+    absenceProofImage?: string;
+    sessionDuration?: number;
+    salaryAmount?: number;
   };
 }
 
@@ -31,6 +34,7 @@ export interface AttendanceByClassResponse {
     _id: string;
     name: string;
     code: string;
+    classType?: 'ONLINE' | 'OFFLINE';
   };
   date: string;
   attendanceList: StudentAttendanceItem[];
@@ -67,11 +71,14 @@ export interface OrderClassSummary {
 
 export interface BulkAttendancePayload {
   classId: string;
+  teacherId?: string;
   date: string;
   attendances: Array<{
     studentId: string;
     status: AttendanceStatus;
     notes?: string;
+    absenceProofImage?: string;
+    sessionDuration?: number;
   }>;
 }
 
@@ -140,7 +147,7 @@ export class AttendanceService {
   }
 
   // Điểm danh một học sinh
-  async markSingleAttendance(classId: string, studentId: string, date: string, status: AttendanceStatus, notes?: string): Promise<boolean> {
+  async markSingleAttendance(classId: string, studentId: string, date: string, status: AttendanceStatus, notes?: string, sessionDuration?: number): Promise<boolean> {
     try {
       const res = await fetch(`${environment.apiBase}/attendance/mark`, {
         method: 'POST',
@@ -150,7 +157,8 @@ export class AttendanceService {
           studentId,
           date,
           status,
-          notes: notes || ''
+          notes: notes || '',
+          sessionDuration
         }),
       });
 
@@ -275,12 +283,12 @@ export class AttendanceService {
     switch (status) {
       case AttendanceStatus.PRESENT:
         return 'Có mặt';
-      case AttendanceStatus.ABSENT:
-        return 'Vắng mặt';
+      case AttendanceStatus.ABSENT_WITHOUT_PERMISSION:
+        return 'Vắng mặt không phép';
       case AttendanceStatus.LATE:
         return 'Đi muộn';
-      case AttendanceStatus.EXCUSED:
-        return 'Xin phép';
+      case AttendanceStatus.ABSENT_WITH_PERMISSION:
+        return 'Vắng mặt xin phép';
       default:
         return 'Chưa điểm danh';
     }
@@ -291,14 +299,33 @@ export class AttendanceService {
     switch (status) {
       case AttendanceStatus.PRESENT:
         return 'status-present';
-      case AttendanceStatus.ABSENT:
-        return 'status-absent';
+      case AttendanceStatus.ABSENT_WITHOUT_PERMISSION:
+        return 'status-absent-without-permission';
       case AttendanceStatus.LATE:
         return 'status-late';
-      case AttendanceStatus.EXCUSED:
-        return 'status-excused';
+      case AttendanceStatus.ABSENT_WITH_PERMISSION:
+        return 'status-absent-with-permission';
       default:
         return 'status-not-marked';
+    }
+  }
+
+  // Lấy danh sách giáo viên của lớp
+  async getClassTeachers(classId: string): Promise<any[]> {
+    try {
+      const res = await fetch(`${environment.apiBase}/attendance/class/${classId}/teachers`, {
+        headers: this.headers()
+      });
+      
+      if (!res.ok) {
+        console.error('Failed to load class teachers', await res.text());
+        return [];
+      }
+      
+      return res.json();
+    } catch (error) {
+      console.error('Error loading class teachers:', error);
+      return [];
     }
   }
 
@@ -326,9 +353,12 @@ export class AttendanceService {
   async getAttendanceReport(startDate: string, endDate: string, classId?: string) {
     const token = this.auth.getToken();
     let url = `${environment.apiBase}/attendance/report?startDate=${startDate}&endDate=${endDate}`;
-    
-    if (classId) {
+
+    const validObjectId = classId && /^[a-fA-F0-9]{24}$/.test(classId);
+    if (validObjectId) {
       url += `&classId=${classId}`;
+    } else if (classId) {
+      console.warn('attendance-report: bỏ qua classId không hợp lệ', classId);
     }
 
     const response = await fetch(url, {
@@ -338,7 +368,7 @@ export class AttendanceService {
     });
 
     if (!response.ok) {
-      const error = await response.json();
+      const error = await response.json().catch(() => ({} as any));
       throw new Error(error.message || 'Không thể tải báo cáo');
     }
 

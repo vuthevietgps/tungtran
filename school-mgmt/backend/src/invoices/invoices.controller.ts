@@ -22,6 +22,7 @@ import { UserDocument } from '../users/schemas/user.schema';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '../common/interfaces/role.enum';
+import { UpdatePaymentFrameDto } from './dto/update-payment-frame.dto';
 
 @Controller('invoices')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -64,6 +65,16 @@ export class InvoicesController {
     @Body() body: { action: 'CONFIRM' | 'REJECT' }
   ) {
     return this.invoicesService.confirmPayment(studentId, parseInt(frameIndex), body.action);
+  }
+
+  @Patch('payments/:studentId/:frameIndex')
+  @Roles(Role.DIRECTOR, Role.MANAGER, Role.SALE)
+  updatePaymentFrame(
+    @Param('studentId') studentId: string,
+    @Param('frameIndex') frameIndex: string,
+    @Body() dto: UpdatePaymentFrameDto,
+  ) {
+    return this.invoicesService.updatePaymentFrame(studentId, parseInt(frameIndex), dto);
   }
 
   @Patch(':id')

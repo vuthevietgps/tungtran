@@ -6,6 +6,8 @@ import { Attendance, AttendanceSchema } from './schemas/attendance.schema';
 import { ClassesModule } from '../classes/classes.module';
 import { StudentsModule } from '../students/students.module';
 import { Order, OrderSchema } from '../orders/schemas/order.schema';
+import { forwardRef } from '@nestjs/common';
+import { OrdersModule } from '../orders/orders.module';
 
 @Module({
   imports: [
@@ -15,6 +17,7 @@ import { Order, OrderSchema } from '../orders/schemas/order.schema';
     ]),
     ClassesModule,
     StudentsModule,
+    forwardRef(() => OrdersModule),
   ],
   controllers: [AttendanceController, PublicAttendanceController],
   providers: [AttendanceService],

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards, UseInterceptors, UploadedFile } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards, UseInterceptors, UploadedFile, Req } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { StudentsService } from './students.service';
 import { CreateStudentDto } from './dto/create-student.dto';
@@ -35,8 +35,8 @@ export class StudentsController {
 
   @Post()
   @Roles(Role.DIRECTOR, Role.MANAGER, Role.SALE)
-  create(@Body() createStudentDto: CreateStudentDto) {
-    return this.studentsService.create(createStudentDto);
+  create(@Body() createStudentDto: CreateStudentDto, @Req() req: any) {
+    return this.studentsService.create(createStudentDto, req.user);
   }
 
   @Get(':id')

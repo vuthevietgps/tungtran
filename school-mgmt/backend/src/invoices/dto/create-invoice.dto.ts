@@ -1,9 +1,9 @@
 import { IsNotEmpty, IsNumber, IsOptional, IsString, IsDateString, Min } from 'class-validator';
 
 export class CreateInvoiceDto {
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  invoiceNumber!: string;
+  invoiceNumber?: string;
 
   @IsString()
   @IsNotEmpty()

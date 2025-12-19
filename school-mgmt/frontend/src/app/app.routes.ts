@@ -10,10 +10,10 @@ import { AttendanceReportComponent } from './components/attendance-report.compon
 import { StudentReportComponent } from './components/student-report.component';
 import { StudentAttendanceComponent } from './components/student-attendance.component';
 import { InvoicesComponent } from './components/invoices.component';
-import { OrdersComponent } from './components/orders.component';
+import { OrdersPageComponent } from './orders/orders-page.component';
 import { StudentsComponent } from './components/students.component';
 import { ClassroomStatusComponent } from './components/classroom-status.component';
-import { PaymentRequestsComponent } from './components/payment-requests.component';
+import { TeachingReportComponent } from './components/teaching-report.component';
 import { authGuard } from './guards/auth.guard';
 import { roleGuard } from './guards/role.guard';
 
@@ -32,11 +32,11 @@ export const routes: Routes = [
 			{ path: 'classes', component: ClassesComponent, canActivate: [roleGuard(['DIRECTOR','SALE','TEACHER'])] },
 			{ path: 'attendance', component: AttendanceComponent },
 			{ path: 'attendance-report', component: AttendanceReportComponent },
+      { path: 'teaching-report', component: TeachingReportComponent, canActivate: [roleGuard(['DIRECTOR','TEACHER'])] },
 			{ path: 'student-report', component: StudentReportComponent },
 			{ path: 'invoices', component: InvoicesComponent, canActivate: [roleGuard(['DIRECTOR','SALE'])] },
-			{ path: 'orders', component: OrdersComponent, canActivate: [roleGuard(['DIRECTOR','SALE'])] },
+			{ path: 'orders', component: OrdersPageComponent, canActivate: [roleGuard(['DIRECTOR','SALE'])] },
 			{ path: 'classroom-status', component: ClassroomStatusComponent, canActivate: [roleGuard(['DIRECTOR','SALE'])] },
-			{ path: 'payment-requests', component: PaymentRequestsComponent, canActivate: [roleGuard(['DIRECTOR','TEACHER'])] },
 			{ path: '', pathMatch: 'full', redirectTo: 'classes' }
 		]
 	},

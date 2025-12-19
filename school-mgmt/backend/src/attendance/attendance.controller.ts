@@ -46,6 +46,12 @@ export class AttendanceController {
     return this.attendanceService.getAttendanceByClass(classId, date, req.user as any);
   }
 
+  // Lấy danh sách giáo viên của lớp
+  @Get('class/:classId/teachers')
+  getClassTeachers(@Param('classId') classId: string) {
+    return this.attendanceService.getClassTeachers(classId);
+  }
+
   // Lấy lịch sử điểm danh của một học sinh
   @Get('student/:studentId')
   getStudentAttendanceHistory(

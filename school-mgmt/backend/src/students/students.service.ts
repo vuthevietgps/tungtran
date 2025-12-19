@@ -3,9 +3,11 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { createHash } from 'crypto';
 import { Student, StudentDocument } from './schemas/student.schema';
-import { Attendance, AttendanceDocument } from '../attendance/schemas/attendance.schema';
+import { StudentSequence, StudentSequenceDocument } from './schemas/student-sequence.schema';
+import { Attendance, AttendanceDocument, AttendanceStatus } from '../attendance/schemas/attendance.schema';
 import { Classroom, ClassroomDocument } from '../classes/schemas/class.schema';
 import { Order, OrderDocument } from '../orders/schemas/order.schema';
+import { User, UserDocument } from '../users/schemas/user.schema';
 
 type StudentLean = Student & { _id: Types.ObjectId };
 type OrderLean = Order & { _id: Types.ObjectId };
@@ -14,10 +16,53 @@ type OrderLean = Order & { _id: Types.ObjectId };
 export class StudentsService {
   constructor(
     @InjectModel(Student.name) private readonly studentModel: Model<StudentDocument>,
+    @InjectModel(StudentSequence.name) private readonly studentSeqModel: Model<StudentSequenceDocument>,
     @InjectModel(Attendance.name) private readonly attendanceModel: Model<AttendanceDocument>,
     @InjectModel(Classroom.name) private readonly classroomModel: Model<ClassroomDocument>,
     @InjectModel(Order.name) private readonly orderModel: Model<OrderDocument>,
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
   ) {}
+
+  private calculatePaidSessions70(student: any): number {
+    // Sale nhập số buổi 70p đã mua (sessionsRegistered/sessionsCollected), chỉ tính các payment đã được duyệt
+    const payments = (student as any).payments || [];
+    return payments
+      .filter((p: any) => (p.confirmStatus || 'PENDING') === 'CONFIRMED')
+      .reduce((sum: number, p: any) => {
+        const sessions = p.sessionsCollected ?? p.sessionsRegistered ?? 0;
+        const duration = Number(p.sessionDuration) || 70;
+        const minutes = (Number.isFinite(sessions) ? Number(sessions) : 0) * duration;
+        const sessions70 = minutes / 70;
+        return sum + (Number.isFinite(sessions70) ? sessions70 : 0);
+      }, 0);
+  }
+
+  private async buildConsumedMinutesMap(studentIds: Types.ObjectId[]): Promise<Map<string, number>> {
+    if (!studentIds.length) return new Map();
+
+    const pipeline = [
+      {
+        $match: {
+          studentId: { $in: studentIds },
+          status: { $in: [AttendanceStatus.PRESENT, AttendanceStatus.LATE] }
+        }
+      },
+      {
+        $addFields: {
+          usedMinutes: { $ifNull: ['$sessionDuration', 70] }
+        }
+      },
+      {
+        $group: {
+          _id: '$studentId',
+          totalUsedMinutes: { $sum: '$usedMinutes' }
+        }
+      }
+    ];
+
+    const rows = await this.attendanceModel.aggregate(pipeline);
+    return new Map(rows.map((row: any) => [row._id.toString(), row.totalUsedMinutes]));
+  }
 
   findAll() {
     return this.buildStudentListFromOrders();
@@ -51,9 +96,43 @@ export class StudentsService {
       pushStudent(this.mapOrderStudent(order));
     }
 
-    return Array.from(studentMap.values()).sort((a, b) =>
+    const studentsArray = Array.from(studentMap.values()).sort((a, b) =>
       a.fullName.localeCompare(b.fullName, 'vi', { sensitivity: 'base' })
     );
+
+    const validObjectIds = studentsArray
+      .map((s) => (s as any)._id?.toString?.())
+      .filter((id): id is string => !!id && Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+
+    const consumedMinutesMap = await this.buildConsumedMinutesMap(validObjectIds);
+
+    for (const student of studentsArray) {
+      const id = (student as any)._id?.toString?.();
+      if (!id || !Types.ObjectId.isValid(id)) continue;
+
+      const basePaid70 = this.calculatePaidSessions70(student); // số buổi 70p đã mua
+      const paidMinutes = basePaid70 * 70;
+      const usedMinutes = consumedMinutesMap.get(id) || 0;
+      const remainingMinutes = Math.max(0, paidMinutes - usedMinutes);
+
+      const toRemaining = (target: number) => Math.floor(remainingMinutes / target);
+
+      (student as any).sessionBalances = {
+        basePaid70,
+        baseUsed70: usedMinutes / 70,
+        remaining70Exact: Number((remainingMinutes / 70).toFixed(3)),
+        remaining70: Math.floor(remainingMinutes / 70),
+        remaining50: toRemaining(50),
+        remaining40: toRemaining(40),
+        remaining90: toRemaining(90),
+        remaining110: toRemaining(110),
+        remaining120: toRemaining(120),
+        remaining150: toRemaining(150),
+      };
+    }
+
+    return studentsArray;
   }
 
   private mapStudentDocument(student: StudentLean) {
@@ -62,10 +141,13 @@ export class StudentsService {
       _id: student._id.toString(),
       studentCode: student.studentCode,
       fullName: student.fullName,
+      dateOfBirth: student.dateOfBirth ? student.dateOfBirth.toISOString() : undefined,
       age: student.age,
       parentName: student.parentName,
       parentPhone: student.parentPhone,
       faceImage: student.faceImage,
+      level: (student as any).level,
+      studentType: (student as any).studentType,
       approvalStatus: (student as any).approvalStatus || 'PENDING',
       payments: (student as any).payments || [],
       productPackage: productPackage && typeof productPackage === 'object'
@@ -88,6 +170,7 @@ export class StudentsService {
       parentName: order.parentName || 'Chưa cập nhật',
       parentPhone: (order as any).parentPhone || '',
       faceImage: (order as any).faceImage || '',
+      studentType: (order as any).studentType,
       productPackage: undefined,
     };
   }
@@ -102,6 +185,24 @@ export class StudentsService {
     const hash = createHash('md5').update(seed).digest('hex').slice(0, 24);
     return new Types.ObjectId(hash).toHexString();
   }
+
+  private extractSaleCode(email?: string | null): string {
+    if (!email) return 'SALE';
+    const prefix = email.split('@')[0] || 'SALE';
+    const cleaned = prefix.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+    return cleaned || 'SALE';
+  }
+
+  private async generateStudentCode(saleCode: string): Promise<string> {
+    const seq = await this.studentSeqModel.findOneAndUpdate(
+      { saleCode },
+      { $inc: { current: 1 } },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+    const padded = String(seq.current).padStart(4, '0');
+    return `${saleCode}-${padded}`;
+  }
+
   async getStudentReport(classId?: string, searchTerm?: string) {
     // Build filter for students
     const studentFilter: any = {};
@@ -185,8 +286,19 @@ export class StudentsService {
     return reportData;
   }
 
-  async create(createStudentDto: any) {
-    const student = new this.studentModel(createStudentDto);
+  async create(createStudentDto: any, actor?: any) {
+    const { saleId } = createStudentDto;
+    const saleUser = saleId ? await this.userModel.findById(saleId) : null;
+    const saleCode = this.extractSaleCode(saleUser?.email || actor?.email);
+    const studentCode = await this.generateStudentCode(saleCode);
+
+    const payload = {
+      ...createStudentDto,
+      studentCode,
+      saleCode,
+    };
+
+    const student = new this.studentModel(payload);
     return student.save();
   }
 

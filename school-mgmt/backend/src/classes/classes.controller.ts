@@ -37,14 +37,4 @@ export class ClassesController {
   remove(@Param('id') id: string) {
     return this.classesService.remove(id);
   }
-
-  @Post(':id/assign-students')
-  @Roles(Role.SALE)
-  assignStudents(
-    @Param('id') id: string,
-    @Body() dto: AssignStudentsDto,
-    @Req() req: Request,
-  ) {
-    return this.classesService.assignStudentsBySale(id, dto, req.user as any);
-  }
 }

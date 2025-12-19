@@ -6,11 +6,18 @@ export interface OrderSessionEntry {
   sessionIndex: number;
   date?: string;
   classCode?: string;
+  classId?: string;
   studentCode?: string;
+  teacherId?: string;
+  teacherCode?: string;
+  teacherEmail?: string;
   lookupUrl?: string;
   attendanceId?: string;
   attendedAt?: string;
   imageUrl?: string;
+  sessionDuration?: number;
+  salaryAmount?: number;
+  status?: string;
 }
 
 export interface OrderItem {
@@ -18,6 +25,7 @@ export interface OrderItem {
   studentId?: string;
   studentName: string;
   studentCode: string;
+  studentType?: 'ONLINE' | 'OFFLINE';
   level?: string;
   parentName: string;
   teacherId?: string;
@@ -32,6 +40,8 @@ export interface OrderItem {
   classCode?: string;
   invoiceNumber?: string;
   sessionsByInvoice?: number;
+  expectedSessions?: number;
+  sessionDuration?: number;
   dataStatus?: string;
   trialOrGift?: string;
   totalAttendedSessions?: number;
@@ -63,6 +73,8 @@ export interface OrderPayload {
   classCode?: string;
   invoiceNumber?: string;
   sessionsByInvoice?: number;
+  expectedSessions?: number;
+  sessionDuration?: number;
   dataStatus?: string;
   trialOrGift?: string;
   paymentStatus?: string;

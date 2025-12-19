@@ -1,4 +1,4 @@
-import { IsInt, IsNotEmpty, IsOptional, IsString, Matches, Max, Min, IsMongoId } from 'class-validator';
+import { IsInt, IsNotEmpty, IsOptional, IsString, Matches, Max, Min, IsMongoId, IsIn } from 'class-validator';
 
 export class PaymentFrameDto {
   @IsInt()
@@ -31,22 +31,38 @@ export class PaymentFrameDto {
   sessionsCollected?: number;
 
   @IsOptional()
+  @IsIn([40, 50, 70, 90, 110, 120])
+  sessionDuration?: number;
+
+  @IsOptional()
   @IsString()
   invoiceImage?: string;
 
   @IsOptional()
   @IsString()
   confirmStatus?: 'PENDING' | 'CONFIRMED';
+
+  @IsOptional()
+  @IsString()
+  transferDate?: string;
+
+  @IsOptional()
+  @IsString()
+  cod?: string;
 }
 
 export class CreateStudentDto {
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  studentCode!: string;
+  studentCode?: string;
 
   @IsString()
   @IsNotEmpty()
   fullName!: string;
+
+  @IsOptional()
+  @IsString()
+  dateOfBirth?: string;
 
   @IsInt()
   @Min(3)
@@ -63,6 +79,10 @@ export class CreateStudentDto {
 
   @IsString()
   faceImage!: string;
+
+  @IsOptional()
+  @IsString()
+  level?: string;
 
   @IsOptional()
   @IsString()

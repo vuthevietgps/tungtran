@@ -5,12 +5,24 @@ import { AuthService } from './auth.service';
 export interface ProductItem {
   _id: string;
   name: string;
-  code: string;
+  productType: 'ONLINE' | 'OFFLINE';
+  teacherName?: string;
+  content?: string;
+  duration?: string;
+  sessionCount?: string;
 }
 
 export interface ProductCreateResult {
   ok: boolean;
   message?: string;
+}
+
+export interface ProductPayload {
+  productType: 'ONLINE' | 'OFFLINE';
+  teacherName?: string;
+  content?: string;
+  duration?: string;
+  sessionCount?: string;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -35,7 +47,7 @@ export class ProductService {
     return res.json();
   }
 
-  async create(payload: { name: string; code: string }): Promise<ProductCreateResult> {
+  async create(payload: ProductPayload): Promise<ProductCreateResult> {
     const res = await fetch(`${environment.apiBase}/products`, {
       method: 'POST',
       headers: this.headers(),
@@ -52,5 +64,30 @@ export class ProductService {
       message = await res.text();
     }
     return { ok: false, message };
+  }
+
+  async update(id: string, payload: ProductPayload): Promise<ProductCreateResult> {
+    const res = await fetch(`${environment.apiBase}/products/${id}`, {
+      method: 'PATCH',
+      headers: this.headers(),
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) return { ok: true };
+    let message = 'Không thể cập nhật sản phẩm';
+    try {
+      const data = await res.json();
+      message = data?.message ?? message;
+    } catch {
+      message = await res.text();
+    }
+    return { ok: false, message };
+  }
+
+  async remove(id: string): Promise<boolean> {
+    const res = await fetch(`${environment.apiBase}/products/${id}`, {
+      method: 'DELETE',
+      headers: this.headers(),
+    });
+    return res.ok;
   }
 }

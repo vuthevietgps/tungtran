@@ -7,23 +7,23 @@ import { UpdateInvoiceDto } from './dto/update-invoice.dto';
 import { UserDocument } from '../users/schemas/user.schema';
 import { Role } from '../common/interfaces/role.enum';
 import { Student, StudentDocument } from '../students/schemas/student.schema';
+import { InvoiceSequence, InvoiceSequenceDocument } from './schemas/invoice-sequence.schema';
 
 @Injectable()
 export class InvoicesService {
   constructor(
     @InjectModel(Invoice.name) private readonly invoiceModel: Model<InvoiceDocument>,
+    @InjectModel(InvoiceSequence.name) private readonly invoiceSeqModel: Model<InvoiceSequenceDocument>,
     @InjectModel(Student.name) private readonly studentModel: Model<StudentDocument>,
   ) {}
 
   async create(dto: CreateInvoiceDto, actor: UserDocument) {
-    // Kiểm tra số hóa đơn có trùng không
-    const existingInvoice = await this.invoiceModel.findOne({ invoiceNumber: dto.invoiceNumber });
-    if (existingInvoice) {
-      throw new Error('Số hóa đơn đã tồn tại');
-    }
+    const invoiceNumber = await this.generateInvoiceNumber(actor);
 
     const entity = new this.invoiceModel({ 
       ...dto, 
+      invoiceNumber,
+      saleCode: this.extractSaleCode(actor.email),
       studentId: new Types.ObjectId(dto.studentId),
       createdBy: actor._id 
     });
@@ -49,17 +49,10 @@ export class InvoicesService {
   }
 
   async update(id: string, dto: UpdateInvoiceDto) {
-    if (dto.invoiceNumber) {
-      const existingInvoice = await this.invoiceModel.findOne({ 
-        invoiceNumber: dto.invoiceNumber,
-        _id: { $ne: id }
-      });
-      if (existingInvoice) {
-        throw new Error('Số hóa đơn đã tồn tại');
-      }
-    }
+    // Không cho chỉnh sửa mã hóa đơn hoặc mã sale
+    const { invoiceNumber, saleCode, ...safeDto } = dto as any;
 
-    const updated = await this.invoiceModel.findByIdAndUpdate(id, dto, { new: true })
+    const updated = await this.invoiceModel.findByIdAndUpdate(id, safeDto, { new: true })
       .populate('studentId', 'fullName parentName parentPhone')
       .populate('createdBy', 'fullName email')
       .lean();
@@ -102,6 +95,9 @@ export class InvoicesService {
             amountCollected: payment.amountCollected || 0,
             sessionsCollected: payment.sessionsCollected || 0,
             invoiceImage: payment.invoiceImage || '',
+            transferDate: payment.transferDate || null,
+            cod: payment.cod || '',
+            saleName: (student as any).saleName || '',
             confirmStatus: payment.confirmStatus || 'PENDING',
             createdAt: (student as any).createdAt,
           });
@@ -132,5 +128,43 @@ export class InvoicesService {
       success: true, 
       message: action === 'CONFIRM' ? 'Đã duyệt hóa đơn' : 'Đã từ chối hóa đơn' 
     };
+  }
+
+  async updatePaymentFrame(studentId: string, frameIndex: number, payload: { cod?: string; transferDate?: string }) {
+    const student = await this.studentModel.findById(studentId);
+    if (!student) {
+      throw new NotFoundException('Học sinh không tồn tại');
+    }
+
+    const payment = student.payments?.find(p => p.frameIndex === frameIndex);
+    if (!payment) {
+      throw new NotFoundException('Không tìm thấy thông tin thanh toán');
+    }
+
+    if (payload.cod !== undefined) payment.cod = payload.cod;
+    if (payload.transferDate !== undefined) payment.transferDate = payload.transferDate ? new Date(payload.transferDate) : undefined;
+
+    await student.save();
+
+    return { success: true };
+  }
+
+  private extractSaleCode(email?: string): string {
+    if (!email) return 'SALE';
+    const prefix = email.split('@')[0] || 'SALE';
+    const cleaned = prefix.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+    return cleaned || 'SALE';
+  }
+
+  private async generateInvoiceNumber(actor: UserDocument): Promise<string> {
+    const saleCode = this.extractSaleCode(actor.email);
+    const seq = await this.invoiceSeqModel.findOneAndUpdate(
+      { saleCode },
+      { $inc: { current: 1 } },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+
+    const padded = String(seq.current).padStart(4, '0');
+    return `${saleCode}-${padded}`;
   }
 }

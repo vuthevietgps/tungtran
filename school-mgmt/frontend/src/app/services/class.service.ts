@@ -6,31 +6,52 @@ export interface ClassMember {
   _id: string;
   fullName: string;
   email?: string;
+  salaryLevel?: number;
+}
+
+export interface TeacherWithSalaries {
+  teacherId: string;
+  salary0: number;
+  salary1: number;
+  salary2: number;
+  salary3: number;
+  salary4: number;
+  salary5: number;
+  baseSalary70?: number;
+  offlineSalary1?: number;
+  offlineSalary2?: number;
+  offlineSalary3?: number;
+  offlineSalary4?: number;
 }
 
 export interface ClassItem {
   _id: string;
   name: string;
   code: string;
-  teacher?: ClassMember | null;
-  sale?: ClassMember | null;
+  teachers?: {
+    teacherId: ClassMember;
+    salary0: number;
+    salary1: number;
+    salary2: number;
+    salary3: number;
+    salary4: number;
+    salary5: number;
+    offlineSalary1?: number;
+    offlineSalary2?: number;
+    offlineSalary3?: number;
+    offlineSalary4?: number;
+  }[];
   students?: ClassMember[];
-  revenuePerStudent?: number; // Doanh thu mỗi học sinh (VNĐ)
-  teacherSalaryCost?: number; // Chi phí lương giáo viên mỗi học sinh (VNĐ)
-  totalRevenue?: number; // Tổng doanh thu = revenuePerStudent * số học sinh
-  totalCost?: number; // Tổng chi phí = teacherSalaryCost * số học sinh
-  profit?: number; // Lợi nhuận = totalRevenue - totalCost
-  studentCount?: number; // Tổng số học sinh
+  classType?: 'ONLINE' | 'OFFLINE';
+  studentCount?: number;
 }
 
 export interface ClassPayload {
   name: string;
   code: string;
-  teacherId: string;
-  saleId: string;
+  teachers: TeacherWithSalaries[];
   studentIds: string[];
-  revenuePerStudent?: number; // Doanh thu mỗi học sinh (VNĐ)
-  teacherSalaryCost?: number; // Chi phí lương giáo viên mỗi học sinh (VNĐ)
+  classType: 'ONLINE' | 'OFFLINE';
 }
 
 @Injectable({ providedIn: 'root' })

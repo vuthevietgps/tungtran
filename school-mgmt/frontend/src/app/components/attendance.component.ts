@@ -9,6 +9,7 @@ import {
   BulkAttendancePayload 
 } from '../services/attendance.service';
 import { ClassItem } from '../services/class.service';
+import { StudentService, StudentItem } from '../services/student.service';
 
 @Component({
   selector: 'app-attendance',
@@ -30,6 +31,18 @@ import { ClassItem } from '../services/class.service';
           <option value="">-- Chọn lớp học --</option>
           <option *ngFor="let cls of classes()" [value]="cls._id">
                 {{cls.code}} - {{cls.name}} ({{cls.studentCount || cls.students?.length || 0}} học sinh)
+          </option>
+        </select>
+      </label>
+    </div>
+
+    <div class="control-group" *ngIf="selectedClassId && classTeachers().length > 0">
+      <label>
+        Giáo viên điểm danh:
+        <select [(ngModel)]="selectedTeacherId" [disabled]="loading()">
+          <option value="">-- Chọn giáo viên --</option>
+          <option *ngFor="let teacher of classTeachers()" [value]="teacher._id">
+            {{teacher.fullName}} ({{teacher.email}})
           </option>
         </select>
       </label>
@@ -70,9 +83,7 @@ import { ClassItem } from '../services/class.service';
     <div class="attendance-summary" *ngIf="attendanceData()?.attendanceList?.length">
       <div class="summary-stats">
         <span class="stat present">Có mặt: {{getStatusCount(AttendanceStatus.PRESENT)}}</span>
-        <span class="stat absent">Vắng mặt: {{getStatusCount(AttendanceStatus.ABSENT)}}</span>
-        <span class="stat late">Đi muộn: {{getStatusCount(AttendanceStatus.LATE)}}</span>
-        <span class="stat excused">Xin phép: {{getStatusCount(AttendanceStatus.EXCUSED)}}</span>
+        <span class="stat absent-without-permission">Vắng mặt không phép: {{getStatusCount(AttendanceStatus.ABSENT_WITHOUT_PERMISSION)}}</span>
         <span class="stat not-marked">Chưa điểm danh: {{getStatusCount(null)}}</span>
       </div>
     </div>
@@ -91,6 +102,7 @@ import { ClassItem } from '../services/class.service';
         <div class="student-info">
           <h4>{{item.student.fullName}}</h4>
           <p>Tuổi: {{item.student.age}} - Phụ huynh: {{item.student.parentName}}</p>
+          <p *ngIf="classType() === 'OFFLINE'">Số buổi còn lại: {{ getOfflineRemaining(item) }}</p>
         </div>
         
         <div class="student-actions">
@@ -120,34 +132,37 @@ import { ClassItem } from '../services/class.service';
               <input 
                 type="radio" 
                 [name]="'status_' + item.student._id"
-                [value]="AttendanceStatus.ABSENT"
+                [value]="AttendanceStatus.ABSENT_WITHOUT_PERMISSION"
                 [(ngModel)]="item.attendance.status"
                 (change)="onStatusChange(item)"
               />
-              <span class="status-label absent">Vắng mặt</span>
+              <span class="status-label absent-without-permission">Vắng mặt không phép</span>
             </label>
-            
-            <label>
-              <input 
-                type="radio" 
-                [name]="'status_' + item.student._id"
-                [value]="AttendanceStatus.LATE"
-                [(ngModel)]="item.attendance.status"
-                (change)="onStatusChange(item)"
-              />
-              <span class="status-label late">Đi muộn</span>
-            </label>
-            
-            <label>
-              <input 
-                type="radio" 
-                [name]="'status_' + item.student._id"
-                [value]="AttendanceStatus.EXCUSED"
-                [(ngModel)]="item.attendance.status"
-                (change)="onStatusChange(item)"
-              />
-              <span class="status-label excused">Xin phép</span>
-            </label>
+          </div>
+
+          <div class="duration-selector" *ngIf="classType() === 'ONLINE'">
+            <div class="duration-list">
+              <span class="label">Độ dài buổi:</span>
+              <div class="duration-options">
+                <label class="duration-option" *ngFor="let d of sessionDurations">
+                  <input type="radio"
+                         [name]="'duration_' + item.student._id"
+                         [value]="d"
+                         [(ngModel)]="item.attendance.sessionDuration"
+                         (change)="onDurationChange(item)"
+                         [disabled]="isDurationBlocked(item.student._id, d, item.attendance.status)" />
+                  <span class="option-text">
+                    {{d}} phút
+                    <span *ngIf="getRemainingForDuration(item.student._id, d) as rem"> (còn {{rem}} buổi)</span>
+                    <span *ngIf="isDurationBlocked(item.student._id, d, item.attendance.status)"> (hết quỹ)</span>
+                  </span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="salary-line" *ngIf="item.attendance.salaryAmount !== undefined">
+            Lương buổi: <strong>{{ formatCurrency(item.attendance.salaryAmount || 0) }}</strong>
           </div>
           
           <div class="notes-input" *ngIf="item.attendance.status && item.attendance.status !== AttendanceStatus.PRESENT">
@@ -157,6 +172,22 @@ import { ClassItem } from '../services/class.service';
               [(ngModel)]="item.attendance.notes"
               (input)="onNotesChange(item)"
             />
+          </div>
+          
+          <div class="absence-proof-upload" *ngIf="item.attendance.status === AttendanceStatus.ABSENT_WITHOUT_PERMISSION">
+            <label class="file-upload-label">
+              <input 
+                type="file" 
+                accept="image/*"
+                (change)="handleAbsenceProofUpload($event, item)"
+                style="display:none"
+              />
+              <span class="upload-button">📎 {{ item.attendance.absenceProofImage ? 'Thay đổi ảnh' : 'Tải ảnh đơn' }}</span>
+            </label>
+            <div *ngIf="item.attendance.absenceProofImage" class="image-preview">
+              <img [src]="item.attendance.absenceProofImage" alt="Ảnh đơn xin phép" />
+              <button class="remove-image" (click)="removeAbsenceProof(item)">×</button>
+            </div>
           </div>
         </div>
       </div>
@@ -168,58 +199,58 @@ import { ClassItem } from '../services/class.service';
   </div>
   `,
   styles: [`
-    .page-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:24px; }
-    .page-header div h2 { margin:0 0 4px 0; color:#1e293b; }
-    .page-header div p { margin:0; color:#64748b; }
+    .page-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:24px; color:var(--text); }
+    .page-header div h2 { margin:0 0 4px 0; color:var(--text); }
+    .page-header div p { margin:0; color:var(--muted); }
 
-    .attendance-controls { display:flex; flex-wrap:wrap; gap:16px; margin-bottom:24px; padding:16px; background:#f8fafc; border-radius:8px; border:1px solid #e2e8f0; }
+    .attendance-controls { display:flex; flex-wrap:wrap; gap:16px; margin-bottom:24px; padding:16px; background:var(--panel); border-radius:12px; border:1px solid var(--border); }
     .control-group { display:flex; flex-direction:column; }
-    .control-group label { font-weight:500; color:#374151; margin-bottom:4px; }
-    .control-group select, .control-group input { padding:8px 12px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; min-width:200px; }
-    .control-group button { padding:8px 16px; border:none; border-radius:6px; font-weight:500; cursor:pointer; }
-    .control-group button.primary { background:#2563eb; color:white; }
+    .control-group label { font-weight:500; color:var(--muted); margin-bottom:4px; }
+    .control-group select, .control-group input { padding:8px 12px; border:1px solid var(--border); border-radius:8px; font-size:14px; min-width:200px; background:var(--surface); color:var(--text); }
+    .control-group button { padding:10px 16px; border:1px solid var(--border); border-radius:8px; font-weight:600; cursor:pointer; background:var(--surface); color:var(--text); }
+    .control-group button.primary { background:var(--primary); color:#04121a; border-color:var(--primary-strong); }
     .control-group button:disabled { opacity:0.5; cursor:not-allowed; }
 
-    .error { color:#dc2626; background:#fef2f2; padding:12px; border-radius:6px; border:1px solid #fecaca; margin-bottom:16px; }
+    .error { color:var(--danger); background:rgba(244,63,94,0.12); padding:12px; border-radius:8px; border:1px solid var(--danger); margin-bottom:16px; }
 
     .attendance-content { }
-    .class-info { margin-bottom:20px; }
-    .class-info h3 { margin:0 0 4px 0; color:#1e293b; }
-    .class-info p { margin:0; color:#64748b; }
+    .class-info { margin-bottom:20px; color:var(--text); }
+    .class-info h3 { margin:0 0 4px 0; color:var(--text); }
+    .class-info p { margin:0; color:var(--muted); }
 
     .attendance-summary { margin-bottom:20px; }
     .summary-stats { display:flex; flex-wrap:wrap; gap:16px; }
-    .stat { padding:8px 12px; border-radius:6px; font-size:14px; font-weight:500; }
-    .stat.present { background:#dcfce7; color:#16a34a; }
-    .stat.absent { background:#fee2e2; color:#dc2626; }
-    .stat.late { background:#fef3c7; color:#d97706; }
-    .stat.excused { background:#e0e7ff; color:#4f46e5; }
-    .stat.not-marked { background:#f1f5f9; color:#64748b; }
+    .stat { padding:8px 12px; border-radius:8px; font-size:14px; font-weight:600; border:1px solid var(--border); }
+    .stat.present { background:rgba(52,211,153,0.15); color:#bbf7d0; }
+    .stat.absent-with-permission { background:rgba(34,211,238,0.15); color:#a5f3fc; }
+    .stat.late { background:rgba(245,158,11,0.18); color:#fcd34d; }
+    .stat.absent-without-permission { background:rgba(244,63,94,0.18); color:#fecdd3; }
+    .stat.not-marked { background:rgba(148,163,184,0.15); color:var(--muted); }
 
     .attendance-actions { display:flex; gap:12px; margin-bottom:24px; }
-    .attendance-actions button { padding:10px 20px; border:none; border-radius:6px; font-weight:500; cursor:pointer; }
-    .attendance-actions button.primary { background:#2563eb; color:white; }
-    .attendance-actions button.secondary { background:#6b7280; color:white; }
+    .attendance-actions button { padding:10px 20px; border:1px solid var(--border); border-radius:10px; font-weight:600; cursor:pointer; background:var(--surface); color:var(--text); }
+    .attendance-actions button.primary { background:var(--primary); color:#04121a; border-color:var(--primary-strong); }
+    .attendance-actions button.secondary { background:var(--chip); color:var(--text); }
     .attendance-actions button:disabled { opacity:0.5; cursor:not-allowed; }
 
     .attendance-list { display:flex; flex-direction:column; gap:16px; }
-    .student-card { background:white; border:1px solid #e5e7eb; border-radius:8px; padding:20px; }
-    .student-info h4 { margin:0 0 4px 0; color:#1f2937; }
-    .student-info p { margin:0; color:#6b7280; font-size:14px; }
+    .student-card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:20px; color:var(--text); }
+    .student-info h4 { margin:0 0 4px 0; color:var(--text); }
+    .student-info p { margin:0; color:var(--muted); font-size:14px; }
     
     .student-actions { margin:12px 0; }
     .btn-link { 
-      background:#8b5cf6; 
-      color:white; 
-      border:none; 
+      background:var(--primary); 
+      color:#04121a; 
+      border:1px solid var(--primary-strong); 
       padding:8px 16px; 
-      border-radius:6px; 
+      border-radius:8px; 
       font-size:14px; 
       font-weight:500; 
       cursor:pointer; 
       transition: all 0.2s;
     }
-    .btn-link:hover:not(:disabled) { background:#7c3aed; transform:translateY(-1px); }
+    .btn-link:hover:not(:disabled) { background:var(--primary-strong); transform:translateY(-1px); }
     .btn-link:disabled { opacity:0.5; cursor:not-allowed; }
 
     .attendance-controls-inline { margin-top:16px; }
@@ -228,9 +259,52 @@ import { ClassItem } from '../services/class.service';
     .status-selector input[type="radio"] { margin-right:6px; }
     .status-label { font-size:14px; font-weight:500; }
     .status-label.present { color:#16a34a; }
-    .status-label.absent { color:#dc2626; }
+    .status-label.absent-with-permission { color:#4f46e5; }
     .status-label.late { color:#d97706; }
-    .status-label.excused { color:#4f46e5; }
+    .status-label.absent-without-permission { color:#dc2626; }
+    .duration-selector { margin-bottom:12px; }
+    .duration-selector label { font-weight:500; color:#374151; display:flex; gap:8px; align-items:center; }
+    .duration-selector select { padding:8px 12px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; min-width:140px; }
+    
+    .absence-proof-upload { margin-top:12px; }
+    .file-upload-label { display:inline-block; cursor:pointer; }
+    .upload-button { 
+      display:inline-block;
+      padding:8px 16px; 
+      background:#6366f1; 
+      color:white; 
+      border-radius:6px; 
+      font-size:14px;
+      font-weight:500;
+      transition: background 0.2s;
+    }
+    .upload-button:hover { background:#4f46e5; }
+    .image-preview { 
+      margin-top:8px; 
+      position:relative; 
+      display:inline-block;
+    }
+    .image-preview img { 
+      max-width:200px; 
+      max-height:200px; 
+      border:1px solid #d1d5db; 
+      border-radius:6px;
+    }
+    .remove-image { 
+      position:absolute; 
+      top:-8px; 
+      right:-8px; 
+      width:24px; 
+      height:24px; 
+      background:#ef4444; 
+      color:white; 
+      border:none; 
+      border-radius:50%; 
+      cursor:pointer; 
+      font-size:16px;
+      line-height:1;
+    }
+    .remove-image:hover { background:#dc2626; }
 
     .notes-input { }
     .notes-input input { width:100%; padding:8px 12px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; }
@@ -241,8 +315,10 @@ import { ClassItem } from '../services/class.service';
 export class AttendanceComponent {
   // Expose enum to template
   readonly AttendanceStatus = AttendanceStatus;
+  readonly sessionDurations = [40, 50, 70, 90, 110];
 
   classes = signal<ClassItem[]>([]);
+  classTeachers = signal<any[]>([]);
   attendanceData = signal<AttendanceByClassResponse | null>(null);
   loading = signal(false);
   saving = signal(false);
@@ -250,13 +326,15 @@ export class AttendanceComponent {
   generatingLink = '';
 
   selectedClassId = '';
+  selectedTeacherId = '';
   selectedDate = '';
   todayString = '';
 
-  private originalAttendanceData: Map<string, { status: AttendanceStatus | null; notes: string }> = new Map();
+  private originalAttendanceData: Map<string, { status: AttendanceStatus | null; notes: string; sessionDuration?: number }> = new Map();
 
   constructor(
-    private attendanceService: AttendanceService
+    private attendanceService: AttendanceService,
+    private studentService: StudentService
   ) {
     this.todayString = new Date().toISOString().split('T')[0];
     this.selectedDate = this.todayString;
@@ -292,11 +370,38 @@ export class AttendanceComponent {
     }
   }
 
-  onClassChange() {
+  async onClassChange() {
     this.attendanceData.set(null);
+    this.classTeachers.set([]);
+    this.selectedTeacherId = '';
     this.error.set('');
-    if (this.selectedClassId && this.selectedDate) {
-      this.loadAttendance();
+    
+    if (this.selectedClassId) {
+      // Load teachers for this class
+      await this.loadClassTeachers();
+      
+      if (this.selectedDate) {
+        this.loadAttendance();
+      }
+    }
+  }
+
+  async loadClassTeachers() {
+    if (!this.selectedClassId) return;
+    
+    try {
+      // Only load teachers for real classes (not virtual ones)
+      if (!this.selectedClassId.startsWith('virtual_')) {
+        const teachers = await this.attendanceService.getClassTeachers(this.selectedClassId);
+        this.classTeachers.set(teachers);
+        
+        // Auto-select if only one teacher
+        if (teachers.length === 1) {
+          this.selectedTeacherId = teachers[0]._id;
+        }
+      }
+    } catch (error) {
+      console.error('Error loading class teachers:', error);
     }
   }
 
@@ -327,7 +432,8 @@ export class AttendanceComponent {
         class: {
           _id: selectedClass._id,
           name: selectedClass.name,
-          code: selectedClass.code
+          code: selectedClass.code,
+          classType: (selectedClass as any).classType
         },
         date: this.selectedDate,
         attendanceList: (selectedClass.students || []).map(student => ({
@@ -345,13 +451,42 @@ export class AttendanceComponent {
             status: null,
             notes: '',
             attendedAt: null,
-            imageUrl: null
+            imageUrl: null,
+            sessionDuration: 70
           }
         }))
       };
       
       this.attendanceData.set(attendanceData);
       this.saveOriginalData(attendanceData);
+
+      // Attach session balances for each student to support duration blocking
+      try {
+        const allStudents: StudentItem[] = await this.studentService.list();
+        const balanceById = new Map<string, StudentItem['sessionBalances']>();
+        const balanceByCode = new Map<string, StudentItem['sessionBalances']>();
+        for (const st of allStudents) {
+          if (st._id && st.sessionBalances) {
+            balanceById.set(st._id, st.sessionBalances);
+          }
+          const codeKey = (st.studentCode || '').trim().toUpperCase();
+          if (codeKey && st.sessionBalances) {
+            balanceByCode.set(codeKey, st.sessionBalances);
+          }
+        }
+        const current = this.attendanceData();
+        if (current) {
+          for (const item of current.attendanceList) {
+            const byId = balanceById.get(item.student._id.toString());
+            const codeKey = ((item.student as any).studentCode || '').trim().toUpperCase();
+            const byCode = codeKey ? balanceByCode.get(codeKey) : undefined;
+            (item as any).sessionBalances = byId || byCode || null;
+          }
+          this.attendanceData.set(current);
+        }
+      } catch (e) {
+        console.warn('Không thể tải số buổi còn lại, tiếp tục không chặn độ dài:', e);
+      }
     } catch (error) {
       this.error.set('Có lỗi xảy ra khi tải dữ liệu điểm danh');
       console.error('Error loading attendance:', error);
@@ -360,12 +495,69 @@ export class AttendanceComponent {
     }
   }
 
+  // Block duration options when remaining sessions for that duration < 1
+  isDurationBlocked(studentId: string, duration: number, status?: AttendanceStatus | null): boolean {
+    if (this.classType() === 'OFFLINE') return false;
+    const consumes = status === AttendanceStatus.PRESENT || status === AttendanceStatus.LATE;
+    if (!consumes) return false;
+
+    const current = this.attendanceData();
+    if (!current) return false;
+    const entry = current.attendanceList.find(x => x.student._id.toString() === studentId);
+    let balances = (entry as any)?.sessionBalances as StudentItem['sessionBalances'] | undefined;
+    if (!balances) {
+      const codeKey = ((entry?.student as any)?.studentCode || '').trim().toUpperCase();
+      const all = current.attendanceList.map(it => (it as any).sessionBalances);
+      // Try to find any balance attached via code (already attached per item above)
+      balances = (entry as any)?.sessionBalances;
+    }
+    if (!balances) return false;
+    switch (duration) {
+      case 40: return (balances.remaining40 ?? 0) < 1;
+      case 50: return (balances.remaining50 ?? 0) < 1;
+      case 70: return (balances.remaining70 ?? 0) < 1;
+      case 90: return (balances.remaining90 ?? 0) < 1;
+      case 110: return (balances.remaining110 ?? 0) < 1;
+      default: return false;
+    }
+  }
+
+  // Get remaining sessions for a given duration for display
+  getRemainingForDuration(studentId: string, duration: number): number | null {
+    if (this.classType() === 'OFFLINE') return null;
+    const current = this.attendanceData();
+    if (!current) return null;
+    const entry = current.attendanceList.find(x => x.student._id.toString() === studentId);
+    const balances = (entry as any)?.sessionBalances as StudentItem['sessionBalances'] | undefined;
+    if (!balances) return null;
+    switch (duration) {
+      case 40: return balances.remaining40 ?? null;
+      case 50: return balances.remaining50 ?? null;
+      case 70: return balances.remaining70 ?? null;
+      case 90: return balances.remaining90 ?? null;
+      case 110: return balances.remaining110 ?? null;
+      default: return null;
+    }
+  }
+
+  classType(): 'ONLINE' | 'OFFLINE' | undefined {
+    return this.attendanceData()?.class?.classType as any;
+  }
+
+  getOfflineRemaining(item: StudentAttendanceItem): number {
+    const balances = (item as any)?.sessionBalances as StudentItem['sessionBalances'] | undefined;
+    if (!balances) return 0;
+    const val = balances.remaining70Exact ?? balances.remaining70 ?? balances.basePaid70 ?? 0;
+    return Math.max(0, Math.floor(val));
+  }
+
   private saveOriginalData(data: AttendanceByClassResponse) {
     this.originalAttendanceData.clear();
     data.attendanceList.forEach(item => {
       this.originalAttendanceData.set(item.student._id, {
         status: item.attendance.status,
-        notes: item.attendance.notes
+        notes: item.attendance.notes,
+        sessionDuration: item.attendance.sessionDuration
       });
     });
   }
@@ -374,11 +566,61 @@ export class AttendanceComponent {
     // Clear notes if status is PRESENT
     if (item.attendance.status === AttendanceStatus.PRESENT) {
       item.attendance.notes = '';
+      item.attendance.absenceProofImage = undefined;
+    }
+  }
+
+  onDurationChange(item: StudentAttendanceItem) {
+    if (!item.attendance.sessionDuration) {
+      item.attendance.sessionDuration = 70;
     }
   }
 
   onNotesChange(item: StudentAttendanceItem) {
     // Notes changed, no additional logic needed
+  }
+
+  async handleAbsenceProofUpload(event: any, item: StudentAttendanceItem) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      alert('Vui lòng chọn file ảnh');
+      return;
+    }
+
+    // Validate file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      alert('Kích thước file không được vượt quá 5MB');
+      return;
+    }
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      // Upload to server (assuming similar endpoint as invoice receipts)
+      const response = await fetch('http://localhost:3000/invoices/upload-receipt', {
+        method: 'POST',
+        body: formData,
+        credentials: 'include'
+      });
+
+      if (!response.ok) {
+        throw new Error('Upload failed');
+      }
+
+      const result = await response.json();
+      item.attendance.absenceProofImage = result.url;
+    } catch (error) {
+      console.error('Error uploading absence proof:', error);
+      alert('Không thể tải ảnh lên. Vui lòng thử lại.');
+    }
+  }
+
+  removeAbsenceProof(item: StudentAttendanceItem) {
+    item.attendance.absenceProofImage = undefined;
   }
 
   markAllPresent() {
@@ -401,7 +643,8 @@ export class AttendanceComponent {
     return data.attendanceList.some(item => {
       const original = this.originalAttendanceData.get(item.student._id);
       return original?.status !== item.attendance.status || 
-             original?.notes !== item.attendance.notes;
+             original?.notes !== item.attendance.notes ||
+             original?.sessionDuration !== item.attendance.sessionDuration;
     });
   }
 
@@ -419,7 +662,9 @@ export class AttendanceComponent {
         .map(item => ({
           studentId: item.student._id,
           status: item.attendance.status!,
-          notes: item.attendance.notes || ''
+          notes: item.attendance.notes || '',
+          absenceProofImage: item.attendance.absenceProofImage,
+          sessionDuration: item.attendance.sessionDuration || 70
         }));
 
       const payload: BulkAttendancePayload = {
@@ -427,6 +672,11 @@ export class AttendanceComponent {
         date: this.selectedDate,
         attendances
       };
+      
+      // Add teacherId if selected
+      if (this.selectedTeacherId) {
+        payload.teacherId = this.selectedTeacherId;
+      }
 
       const success = await this.attendanceService.bulkMarkAttendance(payload);
       
@@ -464,6 +714,10 @@ export class AttendanceComponent {
 
   trackByStudentId(index: number, item: StudentAttendanceItem): string {
     return item.student._id;
+  }
+
+  formatCurrency(amount: number): string {
+    return (amount || 0).toLocaleString('vi-VN') + ' đ';
   }
 
   async generateLinkForStudent(studentId: string) {

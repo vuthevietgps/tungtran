@@ -20,10 +20,10 @@ import { AuthService } from '../services/auth.service';
         <a routerLink="/app/invoices" routerLinkActive="active" *ngIf="canManageInvoices()" title="Quản lý Hóa đơn"><span class="label">Quản lý Hóa đơn</span></a>
         <a routerLink="/app/orders" routerLinkActive="active" *ngIf="canManageOrders()" title="Quản lý Đơn hàng"><span class="label">Quản lý Đơn hàng</span></a>
         <a routerLink="/app/classroom-status" routerLinkActive="active" *ngIf="canManageOrders()" title="Trạng thái lớp học"><span class="label">Trạng thái lớp học</span></a>
-        <a routerLink="/app/payment-requests" routerLinkActive="active" *ngIf="canAccessPaymentRequests()" title="Đề nghị thanh toán"><span class="label">Đề nghị thanh toán</span></a>
         <a routerLink="/app/attendance" routerLinkActive="active" title="Điểm danh"><span class="label">Điểm danh</span></a>
         <a routerLink="/app/attendance-report" routerLinkActive="active" title="Báo cáo điểm danh"><span class="label">Báo cáo điểm danh</span></a>
         <a routerLink="/app/student-report" routerLinkActive="active" title="Báo cáo học sinh"><span class="label">Báo cáo học sinh</span></a>
+        <a routerLink="/app/teaching-report" routerLinkActive="active" *ngIf="canAccessTeachingReport()" title="Báo cáo giảng dạy"><span class="label">Báo cáo giảng dạy</span></a>
       </nav>
       <div class="user-info" *ngIf="!sidebarCollapsed">
         <div>{{auth.userSignal()?.fullName}}</div>
@@ -37,21 +37,21 @@ import { AuthService } from '../services/auth.service';
   </div>
   `,
   styles: [`
-    .layout { display:flex; min-height:100vh; background:#e2e8f0; font-family:'Segoe UI',sans-serif; }
-    .sidebar { width:220px; min-width:220px; background:#0f172a; color:#e2e8f0; padding:16px; display:flex; flex-direction:column; position:relative; transition:width 0.2s ease; }
+    .layout { display:flex; min-height:100vh; background:var(--bg); color:var(--text); font-family:'Segoe UI',sans-serif; }
+    .sidebar { width:220px; min-width:220px; background:var(--panel); color:var(--text); padding:16px; display:flex; flex-direction:column; position:relative; transition:width 0.2s ease; border-right:1px solid var(--border); }
     .sidebar.collapsed { width:68px; align-items:center; }
-    .toggle { position:absolute; top:12px; right:12px; border:none; background:#1e293b; color:#e2e8f0; border-radius:999px; width:36px; height:36px; cursor:pointer; font-size:16px; }
+    .toggle { position:absolute; top:12px; right:12px; border:1px solid var(--border); background:#132544; color:var(--text); border-radius:999px; width:36px; height:36px; cursor:pointer; font-size:16px; }
     .sidebar.collapsed .toggle { right:16px; }
     .sidebar h3 { margin-top:44px; }
     .sidebar.collapsed h3 { display:none; }
     nav { margin-top:24px; width:100%; }
-    nav a { display:flex; align-items:center; justify-content:center; padding:8px 10px; margin-bottom:4px; text-decoration:none; border-radius:4px; color:#cbd5f5; transition:background 0.15s ease; white-space:nowrap; }
+    nav a { display:flex; align-items:center; justify-content:center; padding:10px 12px; margin-bottom:6px; text-decoration:none; border-radius:8px; color:var(--text); transition:background 0.15s ease, border-color 0.15s ease; white-space:nowrap; border:1px solid transparent; }
     nav a .label { white-space:nowrap; }
     .sidebar:not(.collapsed) nav a { justify-content:flex-start; }
     .sidebar.collapsed nav a .label { display:none; }
-    nav a.active, nav a:hover { background:#1e293b; color:#fff; }
-    .content { flex:1; padding:24px; background:#f8fafc; }
-    .logout { margin-top:auto; padding:8px 12px; border:none; border-radius:4px; background:#dc2626; color:#fff; cursor:pointer; }
+    nav a.active, nav a:hover { background:#132544; border-color:var(--border); color:#a5f3fc; }
+    .content { flex:1; padding:24px; background:var(--surface); }
+    .logout { margin-top:auto; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:var(--danger); color:#fff; cursor:pointer; }
     .logout.compact { width:40px; height:40px; padding:0; font-size:0; position:relative; }
     .logout.compact::after { content:'Off'; font-size:11px; color:#fff; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
     .user-info { margin-top:auto; margin-bottom:12px; font-size:13px; text-align:left; }
@@ -84,7 +84,7 @@ export class AppShellComponent {
     return this.canManageInvoices();
   }
 
-  canAccessPaymentRequests(): boolean {
+  canAccessTeachingReport(): boolean {
     const role = this.auth.userSignal()?.role;
     return role === 'DIRECTOR' || role === 'TEACHER';
   }

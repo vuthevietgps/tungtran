@@ -21,10 +21,17 @@ interface OrderSessionView {
   date?: string;
   classCode?: string;
   studentCode?: string;
+  classId?: string;
+  teacherId?: string;
+  teacherCode?: string;
+  teacherEmail?: string;
   lookupUrl?: string;
   attendanceId?: string;
   attendedAt?: string;
   imageUrl?: string;
+  sessionDuration?: number;
+  salaryAmount?: number;
+  status?: string;
 }
 
 export interface OrderView {
@@ -32,6 +39,7 @@ export interface OrderView {
   studentId?: string;
   studentName: string;
   studentCode: string;
+  studentType?: string;
   level?: string;
   parentName: string;
   teacherId?: string;
@@ -46,6 +54,8 @@ export interface OrderView {
   classCode?: string;
   invoiceNumber?: string;
   sessionsByInvoice?: number;
+  expectedSessions?: number;
+  sessionDuration?: number;
   dataStatus?: string;
   trialOrGift?: string;
   totalAttendedSessions?: number;
@@ -63,6 +73,15 @@ export interface OrderView {
 export class OrdersService {
   private readonly frontendBaseUrl: string;
 
+  // Map session duration to salary field name
+  private readonly SALARY_DURATION_MAP: Record<number, keyof { salary0: number; salary1: number; salary2: number; salary3: number; salary4: number; salary5: number }> = {
+    40: 'salary0',
+    50: 'salary1',
+    70: 'salary2',
+    90: 'salary3',
+    110: 'salary4',
+  };
+
   constructor(
     @InjectModel(Order.name) private readonly orderModel: Model<OrderDocument>,
     @InjectModel(Student.name) private readonly studentModel: Model<StudentDocument>,
@@ -78,6 +97,36 @@ export class OrdersService {
     this.frontendBaseUrl = this.config.get<string>('FRONTEND_URL', 'http://localhost:4200');
   }
 
+  // Called when attendance changes to sync sessions and salary to order consumers
+  async syncFromAttendance(studentId: string, classId: string): Promise<void> {
+    const student = studentId ? await this.studentModel.findById(studentId).lean<StudentLean>() : null;
+    const classroom = classId ? await this.classModel.findById(classId).lean<ClassLean>() : null;
+    const studentCode = student?.studentCode;
+    const classCode = classroom?.code;
+
+    const filter: any = {};
+    if (studentId || studentCode) {
+      filter.$and = filter.$and || [];
+      const studentOr: any[] = [];
+      if (studentId) studentOr.push({ studentId: new Types.ObjectId(studentId) });
+      if (studentCode) studentOr.push({ studentCode: studentCode });
+      if (studentOr.length) filter.$and.push({ $or: studentOr });
+    }
+    if (classId || classCode) {
+      filter.$and = filter.$and || [];
+      const classOr: any[] = [];
+      if (classId) classOr.push({ classId: new Types.ObjectId(classId) });
+      if (classCode) classOr.push({ classCode: classCode });
+      if (classOr.length) filter.$and.push({ $or: classOr });
+    }
+
+    const orders = await this.orderModel.find(filter).lean();
+    for (const order of orders) {
+      const enriched = await this.enrich(order as any);
+      await this.syncPaymentRequest(order._id, enriched);
+    }
+  }
+
   async create(dto: CreateOrderDto): Promise<OrderView> {
     const payload = await this.resolveReferences(this.preparePayload(dto));
     if (payload.studentCode) payload.studentCode = payload.studentCode.trim().toUpperCase();
@@ -86,7 +135,7 @@ export class OrdersService {
     const created = await this.orderModel.create(payload);
     const enriched = await this.enrich(created.toObject());
     
-    // Sync to classroom status
+    // Sync downstream consumers
     await this.classroomStatusService.syncFromOrder(created._id, {
       studentCode: created.studentCode,
       studentName: created.studentName,
@@ -94,31 +143,14 @@ export class OrdersService {
       status: created.status,
       paymentStatus: created.paymentStatus,
     });
-    
-    // Sync to payment requests
-    await this.paymentRequestsService.syncFromOrder(created._id, {
-      studentCode: enriched.studentCode,
-      studentName: enriched.studentName,
-      classCode: enriched.classCode || '',
-      teacherSalary: enriched.teacherSalary,
-      sessions: enriched.sessions.map(s => ({
-        sessionIndex: s.sessionIndex,
-        date: s.date,
-        attendedAt: s.attendedAt,
-        imageUrl: s.imageUrl,
-      })),
-      totalAttendedSessions: enriched.totalAttendedSessions || 0,
-      teacherEarnedSalary: enriched.teacherEarnedSalary || 0,
-      paymentStatus: enriched.paymentStatus,
-      paymentInvoiceCode: enriched.paymentInvoiceCode,
-      paymentProofImage: enriched.paymentProofImage,
-    });
+    await this.syncPaymentRequest(created._id, enriched);
     
     return enriched;
   }
 
   async findAll(): Promise<OrderView[]> {
-    const orders = await this.orderModel.find().sort({ createdAt: -1 }).lean();
+    // Sort by studentCode ascending, then createdAt descending
+    const orders = await this.orderModel.find().sort({ studentCode: 1, createdAt: -1 }).lean();
     return Promise.all(orders.map((order) => this.enrich(order)));
   }
 
@@ -137,7 +169,6 @@ export class OrdersService {
     if (!updated) throw new NotFoundException('Không tìm thấy đơn hàng');
     const enriched = await this.enrich(updated);
     
-    // Sync to classroom status
     await this.classroomStatusService.syncFromOrder(updated._id, {
       studentCode: updated.studentCode,
       studentName: updated.studentName,
@@ -145,25 +176,7 @@ export class OrdersService {
       status: updated.status,
       paymentStatus: updated.paymentStatus,
     });
-    
-    // Sync to payment requests
-    await this.paymentRequestsService.syncFromOrder(updated._id, {
-      studentCode: enriched.studentCode,
-      studentName: enriched.studentName,
-      classCode: enriched.classCode || '',
-      teacherSalary: enriched.teacherSalary,
-      sessions: enriched.sessions.map(s => ({
-        sessionIndex: s.sessionIndex,
-        date: s.date,
-        attendedAt: s.attendedAt,
-        imageUrl: s.imageUrl,
-      })),
-      totalAttendedSessions: enriched.totalAttendedSessions || 0,
-      teacherEarnedSalary: enriched.teacherEarnedSalary || 0,
-      paymentStatus: enriched.paymentStatus,
-      paymentInvoiceCode: enriched.paymentInvoiceCode,
-      paymentProofImage: enriched.paymentProofImage,
-    });
+    await this.syncPaymentRequest(updated._id, enriched);
     
     return enriched;
   }
@@ -294,23 +307,23 @@ export class OrdersService {
       this.loadUser(order.saleId, order.saleEmail),
     ]);
 
-    const sessions = await this.buildSessions(student, classroom);
+    const sessions = await this.buildSessions(student, classroom, order);
 
-    // Calculate total attended sessions
-    // Find the last session with attendance data
-    const lastAttendedIndex = sessions.length > 0 ? sessions[sessions.length - 1].sessionIndex : 0;
+    // Calculate total attended sessions from actual attendance data
+    const attendedCount = sessions.filter(s => s.attendedAt).length;
     // Parse trial/gift sessions from trialOrGift field
     const trialGiftSessions = this.parseTrialGiftSessions(order.trialOrGift);
-    const totalAttendedSessions = Math.max(0, lastAttendedIndex - trialGiftSessions);
+    const totalAttendedSessions = Math.max(0, attendedCount - trialGiftSessions);
 
     // Calculate teacher earned salary
-    const teacherEarnedSalary = (order.teacherSalary || 0) * totalAttendedSessions;
+    const teacherEarnedSalary = sessions.reduce((sum, s) => sum + (s.salaryAmount || 0), 0) || (order.teacherSalary || 0) * totalAttendedSessions;
 
     return {
       _id: order._id.toString(),
       studentId: student?._id?.toString() || order.studentId?.toString(),
       studentName: order.studentName || student?.fullName || '',
       studentCode: order.studentCode,
+      studentType: student?.studentType || undefined,
       level: order.level,
       parentName: order.parentName || student?.parentName || '',
       teacherId: teacher?._id?.toString() || order.teacherId?.toString(),
@@ -325,6 +338,8 @@ export class OrdersService {
       classCode: classroom?.code || order.classCode,
       invoiceNumber: order.invoiceNumber,
       sessionsByInvoice: order.sessionsByInvoice,
+      expectedSessions: order.expectedSessions,
+      sessionDuration: order.sessionDuration,
       dataStatus: order.dataStatus,
       trialOrGift: order.trialOrGift,
       totalAttendedSessions,
@@ -375,25 +390,105 @@ export class OrdersService {
     return null;
   }
 
-  private async buildSessions(student: StudentLean | null, classroom: ClassLean | null): Promise<OrderSessionView[]> {
+  private async buildSessions(student: StudentLean | null, classroom: ClassLean | null, order: Order): Promise<OrderSessionView[]> {
     if (!student?._id || !classroom?._id) return [];
 
+    // Get all attendance records for this student in this class (sorted by date)
     const attendances = await this.attendanceModel
-      .find({ studentId: student._id, classId: classroom._id, attendedAt: { $ne: null } })
-      .sort({ date: 1 })
-      .limit(30)
+      .find({ 
+        studentId: student._id, 
+        classId: classroom._id, 
+        attendedAt: { $ne: null } 
+      })
+      .sort({ attendedAt: 1 })
       .lean();
 
-    return attendances.map((attendance, index) => ({
-      sessionIndex: index + 1,
-      date: attendance.date?.toISOString(),
-      classCode: classroom.code,
-      studentCode: student.studentCode,
-      lookupUrl: this.buildLookupUrl(classroom.code, student.studentCode, attendance._id),
-      attendanceId: attendance._id.toString(),
-      attendedAt: attendance.attendedAt ? attendance.attendedAt.toISOString() : undefined,
-      imageUrl: attendance.imageUrl || undefined,
-    }));
+    // Preload teacher info for these attendance records
+    const teacherIds = Array.from(new Set(
+      attendances.map((a) => a.teacherId?.toString()).filter(Boolean)
+    ));
+    const teacherObjectIds = teacherIds.map((id) => new Types.ObjectId(id));
+    const teachers = teacherObjectIds.length
+      ? await this.userModel.find({ _id: { $in: teacherObjectIds } }).select('email fullName').lean<UserLean[]>()
+      : [];
+    const teacherMap = new Map<string, UserLean>();
+    teachers.forEach((t) => teacherMap.set(t._id.toString(), t));
+
+    // Create a map of attendance by session index (based on attendance order)
+    const attendanceMap = new Map<number, any>();
+    attendances.forEach((attendance, index) => {
+      const sessionIndex = index + 1;
+      const teacherIdStr = attendance.teacherId?.toString();
+      const teacher = teacherIdStr ? teacherMap.get(teacherIdStr) : null;
+      const teacherEmail = teacher?.email || order.teacherEmail || undefined;
+      const teacherCode = this.teacherCodeFromEmail(teacherEmail) || order.teacherCode || teacherIdStr || undefined;
+      const duration = attendance.sessionDuration || order.sessionDuration || 70;
+      const salaryAmount = this.resolveTeacherSalary(classroom, attendance.teacherId as any, duration, order.teacherSalary);
+      attendanceMap.set(sessionIndex, {
+        sessionIndex,
+        date: attendance.date?.toISOString(),
+        classCode: classroom.code,
+        studentCode: student.studentCode,
+        classId: classroom._id.toString(),
+        teacherId: teacherIdStr,
+        teacherCode,
+        teacherEmail,
+        lookupUrl: this.buildLookupUrl(classroom.code, student.studentCode, attendance._id),
+        attendanceId: attendance._id.toString(),
+        attendedAt: attendance.attendedAt ? attendance.attendedAt.toISOString() : undefined,
+        imageUrl: attendance.imageUrl || undefined,
+        sessionDuration: duration,
+        salaryAmount,
+        status: (attendance as any).status,
+      });
+    });
+
+    // Build sessions array (dynamic length, default 30 slots)
+    const maxSessions = Math.max(
+      attendanceMap.size,
+      order.expectedSessions || 0,
+      order.sessionsByInvoice || 0,
+      30,
+    );
+
+    const sessions: OrderSessionView[] = [];
+    for (let i = 1; i <= maxSessions; i++) {
+      const attendance = attendanceMap.get(i);
+      if (attendance) {
+        sessions.push(attendance);
+      } else {
+        // Empty session slot
+        sessions.push({
+          sessionIndex: i,
+          classCode: classroom.code,
+          studentCode: student.studentCode,
+          classId: classroom._id.toString(),
+          teacherCode: this.teacherCodeFromEmail(order.teacherEmail) || order.teacherCode,
+        });
+      }
+    }
+
+    return sessions;
+  }
+
+  private resolveTeacherSalary(classroom: ClassLean | null, teacherId: Types.ObjectId | undefined, sessionDuration: number, fallback?: number): number {
+    if (!classroom?.teachers?.length || !teacherId) return fallback ?? 0;
+    const teacherIdStr = teacherId.toString();
+    const entry = (classroom.teachers as any[]).find((t) => {
+      const id = t?.teacherId?._id?.toString?.() || t?.teacherId?.toString?.() || t?.toString?.();
+      return id === teacherIdStr;
+    });
+    if (!entry) return fallback ?? 0;
+    const field = this.SALARY_DURATION_MAP[sessionDuration] || this.SALARY_DURATION_MAP[70];
+    const val = entry?.[field];
+    if (Number.isFinite(val)) return Number(val);
+    return fallback ?? 0;
+  }
+
+  private teacherCodeFromEmail(email?: string | null): string {
+    if (!email) return '';
+    const [prefix] = email.split('@');
+    return prefix || email;
   }
 
   private buildLookupUrl(classCode: string, studentCode: string, attendanceId: Types.ObjectId): string {
@@ -424,5 +519,25 @@ export class OrdersService {
     }
     const now = new Date();
     return Number.isNaN(now.getTime()) ? new Date(Date.now()).toISOString() : now.toISOString();
+  }
+
+  private async syncPaymentRequest(orderId: Types.ObjectId, enriched: OrderView) {
+    await this.paymentRequestsService.syncFromOrder(orderId, {
+      studentCode: enriched.studentCode,
+      studentName: enriched.studentName,
+      classCode: enriched.classCode || '',
+      teacherSalary: enriched.teacherSalary,
+      sessions: enriched.sessions.map(s => ({
+        sessionIndex: s.sessionIndex,
+        date: s.date,
+        attendedAt: s.attendedAt,
+        imageUrl: s.imageUrl,
+      })),
+      totalAttendedSessions: enriched.totalAttendedSessions || 0,
+      teacherEarnedSalary: enriched.teacherEarnedSalary || 0,
+      paymentStatus: enriched.paymentStatus,
+      paymentInvoiceCode: enriched.paymentInvoiceCode,
+      paymentProofImage: enriched.paymentProofImage,
+    });
   }
 }

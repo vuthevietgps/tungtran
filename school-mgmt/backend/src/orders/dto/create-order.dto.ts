@@ -81,6 +81,16 @@ export class CreateOrderDto {
   sessionsByInvoice?: number;
 
   @IsOptional()
+  @IsNumber()
+  @Min(0)
+  expectedSessions?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  sessionDuration?: number;
+
+  @IsOptional()
   @IsString()
   @MaxLength(160)
   dataStatus?: string;

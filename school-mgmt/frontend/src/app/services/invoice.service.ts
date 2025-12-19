@@ -37,6 +37,11 @@ export interface ReceiptUploadResult extends InvoiceMutationResult {
   url?: string;
 }
 
+export interface PaymentFrameUpdatePayload {
+  cod?: string;
+  transferDate?: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class InvoiceService {
   private http = inject(HttpClient);
@@ -123,6 +128,13 @@ export class InvoiceService {
         // Broadcast event để các component khác reload
         this.paymentConfirmed$.next({ studentId, frameIndex });
       })
+    );
+  }
+
+  updatePaymentFrame(studentId: string, frameIndex: number, payload: PaymentFrameUpdatePayload) {
+    return this.http.patch(
+      `${environment.apiBase}/invoices/payments/${studentId}/${frameIndex}`,
+      payload
     );
   }
 

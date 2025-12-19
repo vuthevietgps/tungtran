@@ -10,6 +10,9 @@ export class Invoice {
   @Prop({ required: true, trim: true, unique: true })
   invoiceNumber!: string;
 
+  @Prop({ required: true, trim: true, default: 'UNKNOWN' })
+  saleCode!: string;
+
   @Prop({ type: SchemaTypes.ObjectId, ref: Student.name, required: true })
   studentId!: Types.ObjectId;
 

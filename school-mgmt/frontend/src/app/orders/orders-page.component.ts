@@ -15,272 +15,13 @@ interface ClassTeacherView {
 }
 
 @Component({
-  selector: 'app-orders',
+  selector: 'app-orders-page',
   standalone: true,
   imports: [CommonModule, FormsModule],
-  template: `
-    <div class="orders-screen">
-      <header class="control-bar">
-        <div class="control-actions">
-          <button type="button" class="primary" (click)="startCreate()" [disabled]="isEditing()">+ Thêm đơn hàng</button>
-          <button type="button" class="ghost" (click)="reload()" [disabled]="isEditing()">Làm mới</button>
-          <button type="button" class="ghost" disabled title="Tính năng sắp ra mắt">Tải CSV</button>
-        </div>
-        <div class="control-stats">
-          <span class="badge badge-total">Tổng: {{ orders().length }}</span>
-          <span class="badge badge-active">Đang hiển thị: {{ filtered().length }}</span>
-        </div>
-      </header>
-
-      <section class="filters-panel">
-        <div class="filter">
-          <label>Từ khóa</label>
-          <input class="search-input" placeholder="Tìm học sinh, phụ huynh hoặc sale" [ngModel]="keyword()" (ngModelChange)="keyword.set($event)" />
-        </div>
-        <div class="filter">
-          <label>Giáo viên</label>
-          <select class="filter-select" [ngModel]="teacherFilter()" (ngModelChange)="teacherFilter.set($event)">
-            <option value="">Tất cả</option>
-            <option *ngFor="let teacher of teachers()" [value]="teacher._id">{{ teacher.fullName }}</option>
-          </select>
-        </div>
-        <div class="filter">
-          <label>Lớp học</label>
-          <select class="filter-select" [ngModel]="classFilter()" (ngModelChange)="classFilter.set($event)">
-            <option value="">Tất cả</option>
-            <option *ngFor="let classroom of classes()" [value]="classroom._id">{{ classroom.code }} - {{ classroom.name }}</option>
-          </select>
-        </div>
-        <div class="filter actions">
-          <button type="button" class="ghost" (click)="resetFilters()">Đặt lại</button>
-        </div>
-      </section>
-
-      <section class="table-area">
-        <ng-container *ngIf="filtered().length || isCreating(); else empty">
-          <div class="table-scroll">
-            <table class="orders-table">
-              <thead>
-                <tr>
-                  <th>Mã HS</th>
-                  <th>Loại HS</th>
-                  <th class="col-student">Tên HS</th>
-                  <th>Tên PH</th>
-                  <th>Điện thoại</th>
-                  <th>Level</th>
-                  <th>Ngày sinh</th>
-                  <th>Tuổi</th>
-                  <th>Sale</th>
-                  <th>Mã lớp</th>
-                  <th>Tên lớp</th>
-                  <th>Mã GV trong lớp</th>
-                  <th>GV + lương</th>
-                  <th>Số hóa đơn</th>
-                  <th class="col-sessions">Quỹ buổi</th>
-                  <th>Tình trạng HS</th>
-                  <th>Học thử/Buổi tặng</th>
-                  <th *ngFor="let col of sessionColumns">Buổi {{ col }}</th>
-                  <th>Tổng số buổi học đã điểm danh</th>
-                  <th>Trạng thái</th>
-                  <th>Hành động</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr *ngIf="isCreating()">
-                  <ng-container *ngTemplateOutlet="editRow; context: { order: null, isNew: true }"></ng-container>
-                </tr>
-                <tr *ngFor="let order of filtered()">
-                  <ng-container *ngIf="isEditing(order._id); else viewRow">
-                    <ng-container *ngTemplateOutlet="editRow; context: { order: order, isNew: false }"></ng-container>
-                  </ng-container>
-                  <ng-template #viewRow>
-                    <td class="cell code">{{ order.studentCode }}</td>
-                    <td class="cell type">{{ studentTypeLabel(order) }}</td>
-                    <td class="cell student">{{ order.studentName }}</td>
-                    <td class="cell parent">{{ order.parentName }}</td>
-                    <td class="cell phone">{{ studentPhone(order) }}</td>
-                    <td class="cell level">{{ studentLevel(order) }}</td>
-                    <td class="cell dob">{{ studentDob(order) }}</td>
-                    <td class="cell age">{{ studentAge(order) }}</td>
-                    <td class="cell sale">{{ order.saleName || studentSale(order) || '-' }}</td>
-                    <td class="cell class-code">{{ order.classCode || '-' }}</td>
-                    <td class="cell class-name">{{ className(order) }}</td>
-                    <td class="cell teacher-code-list">{{ formatTeacherCodes(order) }}</td>
-                    <td class="cell teacher-salary-list">{{ formatTeacherNameSalary(order) }}</td>
-                    <td class="cell invoice">{{ order.invoiceNumber || '-' }}</td>
-                    <td class="cell sessions">
-                      <span class="session-balance" [innerText]="formatSessionBalance(order)"></span>
-                    </td>
-                    <td class="cell data-status">{{ studentStatus(order) }}</td>
-                    <td class="cell gift">{{ order.trialOrGift || '-' }}</td>
-                    <td *ngFor="let col of sessionColumns" class="cell session" [class.filled]="sessionCell(order, col)">
-                      <ng-container *ngIf="sessionCell(order, col) as session; else emptyCell">
-                        <div class="session-details">
-                          <div><span class="label">Mã điểm danh:</span><span>{{ generateAttendanceCode(order.studentCode, order.teacherCode, session.date, col) }}</span></div>
-                          <div><span class="label">Học sinh:</span><span>{{ order.studentName }}</span></div>
-                          <div><span class="label">Lớp:</span><span>{{ order.classCode || '-' }}</span></div>
-                          <div><span class="label">Giáo viên:</span><span>{{ order.teacherName || '-' }}</span></div>
-                          <div><span class="label">Thời lượng:</span><span>{{ order.sessionDuration || '-' }} phút</span></div>
-                          <div><span class="label">Ngày:</span><span>{{ formatDate(session.date) || '-' }}</span></div>
-                          <div *ngIf="session.attendedAt"><span class="label">Điểm danh:</span><span>{{ formatDateTime(session.attendedAt) }}</span></div>
-                        </div>
-                        <div class="session-actions">
-                          <a *ngIf="session.lookupUrl" [href]="session.lookupUrl" target="_blank">Xem</a>
-                          <a *ngIf="session.imageUrl" [href]="imageUrl(session.imageUrl)" target="_blank">Ảnh</a>
-                        </div>
-                      </ng-container>
-                    </td>
-                    <td class="cell total-sessions">{{ order.totalAttendedSessions ?? '-' }}</td>
-                    <td class="cell status" [class.active]="order.status === 'Đang hoạt động'" [class.locked]="order.status === 'Đã khóa'">{{ order.status || 'Đang hoạt động' }}</td>
-                    <td class="cell actions">
-                      <button *ngIf="order.status !== 'Đã khóa'" class="ghost" (click)="startEdit(order)" [disabled]="isEditing()">Sửa</button>
-                      <button *ngIf="order.status !== 'Đã khóa'" class="ghost danger" (click)="remove(order)" [disabled]="isEditing()">Xóa</button>
-                      <span *ngIf="order.status === 'Đã khóa'" class="locked-message">Đã khóa</span>
-                    </td>
-                  </ng-template>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </ng-container>
-      </section>
-    </div>
-
-    <datalist id="studentCodeOptions">
-      <option *ngFor="let student of students()" [value]="student.studentCode">{{ student.fullName }} - {{ student.parentPhone }}</option>
-    </datalist>
-
-    <datalist id="classCodeOptions">
-      <option *ngFor="let classroom of classes()" [value]="classroom.code">{{ classroom.name }}</option>
-    </datalist>
-
-    <ng-template #empty>
-      <div class="empty-state">
-        <p>Chưa có đơn hàng.</p>
-        <button type="button" class="primary" (click)="startCreate()" [disabled]="isEditing()">+ Tạo đơn đầu tiên</button>
-      </div>
-    </ng-template>
-
-    <ng-template #emptyCell><span>-</span></ng-template>
-
-    <ng-template #editRow let-order="order" let-isNew="isNew">
-      <td class="cell code editing">
-        <input
-          list="studentCodeOptions"
-          placeholder="Chọn mã học sinh"
-          [(ngModel)]="form.studentCode"
-          (ngModelChange)="handleStudentCodeChange($event)"
-          [ngModelOptions]="{ standalone: true }"
-        />
-      </td>
-      <td class="cell type editing">
-        <select [(ngModel)]="form.studentType" [ngModelOptions]="{ standalone: true }">
-          <option value="">-- Chọn loại --</option>
-          <option value="ONLINE">Online</option>
-          <option value="OFFLINE">Offline</option>
-        </select>
-      </td>
-      <td class="cell student editing">
-        <input placeholder="Tên học sinh" [(ngModel)]="form.studentName" [ngModelOptions]="{ standalone: true }" [disabled]="true" />
-      </td>
-      <td class="cell level editing">
-        <input [(ngModel)]="form.parentName" [ngModelOptions]="{ standalone: true }" [disabled]="true" />
-      </td>
-      <td class="cell phone editing">
-        <input [value]="studentPhone(order)" [disabled]="true" />
-      </td>
-      <td class="cell level editing">
-        <input
-          placeholder="Nhập level"
-          [(ngModel)]="form.level"
-          [ngModelOptions]="{ standalone: true }"
-        />
-      </td>
-      <td class="cell dob editing">
-        <input [value]="studentDob(order)" [disabled]="true" />
-      </td>
-      <td class="cell age editing">
-        <input [value]="studentAge(order)" [disabled]="true" />
-      </td>
-      <td class="cell sale editing">
-        <input placeholder="Tên sale" [(ngModel)]="form.saleName" [ngModelOptions]="{ standalone: true }" [disabled]="true" />
-      </td>
-      <td class="cell class-code editing">
-        <input
-          list="classCodeOptions"
-          placeholder="Chọn mã lớp"
-          [(ngModel)]="form.classCode"
-          (ngModelChange)="handleClassCodeChange($event)"
-          [ngModelOptions]="{ standalone: true }"
-        />
-      </td>
-      <td class="cell class-name editing">
-        <input [value]="className(order, form.classCode, form.classId)" [disabled]="true" />
-      </td>
-      <td class="cell teacher-code-list editing">
-        <input [value]="formatTeacherCodes(order, form.classCode, form.classId)" [disabled]="true" />
-      </td>
-      <td class="cell teacher-salary-list editing">
-        <input [value]="formatTeacherNameSalary(order, form.classCode, form.classId)" [disabled]="true" />
-      </td>
-      <td class="cell invoice editing">
-        <select [(ngModel)]="form.invoiceNumber" (ngModelChange)="handleInvoiceChange($event)" [ngModelOptions]="{ standalone: true }">
-          <option value="">-- Chọn hóa đơn --</option>
-          <option *ngFor="let invoice of availableInvoices()" [value]="invoice.code">{{ invoice.code }}</option>
-        </select>
-      </td>
-      <td class="cell sessions editing">
-        <div class="session-balance" [innerText]="formatSessionBalance(order)"></div>
-      </td>
-      <td class="cell data-status editing">
-        <select [(ngModel)]="form.dataStatus" [ngModelOptions]="{ standalone: true }">
-          <option value="">-- Chọn tình trạng --</option>
-          <option value="Đang học">Đang học</option>
-          <option value="Bảo lưu">Bảo lưu</option>
-          <option value="Kết thúc">Kết thúc</option>
-        </select>
-      </td>
-      <td class="cell gift editing">
-        <input [(ngModel)]="form.trialOrGift" [ngModelOptions]="{ standalone: true }" />
-      </td>
-      <td *ngFor="let col of sessionColumns" class="cell session editing" [class.filled]="sessionCell(order, col)">
-        <ng-container *ngIf="sessionCell(order, col) as session; else emptyCell">
-          <div class="session-details">
-            <div><span class="label">Mã điểm danh:</span><span>{{ generateAttendanceCode(form.studentCode || order?.studentCode, form.teacherCode || order?.teacherCode, session.date, col) }}</span></div>
-            <div><span class="label">Học sinh:</span><span>{{ form.studentName || order?.studentName }}</span></div>
-            <div><span class="label">Lớp:</span><span>{{ form.classCode || order?.classCode || '-' }}</span></div>
-            <div><span class="label">Giáo viên:</span><span>{{ form.teacherName || order?.teacherName || '-' }}</span></div>
-            <div><span class="label">Ngày:</span><span>{{ formatDate(session.date) || '-' }}</span></div>
-            <div *ngIf="session.attendedAt"><span class="label">Điểm danh:</span><span>{{ formatDateTime(session.attendedAt) }}</span></div>
-          </div>
-          <div class="session-actions">
-            <a *ngIf="session.lookupUrl" [href]="session.lookupUrl" target="_blank">Xem</a>
-            <a *ngIf="session.imageUrl" [href]="session.imageUrl" target="_blank">Ảnh</a>
-          </div>
-        </ng-container>
-      </td>
-      <td class="cell total-sessions editing">
-        <span>{{ order?.totalAttendedSessions ?? '-' }}</span>
-      </td>
-      <td class="cell status editing">
-        <select [(ngModel)]="form.status" [ngModelOptions]="{ standalone: true }">
-          <option value="Đang hoạt động">Đang hoạt động</option>
-          <option value="Đã khóa">Đã khóa</option>
-        </select>
-      </td>
-      <td class="cell actions editing">
-        <button class="primary" type="button" (click)="save()">{{ isNew ? 'Tạo đơn' : 'Lưu' }}</button>
-        <button class="ghost" type="button" (click)="cancel()">Hủy</button>
-        <div class="error" *ngIf="error()">{{ error() }}</div>
-      </td>
-    </ng-template>
-  `,
-  styles: [`
-    .session-balance { white-space: pre-line; display: inline-block; }
-    .col-sessions { min-width: 260px; }
-  `]
+  templateUrl: './orders-page.component.html',
+  styleUrls: ['./orders-page.component.css'],
 })
-export class OrdersComponent {
+export class OrdersPageComponent {
   private readonly NEW_ID = '__new__';
   teachers = signal<UserItem[]>([]);
   sales = signal<UserItem[]>([]);
@@ -292,8 +33,12 @@ export class OrdersComponent {
   keyword = signal('');
   teacherFilter = signal('');
   classFilter = signal('');
+  studentTypeFilter = signal('');
+  saleFilter = signal('');
+  birthMonthFilter = signal('');
   error = signal('');
-  sessionColumns = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30];
+  sessionColumns = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20];
+  readonly sessionDisplayDurations = [40, 50, 70, 90, 110, 120];
   form: OrderFormState = this.blankForm();
   editingId: string | null = null;
 
@@ -302,13 +47,12 @@ export class OrdersComponent {
     if (!studentData || !studentData.payments) return [];
     return studentData.payments
       .filter((p: any) => {
-        // Chỉ lấy hóa đơn đã được duyệt/confirm
         const status = (p.confirmStatus || '').toUpperCase();
         return p.invoiceCode && (status === 'CONFIRMED' || status === 'APPROVED');
       })
       .map((p: any) => ({
         code: p.invoiceCode,
-        sessions: p.sessionsCollected ?? p.sessionsRegistered ?? 0
+        sessions: p.sessionsCollected ?? p.sessionsRegistered ?? 0,
       }));
   });
 
@@ -316,10 +60,25 @@ export class OrdersComponent {
     const kw = this.keyword().trim().toLowerCase();
     const teacherFilter = this.teacherFilter();
     const classFilter = this.classFilter();
+    const studentTypeFilter = this.studentTypeFilter();
+    const saleFilter = this.saleFilter();
+    const birthMonthFilter = this.birthMonthFilter();
     return this.orders()
       .filter((order: OrderItem) => {
         if (teacherFilter && order.teacherId !== teacherFilter) return false;
         if (classFilter && order.classId !== classFilter) return false;
+        if (studentTypeFilter) {
+          const derivedType = order.studentType || this.studentOrForm(order)?.studentType || '';
+          if (derivedType !== studentTypeFilter) return false;
+        }
+        if (saleFilter) {
+          const saleId = this.saleIdOf(order);
+          if (saleId !== saleFilter) return false;
+        }
+        if (birthMonthFilter) {
+          const month = this.studentBirthMonth(order);
+          if (month === null || String(month) !== birthMonthFilter) return false;
+        }
         if (!kw) return true;
         return (
           order.studentName.toLowerCase().includes(kw) ||
@@ -329,10 +88,8 @@ export class OrdersComponent {
         );
       })
       .sort((a: OrderItem, b: OrderItem) => {
-        // Sort by studentCode first (ascending), then by createdAt (descending)
         const codeCompare = a.studentCode.localeCompare(b.studentCode);
         if (codeCompare !== 0) return codeCompare;
-        
         const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
         const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
         return bTime - aTime;
@@ -364,13 +121,19 @@ export class OrdersComponent {
 
   async reload() {
     const data = await this.orderService.list();
-    this.orders.set(data);
+    const withDemo = environment.production
+      ? data
+      : [...data.filter((o) => o._id !== '__demo_100__'), this.demoOrder100()];
+    this.orders.set(withDemo);
   }
 
   resetFilters() {
     this.keyword.set('');
     this.teacherFilter.set('');
     this.classFilter.set('');
+    this.studentTypeFilter.set('');
+    this.saleFilter.set('');
+    this.birthMonthFilter.set('');
   }
 
   startCreate() {
@@ -407,12 +170,12 @@ export class OrdersComponent {
       trialOrGift: order.trialOrGift || '',
       status: order.status || 'Đang hoạt động',
     };
-    
+
     const classroom = this.classByIdOrCode(order.classId, order.classCode);
     if (classroom) {
       this.applyClassTeachers(classroom, false);
     }
-    
+
     this.error.set('');
   }
 
@@ -438,7 +201,6 @@ export class OrdersComponent {
     const payload: OrderPayload = {
       studentName: this.form.studentName.trim(),
       studentCode: this.form.studentCode.trim(),
-      studentType: (this.form.studentType || undefined) as 'ONLINE' | 'OFFLINE' | undefined,
       level: this.form.level.trim() || undefined,
       parentName: this.form.parentName.trim(),
       teacherId: this.form.teacherId || undefined,
@@ -486,7 +248,7 @@ export class OrdersComponent {
       this.form.teacherCode = '';
       return;
     }
-    
+
     const classTeacher = this.classTeachers().find((t) => t._id === teacherId);
     if (classTeacher) {
       this.form.teacherName = classTeacher.fullName;
@@ -518,15 +280,13 @@ export class OrdersComponent {
       return;
     }
 
-    // Find student from loaded list
-    const student = this.students().find(s => s.studentCode === studentCode);
+    const student = this.students().find((s) => s.studentCode === studentCode);
     if (!student) return;
 
-    // Fetch full student detail with payments from backend
     const res = await fetch(`${environment.apiBase}/students/${student._id}`, {
-      headers: { Authorization: `Bearer ${this.studentService['auth'].getToken()}` }
+      headers: { Authorization: `Bearer ${this.studentService['auth'].getToken()}` },
     });
-    
+
     if (res.ok) {
       const fullStudent = await res.json();
       this.selectedStudentData.set(fullStudent);
@@ -534,10 +294,9 @@ export class OrdersComponent {
       this.form.studentType = fullStudent.studentType || '';
       this.form.parentName = fullStudent.parentName || '';
       this.form.level = fullStudent.productPackage?.name || this.form.level || '';
-      
-      // Auto-fill sale info if student has saleId
+
       if (fullStudent.saleId) {
-        const sale = this.sales().find(s => s._id === fullStudent.saleId);
+        const sale = this.sales().find((s) => s._id === fullStudent.saleId);
         if (sale) {
           this.form.saleId = sale._id;
           this.form.saleName = sale.fullName;
@@ -547,8 +306,7 @@ export class OrdersComponent {
         this.form.saleName = fullStudent.saleName;
         this.form.saleEmail = '';
       }
-      
-      // Reset invoice selection
+
       this.form.invoiceNumber = '';
       this.form.sessionsByInvoice = '';
     }
@@ -559,7 +317,7 @@ export class OrdersComponent {
       this.form.sessionsByInvoice = '';
       return;
     }
-    
+
     const invoice = this.availableInvoices().find((inv: any) => inv.code === invoiceCode);
     if (invoice) {
       this.form.sessionsByInvoice = String(invoice.sessions);
@@ -585,15 +343,15 @@ export class OrdersComponent {
     this.form.teacherCode = '';
     this.form.teacherSalary = '';
     this.classTeachers.set([]);
-    
+
     if (!classId) {
       this.form.classCode = '';
       return;
     }
-    
+
     const classroom = this.classes().find((c) => c._id === classId);
     if (!classroom) return;
-    
+
     this.form.classCode = classroom.code;
     this.applyClassTeachers(classroom);
   }
@@ -609,11 +367,9 @@ export class OrdersComponent {
       this.form.teacherSalary = '';
       return;
     }
-    
-    const existingClass = this.classes().find(c => 
-      c.code.toLowerCase() === classCode.toLowerCase()
-    );
-    
+
+    const existingClass = this.classes().find((c) => c.code.toLowerCase() === classCode.toLowerCase());
+
     if (existingClass) {
       this.form.classId = existingClass._id;
       this.applyClassTeachers(existingClass);
@@ -633,17 +389,20 @@ export class OrdersComponent {
     return order.sessions.find((s) => s.sessionIndex === sessionIndex) || null;
   }
 
+  attendedSessions(order?: OrderItem): OrderSessionEntry[] {
+    if (!order) return [];
+    return (order.sessions || []).filter((s) => !!s.attendedAt);
+  }
+
   generateAttendanceCode(studentCode?: string, teacherCode?: string, sessionDate?: string, sessionIndex?: number): string {
     if (!studentCode || !teacherCode || !sessionDate) return '-';
-    
-    // Parse date to get month abbreviation
+
     const date = new Date(sessionDate);
     if (Number.isNaN(date.getTime())) return '-';
-    
+
     const monthNames = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
     const monthAbbr = monthNames[date.getMonth()];
-    
-    // Format: StudentCode + TeacherCode + MonthAbbr + SessionIndex
+
     return `${studentCode}${teacherCode}${monthAbbr}${sessionIndex || ''}`;
   }
 
@@ -720,6 +479,18 @@ export class OrdersComponent {
     return this.studentByCode(code);
   }
 
+  private studentBirthMonth(order?: OrderItem): number | null {
+    const dob = this.studentOrForm(order)?.dateOfBirth;
+    if (!dob) return null;
+    const date = new Date(dob);
+    if (Number.isNaN(date.getTime())) return null;
+    return date.getMonth() + 1;
+  }
+
+  private saleIdOf(order?: OrderItem): string {
+    return order?.saleId || this.studentOrForm(order)?.saleId || '';
+  }
+
   studentPhone(order?: OrderItem): string {
     return this.studentOrForm(order)?.parentPhone || '-';
   }
@@ -774,33 +545,62 @@ export class OrdersComponent {
     return parts.length ? parts.join('; ') : '-';
   }
 
-  formatSessionBalance(order?: OrderItem): string {
+  sessionBalanceLines(order?: OrderItem): Array<{ text: string; highlight: boolean }> {
     const student = this.studentOrForm(order);
     const b = student?.sessionBalances as any;
-    const fmt = (val: number) => Number.isInteger(val) ? val.toString() : val.toFixed(2).replace(/\.00$/, '');
+    const fmt = (val: number) => (Number.isInteger(val) ? val.toString() : val.toFixed(2).replace(/\.00$/, ''));
     const type = order?.studentType || student?.studentType || '';
+    const highlights = this.registeredDurations(order);
 
     if (type === 'OFFLINE') {
       const paid = Number.isFinite(b?.basePaid70) ? Number(b.basePaid70) : 0;
       const used = Number.isFinite(b?.baseUsed70) ? Number(b.baseUsed70) : 0;
       const remaining = Math.max(0, paid - used);
-      return `${fmt(remaining)} buổi (đã thu ${fmt(paid)}, đã điểm danh ${fmt(used)})`;
+      return [{ text: `${fmt(remaining)} buổi (đã thu ${fmt(paid)}, đã điểm danh ${fmt(used)})`, highlight: false }];
     }
 
-    if (!b) return '—';
+    if (!b) return [{ text: '—', highlight: false }];
     const paid70 = Number.isFinite(b.basePaid70) ? Number(b.basePaid70) : 0;
     const used70 = Number.isFinite(b.baseUsed70) ? Number(b.baseUsed70) : 0;
     const remainingMinutes = Math.max(0, (paid70 - used70) * 70);
-    const durations = [40, 50, 70, 90, 110];
 
-    const lines = durations.map((dur) => {
+    return this.sessionDisplayDurations.map((dur) => {
       const paid = Math.floor((paid70 * 70) / dur);
       const used = Math.floor((used70 * 70) / dur);
       const remaining = Math.max(0, Math.floor(remainingMinutes / dur));
-      return `${dur}p: thu ${fmt(paid)} | đã DD ${fmt(used)} | còn ${fmt(remaining)}`;
+      return {
+        text: `${dur}p: thu ${fmt(paid)} | đã DD ${fmt(used)} | còn ${fmt(remaining)}`,
+        highlight: highlights.has(dur),
+      };
     });
+  }
 
-    return lines.join('\n');
+  private registeredDurations(order?: OrderItem): Set<number> {
+    const student = this.studentOrForm(order) as any;
+    const payments = (student?.payments as any[]) || [];
+    const allowed = new Set(this.sessionDisplayDurations);
+    const set = new Set<number>();
+    payments.forEach((p) => {
+      const dur = Number((p as any)?.sessionDuration);
+      if (allowed.has(dur)) set.add(dur);
+    });
+    const orderDuration = Number(order?.sessionDuration);
+    if (allowed.has(orderDuration)) set.add(orderDuration);
+    return set;
+  }
+
+  sessionChunks(order?: OrderItem | null): Array<{ start: number; end: number }> {
+    const chunkSize = this.sessionColumns.length;
+    const sessions = order?.sessions || [];
+    const maxFromData = sessions.reduce((max, s) => (s.sessionIndex && s.sessionIndex > max ? s.sessionIndex : max), 0);
+    const maxIndex = Math.max(maxFromData || chunkSize, chunkSize);
+
+    const chunks: Array<{ start: number; end: number }> = [];
+    for (let start = 1; start <= maxIndex; start += chunkSize) {
+      const end = Math.min(start + chunkSize - 1, maxIndex);
+      chunks.push({ start, end });
+    }
+    return chunks.length ? chunks : [{ start: 1, end: chunkSize }];
   }
 
   studentStatus(order?: OrderItem): string {
@@ -841,6 +641,68 @@ export class OrdersComponent {
       dataStatus: '',
       trialOrGift: '',
       status: 'Đang hoạt động',
+    };
+  }
+
+  private demoOrder100(): OrderItem {
+    const base = new Date(Date.UTC(new Date().getUTCFullYear(), 0, 1));
+    const sessions: OrderSessionEntry[] = Array.from({ length: 100 }, (_, i) => {
+      const idx = i + 1;
+      const date = new Date(base);
+      date.setUTCDate(base.getUTCDate() + i);
+      const iso = date.toISOString();
+      const attended = idx <= 60;
+      return {
+        sessionIndex: idx,
+        date: iso,
+        classCode: 'DEMO100',
+        studentCode: 'DEMO100',
+        classId: 'demo-class',
+        teacherCode: 'GV100',
+        teacherEmail: 'gv100@example.com',
+        lookupUrl: '#',
+        attendanceId: `demo-${idx}`,
+        attendedAt: attended ? iso : undefined,
+        imageUrl: attended && idx % 5 === 0 ? 'https://via.placeholder.com/64' : undefined,
+        sessionDuration: 70,
+        salaryAmount: 0,
+        status: attended ? 'PRESENT' : undefined,
+      };
+    });
+
+    return {
+      _id: '__demo_100__',
+      studentId: 'demo-student',
+      studentName: 'Demo 100 buổi',
+      studentCode: 'DEMO100',
+      studentType: 'ONLINE',
+      level: 'A1',
+      parentName: 'Phụ huynh demo',
+      teacherId: 'demo-teacher',
+      teacherName: 'GV Demo',
+      teacherEmail: 'gv100@example.com',
+      teacherCode: 'GV100',
+      teacherSalary: 0,
+      saleId: undefined,
+      saleName: 'Sale Demo',
+      saleEmail: 'sale@example.com',
+      classId: 'demo-class',
+      classCode: 'DEMO100',
+      invoiceNumber: 'INV-DEMO100',
+      sessionsByInvoice: 100,
+      expectedSessions: 100,
+      sessionDuration: 70,
+      dataStatus: 'Đang học',
+      trialOrGift: '',
+      totalAttendedSessions: 60,
+      teacherEarnedSalary: 0,
+      paymentStatus: 'PAID',
+      paymentInvoiceCode: 'PAY-DEMO100',
+      paymentProofImage: undefined,
+      status: 'Đang hoạt động',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      sessions,
     };
   }
 }

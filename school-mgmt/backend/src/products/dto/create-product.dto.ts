@@ -1,11 +1,26 @@
-import { IsNotEmpty, IsString } from 'class-validator';
+import { IsEnum, IsOptional, IsString } from 'class-validator';
 
 export class CreateProductDto {
   @IsString()
-  @IsNotEmpty()
-  name!: string;
+  @IsOptional()
+  name?: string;
+
+  @IsEnum(['ONLINE', 'OFFLINE'])
+  productType!: 'ONLINE' | 'OFFLINE';
 
   @IsString()
-  @IsNotEmpty()
-  code!: string;
+  @IsOptional()
+  teacherName?: string;
+
+  @IsString()
+  @IsOptional()
+  content?: string;
+
+  @IsString()
+  @IsOptional()
+  duration?: string;
+
+  @IsString()
+  @IsOptional()
+  sessionCount?: string;
 }

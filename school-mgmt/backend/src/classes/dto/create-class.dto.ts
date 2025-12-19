@@ -2,13 +2,16 @@ import {
   ArrayNotEmpty,
   ArrayUnique,
   IsArray,
+  IsEnum,
   IsMongoId,
   IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
+  Max,
   Min,
 } from 'class-validator';
+import { ClassType } from '../schemas/class.schema';
 
 export class CreateClassDto {
   @IsString()
@@ -19,11 +22,22 @@ export class CreateClassDto {
   @IsNotEmpty()
   code!: string;
 
-  @IsMongoId()
-  teacherId!: string;
-
-  @IsMongoId()
-  saleId!: string;
+  @IsArray()
+  @IsOptional()
+  teachers?: {
+    teacherId: string;
+    salary0?: number;
+    salary1?: number;
+    salary2?: number;
+    salary3?: number;
+    salary4?: number;
+    salary5?: number;
+    baseSalary70?: number;
+    offlineSalary1?: number;
+    offlineSalary2?: number;
+    offlineSalary3?: number;
+    offlineSalary4?: number;
+  }[];
 
   @IsArray()
   @IsMongoId({ each: true })
@@ -31,13 +45,7 @@ export class CreateClassDto {
   @IsOptional()
   studentIds?: string[];
 
-  @IsNumber()
-  @Min(0)
-  @IsOptional()
-  revenuePerStudent?: number; // Doanh thu mỗi học sinh (VNĐ)
-
-  @IsNumber()
-  @Min(0)
-  @IsOptional()
-  teacherSalaryCost?: number; // Chi phí lương giáo viên mỗi học sinh (VNĐ)
+  @IsEnum(ClassType)
+  @IsNotEmpty()
+  classType!: ClassType;
 }

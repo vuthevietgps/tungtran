@@ -24,13 +24,13 @@ import { AuthService } from '../services/auth.service';
   </section>
   `,
   styles: [`
-    .login-wrapper { display:flex; align-items:center; justify-content:center; min-height:100vh; background:#f1f5f9; }
-    .login-card { background:#fff; padding:24px; border-radius:8px; box-shadow:0 8px 24px rgba(15,23,42,.15); width:320px; display:flex; flex-direction:column; gap:12px; }
-    label { display:flex; flex-direction:column; font-size:14px; color:#475569; }
-    input { padding:8px; border:1px solid #cbd5f5; border-radius:6px; }
-    button { padding:10px; border:none; border-radius:6px; background:#2563eb; color:#fff; font-weight:600; cursor:pointer; }
-    button:hover { background:#1d4ed8; }
-    .error { color:#dc2626; font-size:13px; margin:0; }
+    .login-wrapper { display:flex; align-items:center; justify-content:center; min-height:100vh; background:var(--bg); padding:16px; }
+    .login-card { background:var(--surface); padding:24px; border-radius:12px; box-shadow:var(--shadow); width:340px; display:flex; flex-direction:column; gap:12px; border:1px solid var(--border); color:var(--text); }
+    label { display:flex; flex-direction:column; font-size:14px; color:var(--muted); }
+    input { padding:10px; border:1px solid var(--border); border-radius:8px; background:var(--panel); color:var(--text); }
+    button { padding:12px; border:1px solid var(--primary-strong); border-radius:10px; background:var(--primary); color:#04121a; font-weight:700; cursor:pointer; }
+    button:hover { background:var(--primary-strong); }
+    .error { color:var(--danger); font-size:13px; margin:0; }
   `]
 })
 export class LoginComponent {

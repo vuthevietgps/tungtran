@@ -11,6 +11,8 @@ interface AttendanceReportItem {
   attendedAt: string;
   status: string;
   imageUrl?: string;
+  sessionDuration?: number;
+  salaryAmount?: number;
   studentId: {
     _id: string;
     studentCode: string;
@@ -85,48 +87,28 @@ interface AttendanceReportItem {
         <table class="report-table">
           <thead>
             <tr>
+              <th>Mã buổi</th>
               <th>Ngày</th>
               <th>Thời gian điểm danh</th>
-              <th>Lớp</th>
-              <th>Học sinh</th>
-              <th>Ảnh học sinh</th>
-              <th>Giáo viên</th>
+              <th>Mã lớp</th>
+              <th>Mã HS</th>
+              <th>Mã GV</th>
+              <th>Thời lượng</th>
               <th>Hình ảnh điểm danh</th>
+              <th>Lương GV</th>
               <th>Ghi chú</th>
+              <th>Hành động</th>
             </tr>
           </thead>
           <tbody>
             <tr *ngFor="let item of reportData()">
+              <td class="mono">{{ item._id }}</td>
               <td>{{ formatDate(item.date) }}</td>
               <td>{{ formatDateTime(item.attendedAt) }}</td>
-              <td>
-                <div class="class-info">
-                  <strong>{{ item.classId.code }}</strong><br />
-                  <small>{{ item.classId.name }}</small>
-                </div>
-              </td>
-              <td>
-                <div class="student-info">
-                  <strong>{{ item.studentId.fullName }}</strong><br />
-                  <small>Mã: {{ item.studentId.studentCode }} | Tuổi: {{ item.studentId.age }}</small>
-                </div>
-              </td>
-              <td class="image-cell">
-                <img 
-                  *ngIf="item.studentId.faceImage" 
-                  [src]="getImageUrl(item.studentId.faceImage)" 
-                  alt="Ảnh học sinh"
-                  (click)="showImageModal(getImageUrl(item.studentId.faceImage))"
-                  class="thumbnail"
-                />
-                <span *ngIf="!item.studentId.faceImage" class="no-image">Không có ảnh</span>
-              </td>
-              <td>
-                <div class="teacher-info">
-                  <strong>{{ item.teacherId.fullName }}</strong><br />
-                  <small>{{ item.teacherId.email }}</small>
-                </div>
-              </td>
+              <td class="mono">{{ item.classId.code }}</td>
+              <td class="mono">{{ item.studentId.studentCode }}</td>
+              <td class="mono">{{ teacherCode(item.teacherId.email) || item.teacherId._id }}</td>
+              <td>{{ item.sessionDuration || 70 }} phút</td>
               <td class="image-cell">
                 <img 
                   *ngIf="item.imageUrl" 
@@ -137,7 +119,12 @@ interface AttendanceReportItem {
                 />
                 <span *ngIf="!item.imageUrl" class="no-image">Không có ảnh</span>
               </td>
+              <td class="salary">{{ formatCurrency(item.salaryAmount || 0) }}</td>
               <td>{{ item.notes || '-' }}</td>
+              <td class="actions">
+                <button class="ghost" (click)="edit(item)">Sửa</button>
+                <button class="ghost danger" (click)="remove(item)">Xóa</button>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -247,29 +234,38 @@ interface AttendanceReportItem {
       padding:12px 16px; 
       text-align:left; 
       font-weight:600; 
-      color:#374151; 
+      color:var(--text); 
       font-size:14px;
       white-space:nowrap;
+      background:#132544;
     }
 
     .report-table td { 
       padding:12px 16px; 
-      border-bottom:1px solid #f3f4f6;
+      border-bottom:1px solid var(--border);
       font-size:14px;
+      color:var(--text);
     }
+
+    .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; font-size:12px; color:var(--text); }
+    .salary { font-weight:700; color:#34d399; white-space:nowrap; }
+    .actions { display:flex; gap:8px; }
+    .actions .ghost { padding:6px 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel); cursor:pointer; color:var(--text); }
+    .actions .ghost.danger { border-color:var(--danger); color:var(--danger); }
+    .actions .ghost:hover { background:#132544; }
 
     .report-table tbody tr:hover { 
-      background:#f9fafb; 
+      background:#1a2f55; 
     }
 
-    .class-info strong { color:#1f2937; }
-    .class-info small { color:#6b7280; }
+    .class-info strong { color:var(--text); }
+    .class-info small { color:var(--muted); }
 
-    .student-info strong { color:#1f2937; }
-    .student-info small { color:#6b7280; }
+    .student-info strong { color:var(--text); }
+    .student-info small { color:var(--muted); }
 
-    .teacher-info strong { color:#1f2937; }
-    .teacher-info small { color:#6b7280; }
+    .teacher-info strong { color:var(--text); }
+    .teacher-info small { color:var(--muted); }
 
     .image-cell { text-align:center; }
 
@@ -279,17 +275,17 @@ interface AttendanceReportItem {
       object-fit:cover; 
       border-radius:8px; 
       cursor:pointer;
-      border:2px solid #e5e7eb;
+      border:2px solid var(--border);
       transition: all 0.2s;
     }
 
     .thumbnail:hover { 
       transform:scale(1.1); 
-      border-color:#2563eb;
+      border-color:var(--primary);
     }
 
     .no-image { 
-      color:#9ca3af; 
+      color:var(--muted); 
       font-style:italic; 
       font-size:12px;
     }
@@ -436,5 +432,23 @@ export class AttendanceReportComponent implements OnInit {
       minute: '2-digit',
       second: '2-digit'
     });
+  }
+
+  teacherCode(email?: string): string {
+    if (!email) return '';
+    const [prefix] = email.split('@');
+    return prefix || email;
+  }
+
+  formatCurrency(value: number): string {
+    return value.toLocaleString('vi-VN', { style: 'currency', currency: 'VND', maximumFractionDigits: 0 });
+  }
+
+  edit(item: AttendanceReportItem) {
+    alert('Chức năng sửa sẽ được bổ sung sau.');
+  }
+
+  remove(item: AttendanceReportItem) {
+    alert('Chức năng xóa sẽ được bổ sung sau.');
   }
 }

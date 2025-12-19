@@ -14,6 +14,7 @@ import { AssignStudentsDto } from './dto/assign-students.dto';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { Student, StudentDocument } from '../students/schemas/student.schema';
 import { Role } from '../common/interfaces/role.enum';
+import { ClassType } from './schemas/class.schema';
 
 @Injectable()
 export class ClassesService {
@@ -33,36 +34,22 @@ export class ClassesService {
   async findAll(actor: UserDocument) {
     let filter = {};
     
-    if (actor.role === Role.SALE) {
-      filter = { sale: actor._id };
-    } else if (actor.role === Role.TEACHER) {
-      filter = { teacher: actor._id };
+    if (actor.role === Role.TEACHER) {
+      filter = { 'teachers.teacherId': actor._id };
     }
     // DIRECTOR có thể xem tất cả lớp (filter rỗng)
     
     const classrooms = await this.classModel
       .find(filter)
       .sort({ createdAt: -1 })
-      .populate('teacher', 'fullName email role')
-      .populate('sale', 'fullName email role')
+      .populate('teachers.teacherId', 'fullName email role')
       .populate('students', 'fullName age parentName')
       .lean();
     
-    // Tính toán thông tin tài chính cho từng lớp
-    return classrooms.map(classroom => {
-      const studentCount = classroom.students?.length || 0;
-      const totalRevenue = ((classroom as any).revenuePerStudent || 0) * studentCount;
-      const totalCost = ((classroom as any).teacherSalaryCost || 0) * studentCount;
-      const profit = totalRevenue - totalCost;
-      
-      return {
-        ...classroom,
-        totalRevenue,
-        totalCost,
-        profit,
-        studentCount,
-      };
-    });
+    return classrooms.map(classroom => ({
+      ...classroom,
+      studentCount: classroom.students?.length || 0,
+    }));
   }
 
   async update(id: string, dto: UpdateClassDto) {
@@ -89,32 +76,6 @@ export class ClassesService {
     return deleted;
   }
 
-  async assignStudentsBySale(id: string, dto: AssignStudentsDto, actor: UserDocument) {
-    if (actor.role !== Role.SALE) throw new ForbiddenException('Only sale role allowed');
-    const classroom = await this.classModel.findById(id).lean();
-    if (!classroom) throw new NotFoundException('Class not found');
-    if (classroom.sale?.toString() !== actor._id.toString()) {
-      throw new ForbiddenException('Bạn không phụ trách lớp này');
-    }
-    const studentIds = dto.studentIds || [];
-    if (!studentIds.length) throw new BadRequestException('Vui lòng chọn học viên');
-    const valid = await this.studentModel
-      .find({ _id: { $in: studentIds } }, '_id')
-      .lean();
-    if (valid.length !== studentIds.length) {
-      throw new BadRequestException('Một số học viên không hợp lệ');
-    }
-    const existingStudentIds = classroom.students?.map((s: any) => s.toString()) || [];
-    const merged = Array.from(
-      new Set([...existingStudentIds, ...studentIds])
-    ).map((sid) => new Types.ObjectId(sid));
-    
-    // Cập nhật danh sách học sinh trong lớp
-    await this.classModel.findByIdAndUpdate(id, { students: merged });
-    
-    return this.findByIdPopulated(id);
-  }
-
   private async ensureCodeUnique(code: string, excludeId?: string) {
     const existing = await this.classModel
       .findOne({ code: code.toUpperCase(), ...(excludeId ? { _id: { $ne: excludeId } } : {}) })
@@ -128,16 +89,18 @@ export class ClassesService {
   ): Promise<Record<string, unknown>> {
     const payload: Record<string, unknown> = {};
 
-    if (!allowPartial || dto.teacherId) {
-      const teacherId = dto.teacherId ?? null;
-      if (!teacherId) throw new BadRequestException('Teacher is required');
-      payload.teacher = await this.validateUserRole(teacherId, Role.TEACHER);
+    // Handle classType early so teacher validation can rely on it
+    if (!allowPartial || (dto as any).classType) {
+      payload.classType = (dto as any).classType;
     }
 
-    if (!allowPartial || dto.saleId) {
-      const saleId = dto.saleId ?? null;
-      if (!saleId) throw new BadRequestException('Sale is required');
-      payload.sale = await this.validateUserRole(saleId, Role.SALE);
+    if (!allowPartial || (dto as any).teachers) {
+      const teachers = (dto as any).teachers ?? [];
+      if (teachers.length > 10) {
+        throw new BadRequestException('Không được phân công quá 10 giáo viên');
+      }
+      const typeForValidation = (dto as any).classType ?? payload.classType;
+      payload.teachers = await this.validateTeachersWithSalaries(teachers, typeForValidation as ClassType);
     }
 
     if (!allowPartial || dto.studentIds) {
@@ -147,15 +110,6 @@ export class ClassesService {
 
     if (!allowPartial || dto.name) payload.name = dto.name;
     if (!allowPartial || dto.code) payload.code = dto.code?.toUpperCase();
-    
-    // Handle financial information
-    if (!allowPartial || dto.revenuePerStudent !== undefined) {
-      payload.revenuePerStudent = dto.revenuePerStudent ?? 0;
-    }
-    
-    if (!allowPartial || dto.teacherSalaryCost !== undefined) {
-      payload.teacherSalaryCost = dto.teacherSalaryCost ?? 0;
-    }
 
     return payload;
   }
@@ -176,27 +130,106 @@ export class ClassesService {
     }
     return studentIds.map((id) => new Types.ObjectId(id));
   }
+
+  private async validateTeachersWithSalaries(
+    teachers: {
+      teacherId: string;
+      salary0?: number;
+      salary1?: number;
+      salary2?: number;
+      salary3?: number;
+      salary4?: number;
+      salary5?: number;
+      baseSalary70?: number;
+      offlineSalary1?: number;
+      offlineSalary2?: number;
+      offlineSalary3?: number;
+      offlineSalary4?: number;
+    }[],
+    classType?: ClassType,
+  ): Promise<{
+    teacherId: Types.ObjectId;
+    salary0: number;
+    salary1: number;
+    salary2: number;
+    salary3: number;
+    salary4: number;
+    salary5: number;
+    offlineSalary1: number;
+    offlineSalary2: number;
+    offlineSalary3: number;
+    offlineSalary4: number;
+  }[]> {
+    if (!teachers?.length) return [];
+    if (!classType) throw new BadRequestException('Thiếu loại lớp');
+    
+    // Validate all teacher IDs
+    const teacherIds = teachers.map(t => t.teacherId);
+    const found = await this.userModel.find({ _id: { $in: teacherIds }, role: Role.TEACHER }, '_id').lean();
+    if (found.length !== teacherIds.length) {
+      throw new BadRequestException('Một số giáo viên không hợp lệ');
+    }
+    
+    if (classType === ClassType.ONLINE) {
+      return teachers.map((t) => {
+        const base = Number.isFinite(t.baseSalary70) ? Number(t.baseSalary70) : Number(t.salary2 ?? t.salary0 ?? 0);
+        if (base < 0) throw new BadRequestException('Lương 70 phút phải >= 0');
+        const computed = this.computeSalariesFromBase(base);
+        return {
+          teacherId: new Types.ObjectId(t.teacherId),
+          ...computed,
+          offlineSalary1: 0,
+          offlineSalary2: 0,
+          offlineSalary3: 0,
+          offlineSalary4: 0,
+        };
+      });
+    }
+
+    return teachers.map((t) => {
+      const offlineSalary1 = Math.max(0, Number(t.offlineSalary1) || 0);
+      const offlineSalary2 = Math.max(0, Number(t.offlineSalary2) || 0);
+      const offlineSalary3 = Math.max(0, Number(t.offlineSalary3) || 0);
+      const offlineSalary4 = Math.max(0, Number(t.offlineSalary4) || 0);
+      return {
+        teacherId: new Types.ObjectId(t.teacherId),
+        salary0: 0,
+        salary1: 0,
+        salary2: 0,
+        salary3: 0,
+        salary4: 0,
+        salary5: 0,
+        offlineSalary1,
+        offlineSalary2,
+        offlineSalary3,
+        offlineSalary4,
+      };
+    });
+  }
+
+  private computeSalariesFromBase(baseSalary70: number) {
+    const base = Math.max(0, Number(baseSalary70) || 0);
+    const calc = (minutes: number) => Math.round((base * minutes) / 70);
+    return {
+      salary0: calc(40),
+      salary1: calc(50),
+      salary2: base,
+      salary3: calc(90),
+      salary4: calc(110),
+      salary5: calc(70),
+    };
+  }
   private async findByIdPopulated(id: string | Types.ObjectId) {
     const classroom = await this.classModel
       .findById(id)
-      .populate('teacher', 'fullName email role')
-      .populate('sale', 'fullName email role')
+      .populate('teachers.teacherId', 'fullName email role')
       .populate('students', 'fullName age parentName')
       .lean();
     
     if (classroom) {
-      // Tính toán tổng doanh thu và chi phí
-      const studentCount = classroom.students?.length || 0;
-      const totalRevenue = (classroom.revenuePerStudent || 0) * studentCount;
-      const totalCost = (classroom.teacherSalaryCost || 0) * studentCount;
-      const profit = totalRevenue - totalCost;
-      
       return {
         ...classroom,
-        totalRevenue,
-        totalCost,
-        profit,
-        studentCount,
+        studentCount: classroom.students?.length || 0,
       };
     }
     

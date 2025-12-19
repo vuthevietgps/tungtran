@@ -7,10 +7,10 @@ import { Classroom } from '../../classes/schemas/class.schema';
 export type AttendanceDocument = HydratedDocument<Attendance>;
 
 export enum AttendanceStatus {
-  PRESENT = 'PRESENT',    // Có mặt
-  ABSENT = 'ABSENT',      // Vắng mặt
-  LATE = 'LATE',          // Đi muộn
-  EXCUSED = 'EXCUSED',    // Xin phép
+  PRESENT = 'PRESENT',                        // Có mặt
+  ABSENT_WITH_PERMISSION = 'ABSENT_WITH_PERMISSION',     // Vắng mặt xin phép
+  LATE = 'LATE',                              // Đi muộn
+  ABSENT_WITHOUT_PERMISSION = 'ABSENT_WITHOUT_PERMISSION', // Vắng mặt không phép
 }
 
 @Schema({ timestamps: true })
@@ -35,6 +35,15 @@ export class Attendance {
 
   @Prop({ type: String })
   imageUrl?: string; // URL ảnh chụp từ webcam khi điểm danh
+
+  @Prop({ type: String })
+  absenceProofImage?: string; // URL ảnh đơn xin phép hoặc xác nhận không phép
+
+  @Prop({ type: Number, enum: [40, 50, 70, 90, 110], default: 70 })
+  sessionDuration?: number; // Độ dài buổi học (phút)
+
+  @Prop({ type: Number, min: 0, default: 1 })
+  baseSessionsUsed?: number; // Số buổi quy đổi theo 70p đã tiêu hao
 
   @Prop({ type: String, unique: true, sparse: true })
   attendanceToken?: string; // Token để học sinh tự điểm danh qua link

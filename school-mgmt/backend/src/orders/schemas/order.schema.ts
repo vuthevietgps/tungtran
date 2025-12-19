@@ -59,6 +59,12 @@ export class Order {
   @Prop({ type: Number, min: 0 })
   sessionsByInvoice?: number;
 
+  @Prop({ type: Number, min: 0 })
+  expectedSessions?: number;
+
+  @Prop({ type: Number, min: 0 })
+  sessionDuration?: number;
+
   @Prop({ trim: true })
   dataStatus?: string;
 

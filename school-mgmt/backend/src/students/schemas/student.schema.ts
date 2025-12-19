@@ -24,8 +24,17 @@ export class PaymentFrame {
   @Prop({ type: Number, min: 0 })
   sessionsCollected?: number;
 
+  @Prop({ type: Number, enum: [40, 50, 70, 90, 110, 120], required: false })
+  sessionDuration?: number;
+
   @Prop({ type: String })
   invoiceImage?: string;
+
+  @Prop({ type: Date })
+  transferDate?: Date;
+
+  @Prop({ type: String })
+  cod?: string;
 
   @Prop({ type: String, enum: ['PENDING', 'CONFIRMED'], default: 'PENDING' })
   confirmStatus?: 'PENDING' | 'CONFIRMED';
@@ -38,8 +47,14 @@ export class Student {
   @Prop({ required: true, trim: true, unique: true })
   studentCode!: string;
 
+  @Prop({ required: false, trim: true })
+  saleCode?: string;
+
   @Prop({ required: true, trim: true })
   fullName!: string;
+
+  @Prop({ type: Date, required: false })
+  dateOfBirth?: Date;
 
   @Prop({ required: true, min: 3, max: 25 })
   age!: number;
@@ -52,6 +67,9 @@ export class Student {
 
   @Prop({ required: true, trim: true })
   faceImage!: string;
+
+  @Prop({ required: false, trim: true })
+  level?: string;
 
   @Prop({ type: SchemaTypes.ObjectId, ref: Product.name })
   productPackage?: Types.ObjectId;

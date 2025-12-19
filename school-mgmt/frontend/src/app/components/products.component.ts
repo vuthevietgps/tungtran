@@ -17,16 +17,22 @@ import { ProductService, ProductItem } from '../services/product.service';
   </header>
 
   <section class="filters">
-    <input placeholder="Tìm theo tên hoặc mã" [(ngModel)]="keyword" />
+    <input placeholder="Tìm theo tên sản phẩm" [(ngModel)]="keyword" />
     <button (click)="reload()">Làm mới</button>
   </section>
 
   <table class="data" *ngIf="filtered().length; else empty">
-    <thead><tr><th>Mã</th><th>Tên</th></tr></thead>
+    <thead><tr><th>Tên</th><th>Loại</th><th>Thầy</th><th>Số buổi</th><th>Hành động</th></tr></thead>
     <tbody>
       <tr *ngFor="let p of filtered()">
-        <td>{{p.code}}</td>
         <td>{{p.name}}</td>
+        <td>{{p.productType === 'ONLINE' ? 'Online' : 'Offline'}}</td>
+        <td>{{p.teacherName || '-'}}</td>
+        <td>{{p.sessionCount || '-'}}</td>
+        <td class="actions-col">
+          <button class="link" (click)="openModal(p)">Sửa</button>
+          <button class="link danger" (click)="remove(p)">Xóa</button>
+        </td>
       </tr>
     </tbody>
   </table>
@@ -34,16 +40,29 @@ import { ProductService, ProductItem } from '../services/product.service';
 
   <div class="modal-backdrop" *ngIf="showModal()">
     <div class="modal">
-      <h3>Thêm sản phẩm</h3>
+      <h3>{{ editingId ? 'Cập nhật sản phẩm' : 'Thêm sản phẩm' }}</h3>
       <form (ngSubmit)="submit()" #f="ngForm">
-        <label>Tên sản phẩm
-          <input name="name" [(ngModel)]="form.name" required />
+        <label>Loại sản phẩm
+          <select name="productType" [(ngModel)]="form.productType" required>
+            <option value="ONLINE">Online</option>
+            <option value="OFFLINE">Offline</option>
+          </select>
         </label>
-        <label>Mã sản phẩm
-          <input name="code" [(ngModel)]="form.code" required />
+        <label>Thầy (không bắt buộc)
+          <input name="teacherName" [(ngModel)]="form.teacherName" />
         </label>
+        <label>Nội dung (không bắt buộc)
+          <textarea name="content" [(ngModel)]="form.content"></textarea>
+        </label>
+        <label>Thời gian (không bắt buộc)
+          <input name="duration" [(ngModel)]="form.duration" />
+        </label>
+        <label>Số buổi (không bắt buộc)
+          <input name="sessionCount" [(ngModel)]="form.sessionCount" />
+        </label>
+        <p class="muted">Tên sẽ tự động tạo: <strong>{{ namePreview() || '...' }}</strong></p>
         <div class="actions">
-          <button type="submit" class="primary">Lưu</button>
+          <button type="submit" class="primary">{{ editingId ? 'Cập nhật' : 'Lưu' }}</button>
           <button type="button" (click)="closeModal()">Hủy</button>
         </div>
         <p class="error" *ngIf="error()">{{error()}}</p>
@@ -52,18 +71,23 @@ import { ProductService, ProductItem } from '../services/product.service';
   </div>
   `,
   styles: [`
-    .page-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
+    .page-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; color:var(--text); }
     .filters { display:flex; gap:10px; margin-bottom:16px; }
-    input { padding:6px 8px; border:1px solid #cbd5f5; border-radius:4px; }
-    .data { width:100%; border-collapse:collapse; background:#fff; }
-    th, td { padding:8px; border:1px solid #e2e8f0; }
-    thead { background:#f1f5f9; }
-    .primary { background:#2563eb; color:#fff; border:none; padding:8px 12px; border-radius:4px; cursor:pointer; }
-    .modal-backdrop { position:fixed; inset:0; background:rgba(15,23,42,.55); display:flex; align-items:center; justify-content:center; }
-    .modal { background:#fff; padding:20px; border-radius:8px; width:320px; box-shadow:0 8px 24px rgba(15,23,42,.2); }
+    input, textarea, select { padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:var(--panel); color:var(--text); }
+    textarea { min-height:80px; }
+    .data { width:100%; border-collapse:collapse; background:var(--surface); color:var(--text); }
+    th, td { padding:8px; border:1px solid var(--border); }
+    thead { background:#132544; color:var(--muted); }
+    .primary { background:var(--primary); color:#04121a; border:1px solid var(--primary-strong); padding:8px 12px; border-radius:8px; cursor:pointer; font-weight:600; }
+    .link { background:none; border:none; color:var(--primary); cursor:pointer; padding:0 6px; }
+    .link.danger { color:var(--danger); }
+    .modal-backdrop { position:fixed; inset:0; background:rgba(4,12,30,.75); display:flex; align-items:center; justify-content:center; }
+    .modal { background:var(--surface); padding:20px; border-radius:12px; width:320px; box-shadow:0 20px 50px rgba(0,0,0,0.55); border:1px solid var(--border); color:var(--text); }
     .modal form { display:flex; flex-direction:column; gap:12px; }
     .actions { display:flex; gap:8px; justify-content:flex-end; }
-    .error { color:#dc2626; }
+    .actions-col { white-space:nowrap; }
+    .error { color:var(--danger); }
+    .muted { color:var(--muted); margin:0; }
   `]
 })
 export class ProductsComponent {
@@ -71,7 +95,8 @@ export class ProductsComponent {
   keyword = '';
   showModal = signal(false);
   error = signal('');
-  form = { name: '', code: '' };
+  editingId: string | null = null;
+  form = { productType: 'ONLINE' as 'ONLINE' | 'OFFLINE', teacherName: '', content: '', duration: '', sessionCount: '' };
 
   constructor(private productService: ProductService) {
     this.reload();
@@ -80,13 +105,30 @@ export class ProductsComponent {
   filtered = computed(() => {
     const kw = this.keyword.trim().toLowerCase();
     if (!kw) return this.items();
-    return this.items().filter(p =>
-      p.name.toLowerCase().includes(kw) || p.code.toLowerCase().includes(kw)
-    );
+    return this.items().filter(p => p.name.toLowerCase().includes(kw));
   });
 
-  openModal() {
-    this.form = { name: '', code: '' };
+  namePreview = computed(() => {
+    const parts = [this.form.teacherName, this.form.content, this.form.duration, this.form.sessionCount]
+      .map((p) => p?.toString().trim())
+      .filter(Boolean) as string[];
+    return parts.join(' - ');
+  });
+
+  openModal(product?: ProductItem) {
+    if (product) {
+      this.editingId = product._id;
+      this.form = {
+        productType: product.productType,
+        teacherName: product.teacherName || '',
+        content: product.content || '',
+        duration: product.duration || '',
+        sessionCount: product.sessionCount || '',
+      };
+    } else {
+      this.editingId = null;
+      this.form = { productType: 'ONLINE', teacherName: '', content: '', duration: '', sessionCount: '' };
+    }
     this.error.set('');
     this.showModal.set(true);
   }
@@ -99,12 +141,37 @@ export class ProductsComponent {
   }
 
   async submit() {
-    const result = await this.productService.create({ name: this.form.name.trim(), code: this.form.code.trim() });
+    const payload = {
+      productType: this.form.productType,
+      teacherName: this.form.teacherName?.trim() || undefined,
+      content: this.form.content?.trim() || undefined,
+      duration: this.form.duration?.trim() || undefined,
+      sessionCount: this.form.sessionCount?.toString().trim() || undefined,
+    };
+
+    let result: { ok: boolean; message?: string };
+    if (this.editingId) {
+      result = await this.productService.update(this.editingId, payload);
+    } else {
+      result = await this.productService.create(payload);
+    }
+
     if (!result.ok) {
-      this.error.set(result.message || 'Không thể tạo sản phẩm');
+      this.error.set(result.message || 'Không thể lưu sản phẩm');
       return;
     }
     this.closeModal();
+    this.reload();
+  }
+
+  async remove(product: ProductItem) {
+    const confirmed = confirm(`Xóa sản phẩm "${product.name}"?`);
+    if (!confirmed) return;
+    const ok = await this.productService.remove(product._id);
+    if (!ok) {
+      this.error.set('Không thể xóa sản phẩm');
+      return;
+    }
     this.reload();
   }
 }

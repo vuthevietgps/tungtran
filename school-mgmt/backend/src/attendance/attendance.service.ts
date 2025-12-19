@@ -3,7 +3,9 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable, 
-  NotFoundException 
+  NotFoundException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -19,6 +21,7 @@ import { Role } from '../common/interfaces/role.enum';
 import { randomBytes } from 'crypto';
 import { writeFile } from 'fs/promises';
 import { join } from 'path';
+import { OrdersService } from '../orders/orders.service';
 
 type StudentLean = Student & { _id: Types.ObjectId };
 type ClassLean = Classroom & { _id: Types.ObjectId };
@@ -31,7 +34,51 @@ export class AttendanceService {
     @InjectModel(Classroom.name) private readonly classModel: Model<ClassDocument>,
     @InjectModel(Student.name) private readonly studentModel: Model<StudentDocument>,
     @InjectModel(Order.name) private readonly orderModel: Model<OrderDocument>,
+    @Inject(forwardRef(() => OrdersService)) private readonly ordersService: OrdersService,
   ) {}
+
+  private readonly ALLOWED_SESSION_DURATIONS = [40, 50, 70, 90, 110];
+
+  private readonly SALARY_DURATION_MAP: Record<number, keyof { salary0: number; salary1: number; salary2: number; salary3: number; salary4: number; salary5: number }> = {
+    40: 'salary0',
+    50: 'salary1',
+    70: 'salary2',
+    90: 'salary3',
+    110: 'salary4',
+  };
+
+  private normalizeSessionDuration(duration?: number): number {
+    if (!duration) return 70;
+    if (!this.ALLOWED_SESSION_DURATIONS.includes(duration)) {
+      throw new BadRequestException('Độ dài buổi học không hợp lệ');
+    }
+    return duration;
+  }
+
+  private computeBaseSessionsUsed(status: AttendanceStatus, sessionDuration: number): number {
+    if (status !== AttendanceStatus.PRESENT && status !== AttendanceStatus.LATE) return 0;
+    return sessionDuration / 70;
+  }
+
+  private resolveTeacherSalary(classroom: ClassLean, teacherId: Types.ObjectId, sessionDuration: number): number {
+    if (!classroom?.teachers?.length) return 0;
+    const teacherIdStr = teacherId?.toString?.() || '';
+    const teacher = (classroom.teachers as any[]).find((t) => {
+      const id = t?.teacherId?._id?.toString?.() || t?.teacherId?.toString?.() || t?.toString?.();
+      return id === teacherIdStr;
+    });
+    if (!teacher) return 0;
+    const field = this.SALARY_DURATION_MAP[sessionDuration] || this.SALARY_DURATION_MAP[70];
+    const val = teacher[field] ?? 0;
+    return Number.isFinite(val) ? Number(val) : 0;
+  }
+
+  private attachSalary(att: any, classroom: ClassLean): any {
+    if (!att) return att;
+    const sessionDuration = att.sessionDuration || 70;
+    const salaryAmount = this.resolveTeacherSalary(classroom, att.teacherId, sessionDuration);
+    return { ...att, salaryAmount };
+  }
 
   private isTeacher(user: UserDocument): boolean {
     return user?.role === Role.TEACHER;
@@ -39,6 +86,18 @@ export class AttendanceService {
 
   private getUserId(user: UserDocument): string {
     return (user?._id as any)?.toString();
+  }
+
+  private async syncOrderAttendance(classId: string, studentIds: (string | Types.ObjectId)[]) {
+    if (!this.ordersService) return;
+    const unique = Array.from(new Set((studentIds || []).map((id) => id?.toString()).filter(Boolean)));
+    for (const sid of unique) {
+      try {
+        await this.ordersService.syncFromAttendance(sid, classId);
+      } catch (err) {
+        console.error('Failed to sync orders from attendance', { classId, studentId: sid, err });
+      }
+    }
   }
 
   private normalizeStudentCode(studentCode?: string | null): string | null {
@@ -76,7 +135,7 @@ export class AttendanceService {
     const created = await this.classModel.create({
       name: `Lớp ${normalizedCode}`,
       code: normalizedCode,
-      teacher: teacherId,
+      teachers: teacherId ? [teacherId] : [],
       sale: saleId,
       students: [],
     });
@@ -128,8 +187,9 @@ export class AttendanceService {
       return;
     }
 
-    const teacherId = classroom.teacher ? classroom.teacher.toString() : '';
-    if (!teacherId || teacherId !== this.getUserId(user)) {
+    const teacherIds = classroom.teachers ? (classroom.teachers as any[]).map(t => t.teacherId?.toString() || t.toString()) : [];
+    const userId = this.getUserId(user);
+    if (!teacherIds.includes(userId)) {
       throw new ForbiddenException('Bạn không phụ trách lớp học này');
     }
   }
@@ -267,8 +327,12 @@ export class AttendanceService {
 
   // Điểm danh một học sinh
   async markAttendance(dto: CreateAttendanceDto, teacher: UserDocument) {
-    const { students } = await this.loadClassroomWithStudents(dto.classId, teacher, true);
+    const { classroom, students } = await this.loadClassroomWithStudents(dto.classId, teacher, true);
     this.ensureStudentInClass(students, dto.studentId);
+
+    const sessionDuration = this.normalizeSessionDuration(dto.sessionDuration);
+    const status = dto.status || AttendanceStatus.PRESENT;
+    const baseSessionsUsed = this.computeBaseSessionsUsed(status, sessionDuration);
 
     // Tạo hoặc cập nhật điểm danh
     const attendanceDate = new Date(dto.date);
@@ -283,17 +347,22 @@ export class AttendanceService {
         },
         {
           teacherId: teacher._id,
-          status: dto.status || AttendanceStatus.PRESENT,
-          notes: dto.notes || ''
+          status,
+          notes: dto.notes || '',
+          sessionDuration,
+          baseSessionsUsed
         },
         {
           new: true,
           upsert: true
         }
       ).populate('studentId', 'fullName age parentName')
-       .populate('classId', 'name code');
+       .populate('classId', 'name code')
+       .lean();
 
-      return attendance;
+      const enriched = this.attachSalary(attendance, classroom);
+      await this.syncOrderAttendance(dto.classId, [dto.studentId]);
+      return enriched;
     } catch (error: any) {
       if (error.code === 11000) {
         throw new ConflictException('Điểm danh cho học sinh này trong ngày đã tồn tại');
@@ -304,18 +373,32 @@ export class AttendanceService {
 
   // Điểm danh nhiều học sinh cùng lúc
   async bulkMarkAttendance(dto: BulkAttendanceDto, teacher: UserDocument) {
-    const { students } = await this.loadClassroomWithStudents(dto.classId, teacher, true);
+    const { classroom, students } = await this.loadClassroomWithStudents(dto.classId, teacher, true);
     const allowedStudentIds = new Set(students.map((student) => student._id.toString()));
 
     const attendanceDate = new Date(dto.date);
     attendanceDate.setHours(0, 0, 0, 0);
 
+    // Validate teacherId if provided
+    let validatedTeacherId = teacher._id;
+    if (dto.teacherId) {
+      const teacherIds = (classroom.teachers as any[]).map(t => t.teacherId?.toString() || t.toString());
+      if (teacherIds.includes(dto.teacherId)) {
+        validatedTeacherId = new Types.ObjectId(dto.teacherId) as any;
+      }
+    }
+
     const results: any[] = [];
+    const syncedStudentIds: string[] = [];
     
     for (const item of dto.attendances) {
       if (!allowedStudentIds.has(item.studentId)) {
         continue; // Bỏ qua học sinh không thuộc lớp
       }
+
+      const sessionDuration = this.normalizeSessionDuration(item.sessionDuration ?? dto.sessionDuration);
+      const status = item.status;
+      const baseSessionsUsed = this.computeBaseSessionsUsed(status, sessionDuration);
 
       try {
         const attendance = await this.attendanceModel.findOneAndUpdate(
@@ -325,23 +408,44 @@ export class AttendanceService {
             date: attendanceDate
           },
           {
-            teacherId: teacher._id,
-            status: item.status,
-            notes: item.notes || ''
+            teacherId: validatedTeacherId,
+            status,
+            notes: item.notes || '',
+            sessionDuration,
+            baseSessionsUsed
           },
           {
             new: true,
             upsert: true
           }
-        ).populate('studentId', 'fullName age parentName');
+        ).populate('studentId', 'fullName age parentName')
+         .lean();
 
-        results.push(attendance);
+        results.push(this.attachSalary(attendance, classroom as any));
+        syncedStudentIds.push(item.studentId);
       } catch (error: any) {
         console.error('Error marking attendance for student:', item.studentId, error);
       }
     }
 
+    if (syncedStudentIds.length) {
+      await this.syncOrderAttendance(dto.classId, syncedStudentIds);
+    }
     return results;
+  }
+
+  // Lấy danh sách giáo viên của lớp học
+  async getClassTeachers(classId: string): Promise<any[]> {
+    const classroom = await this.classModel.findById(classId)
+      .populate('teachers', 'fullName email')
+      .lean<ClassLean & { teachers?: any[] }>();
+    
+    if (!classroom) {
+      throw new NotFoundException('Không tìm thấy lớp học');
+    }
+
+    // Extract teacher IDs from the teachers array (which now contains objects with teacherId and salaryLevel)
+    return classroom.teachers ? (classroom.teachers as any[]).map(t => t.teacherId || t) : [];
   }
 
   // Lấy danh sách điểm danh theo lớp và ngày
@@ -359,7 +463,7 @@ export class AttendanceService {
     const attendanceMap = new Map<string, any>();
     attendances.forEach(att => {
       if (att?.studentId?._id) {
-        attendanceMap.set(att.studentId._id.toString(), att);
+        attendanceMap.set(att.studentId._id.toString(), this.attachSalary(att, classroom));
       }
     });
 
@@ -419,14 +523,26 @@ export class AttendanceService {
     const classroom = await this.classModel.findById(attendance.classId).lean<ClassLean>();
     this.assertClassAccess(classroom, teacher);
 
+    const nextStatus = (dto.status ?? attendance.status) as AttendanceStatus;
+    const nextDuration = this.normalizeSessionDuration(dto.sessionDuration ?? (attendance as any).sessionDuration);
+    const nextBaseUsed = this.computeBaseSessionsUsed(nextStatus, nextDuration);
+
     // Cho phép tất cả user cập nhật điểm danh
-    Object.assign(attendance, dto);
+    Object.assign(attendance, dto, {
+      status: nextStatus,
+      sessionDuration: nextDuration,
+      baseSessionsUsed: nextBaseUsed,
+    });
     await attendance.save();
 
-    return this.attendanceModel.findById(id)
+    const updated = await this.attendanceModel.findById(id)
       .populate('studentId', 'fullName age parentName')
       .populate('classId', 'name code')
       .lean();
+
+    await this.syncOrderAttendance(attendance.classId.toString(), [attendance.studentId.toString()]);
+
+    return updated;
   }
 
   // Thống kê điểm danh theo lớp
@@ -520,11 +636,13 @@ export class AttendanceService {
       },
       {
         teacherId: user._id,
-        status: AttendanceStatus.ABSENT,
+        status: AttendanceStatus.ABSENT_WITHOUT_PERMISSION,
         attendanceToken: token,
         tokenExpiresAt,
         imageUrl: null,
-        attendedAt: null
+        attendedAt: null,
+        sessionDuration: this.normalizeSessionDuration(),
+        baseSessionsUsed: 0
       },
       {
         new: true,
@@ -800,16 +918,23 @@ export class AttendanceService {
     await writeFile(imagePath, imageBuffer);
 
     // Cập nhật bản ghi điểm danh
+    const sessionDuration = this.normalizeSessionDuration(attendance.sessionDuration as any);
     attendance.status = AttendanceStatus.PRESENT;
+    attendance.sessionDuration = sessionDuration;
+    attendance.baseSessionsUsed = this.computeBaseSessionsUsed(attendance.status, sessionDuration);
     attendance.imageUrl = `/uploads/attendance/${imageName}`;
     attendance.attendedAt = new Date();
     await attendance.save();
 
-    return this.attendanceModel.findById(attendance._id)
+    const saved = await this.attendanceModel.findById(attendance._id)
       .populate('studentId', 'fullName age parentName')
       .populate('classId', 'name code')
       .populate('teacherId', 'fullName email')
       .lean();
+
+    await this.syncOrderAttendance(attendance.classId.toString(), [attendance.studentId.toString()]);
+
+    return saved;
   }
 
   // Lấy báo cáo điểm danh tổng hợp
@@ -826,16 +951,23 @@ export class AttendanceService {
     };
 
     if (classId) {
+      if (!Types.ObjectId.isValid(classId)) {
+        throw new BadRequestException('classId không hợp lệ');
+      }
       filter.classId = new Types.ObjectId(classId);
     }
 
     const attendances = await this.attendanceModel.find(filter)
       .populate('studentId', 'fullName age parentName faceImage')
-      .populate('classId', 'name code')
+      .populate('classId', 'name code teachers')
       .populate('teacherId', 'fullName email')
       .sort({ attendedAt: -1 })
       .lean();
 
-    return attendances;
+    // Đính kèm lương buổi dựa trên lớp + giáo viên + thời lượng
+    return attendances.map((att) => {
+      const classroom = (att as any).classId as any;
+      return this.attachSalary(att, classroom);
+    });
   }
 }

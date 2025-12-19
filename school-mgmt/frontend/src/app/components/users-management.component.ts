@@ -75,22 +75,22 @@ import { AuthService } from '../services/auth.service';
   </div>
   `,
   styles: [`
-    .page-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
+    .page-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; color:var(--text); }
     .filters { display:flex; gap:10px; margin-bottom:16px; }
-    input, select { padding:6px 8px; border:1px solid #cbd5f5; border-radius:4px; }
-    .data { width:100%; border-collapse:collapse; background:#fff; }
-    th, td { padding:8px; border:1px solid #e2e8f0; text-align:left; }
-    thead { background:#f1f5f9; }
-    .primary { background:#2563eb; color:#fff; border:none; padding:8px 12px; border-radius:4px; cursor:pointer; }
-    .ghost { border:1px solid #94a3b8; background:transparent; padding:4px 10px; border-radius:4px; cursor:pointer; margin-right:6px; }
-    .danger { border:1px solid #dc2626; background:#dc2626; color:#fff; padding:4px 10px; border-radius:4px; cursor:pointer; }
+    input, select { padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:var(--panel); color:var(--text); }
+    .data { width:100%; border-collapse:collapse; background:var(--surface); color:var(--text); }
+    th, td { padding:8px; border:1px solid var(--border); text-align:left; }
+    thead { background:#132544; color:var(--muted); }
+    .primary { background:var(--primary); color:#04121a; border:1px solid var(--primary-strong); padding:8px 12px; border-radius:8px; cursor:pointer; font-weight:600; }
+    .ghost { border:1px solid var(--border); background:transparent; padding:6px 10px; border-radius:8px; cursor:pointer; margin-right:6px; color:var(--text); }
+    .danger { border:1px solid var(--danger); background:var(--danger); color:#fff; padding:6px 10px; border-radius:8px; cursor:pointer; }
     .ghost:disabled, .danger:disabled { opacity:.4; cursor:not-allowed; }
     .actions-cell { white-space:nowrap; width:140px; }
-    .modal-backdrop { position:fixed; inset:0; background:rgba(15,23,42,.55); display:flex; align-items:center; justify-content:center; }
-    .modal { background:#fff; padding:20px; border-radius:8px; width:340px; box-shadow:0 12px 32px rgba(15,23,42,.2); }
+    .modal-backdrop { position:fixed; inset:0; background:rgba(4,12,30,.75); display:flex; align-items:center; justify-content:center; }
+    .modal { background:var(--surface); padding:20px; border-radius:12px; width:340px; box-shadow:0 20px 50px rgba(0,0,0,0.55); border:1px solid var(--border); color:var(--text); }
     .modal form { display:flex; flex-direction:column; gap:12px; }
     .actions { display:flex; gap:8px; justify-content:flex-end; }
-    .error { color:#dc2626; }
+    .error { color:var(--danger); }
   `]
 })
 export class UsersManagementComponent {

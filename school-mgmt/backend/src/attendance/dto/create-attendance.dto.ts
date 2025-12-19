@@ -1,4 +1,4 @@
-import { IsArray, IsDateString, IsEnum, IsMongoId, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsDateString, IsEnum, IsIn, IsMongoId, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
 import { AttendanceStatus } from '../schemas/attendance.schema';
 
 export class CreateAttendanceDto {
@@ -21,6 +21,15 @@ export class CreateAttendanceDto {
   @IsString()
   @IsOptional()
   notes?: string;
+
+  @IsString()
+  @IsOptional()
+  absenceProofImage?: string;
+
+  @IsNumber()
+  @IsOptional()
+  @IsIn([40, 50, 70, 90, 110])
+  sessionDuration?: number; // Độ dài buổi học (phút)
 }
 
 // DTO để điểm danh nhiều học sinh cùng lúc
@@ -28,6 +37,10 @@ export class BulkAttendanceDto {
   @IsMongoId()
   @IsNotEmpty()
   classId!: string;
+
+  @IsMongoId()
+  @IsOptional()
+  teacherId?: string;
 
   @IsDateString()
   @IsNotEmpty()
@@ -39,5 +52,12 @@ export class BulkAttendanceDto {
     studentId: string;
     status: AttendanceStatus;
     notes?: string;
+    absenceProofImage?: string;
+    sessionDuration?: number;
   }>;
+
+  @IsNumber()
+  @IsOptional()
+  @IsIn([40, 50, 70, 90, 110])
+  sessionDuration?: number; // Độ dài mặc định áp dụng cho danh sách (nếu từng item không có)
 }

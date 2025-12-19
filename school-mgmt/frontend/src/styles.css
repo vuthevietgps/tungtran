@@ -1,1 +1,111 @@
-/* You can add global styles to this file, and also import other style files */
+:root {
+	--bg: #0f172a;
+	--panel: #0b1224;
+	--surface: #0f1b33;
+	--card: #111f3d;
+	--text: #e9efff;
+	--muted: #9fb3d9;
+	--border: #1f2d4d;
+	--primary: #22d3ee;
+	--primary-strong: #06b6d4;
+	--accent: #f59e0b;
+	--danger: #f43f5e;
+	--success: #34d399;
+	--chip: #15294d;
+	--shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+* { box-sizing: border-box; }
+
+body {
+	margin: 0;
+	font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+	background: var(--bg);
+	color: var(--text);
+}
+
+input, select, button {
+	font: inherit;
+}
+
+button {
+	border: 1px solid var(--border);
+	background: var(--surface);
+	color: var(--text);
+	padding: 8px 12px;
+	border-radius: 8px;
+	cursor: pointer;
+	transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+
+button:hover:not(:disabled) { background: #132544; }
+button:active:not(:disabled) { transform: translateY(1px); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-primary { background: var(--primary); border-color: var(--primary-strong); color: #04121a; font-weight: 600; }
+.btn-ghost { background: transparent; }
+.btn-danger { border-color: var(--danger); color: var(--danger); }
+
+input, select {
+	background: var(--panel);
+	color: var(--text);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	padding: 8px 10px;
+}
+
+input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: 1px; }
+
+.chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 10px;
+	border-radius: 999px;
+	background: var(--chip);
+	color: var(--text);
+	border: 1px solid var(--border);
+	font-size: 13px;
+}
+
+.pill {
+	display: inline-block;
+	padding: 4px 10px;
+	border-radius: 999px;
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.pill.green { background: rgba(52, 211, 153, 0.2); color: #bbf7d0; border: 1px solid #22c55e; }
+.pill.amber { background: rgba(245, 158, 11, 0.2); color: #fcd34d; border: 1px solid #f59e0b; }
+.pill.red { background: rgba(244, 63, 94, 0.18); color: #fecdd3; border: 1px solid #f43f5e; }
+.pill.blue { background: rgba(34, 211, 238, 0.18); color: #a5f3fc; border: 1px solid #22d3ee; }
+
+table {
+	border-collapse: collapse;
+	width: 100%;
+	color: var(--text);
+}
+
+th, td {
+	border-bottom: 1px solid var(--border);
+	padding: 10px;
+	text-align: left;
+	vertical-align: top;
+}
+
+thead th {
+	background: #132544;
+	position: sticky;
+	top: 0;
+	z-index: 2;
+}
+
+tbody tr:hover { background: #1a2f55; }
+
+.shadow-card {
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 14px;
+	box-shadow: var(--shadow);
+}

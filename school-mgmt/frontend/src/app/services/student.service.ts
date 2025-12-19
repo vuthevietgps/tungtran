@@ -6,15 +6,42 @@ export interface StudentItem {
   _id: string;
   studentCode: string;
   fullName: string;
+  dateOfBirth?: string;
   age: number;
   parentName: string;
   parentPhone: string;
   faceImage: string;
+  level?: string;
+  studentType?: 'ONLINE' | 'OFFLINE';
+  saleId?: string;
+  saleName?: string;
+  saleEmail?: string;
   productPackage?: {
     _id: string;
     name: string;
     price: number;
   };
+  sessionBalances?: {
+    basePaid70: number;
+    baseUsed70: number;
+    remaining70Exact: number;
+    remaining70: number;
+    remaining50: number;
+    remaining40: number;
+    remaining90: number;
+    remaining110: number;
+    remaining120: number;
+    remaining150: number;
+  };
+  payments?: StudentPaymentFrame[];
+}
+
+export interface StudentPaymentFrame {
+  frameIndex: number;
+  sessionsCollected?: number;
+  sessionsRegistered?: number;
+  sessionDuration?: number;
+  confirmStatus?: 'PENDING' | 'CONFIRMED';
 }
 
 export interface StudentReportEntry {
