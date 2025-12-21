@@ -24,7 +24,10 @@ export class ClassesService {
     @InjectModel(Student.name) private readonly studentModel: Model<StudentDocument>,
   ) {}
 
-  async create(dto: CreateClassDto) {
+  async create(dto: CreateClassDto, actor?: UserDocument) {
+    if (actor?.role === Role.SALE && dto.classType === ClassType.OFFLINE) {
+      throw new BadRequestException('SALE không được tạo lớp OFFLINE');
+    }
     await this.ensureCodeUnique(dto.code);
     const payload = await this.buildPayload(dto);
     const created = await new this.classModel(payload).save();
@@ -52,7 +55,23 @@ export class ClassesService {
     }));
   }
 
-  async update(id: string, dto: UpdateClassDto) {
+  async update(id: string, dto: UpdateClassDto, actor?: UserDocument) {
+    const existing = await this.classModel.findById(id).lean();
+    if (!existing) throw new NotFoundException('Class not found');
+
+    const isSale = actor?.role === Role.SALE;
+    const isOffline = existing.classType === ClassType.OFFLINE;
+
+    if (isSale && isOffline) {
+      // Sale chỉ được thêm học viên offline của mình: chỉ cho phép cập nhật students
+      const update: Record<string, unknown> = {};
+      if (dto.studentIds) {
+        update.students = await this.validateStudents(dto.studentIds);
+      }
+      await this.classModel.findByIdAndUpdate(id, update, { new: true }).lean();
+      return this.findByIdPopulated(id);
+    }
+
     const update: Record<string, unknown> = {};
     if (dto.name) update.name = dto.name;
     if (dto.code) {
@@ -140,11 +159,11 @@ export class ClassesService {
       salary3?: number;
       salary4?: number;
       salary5?: number;
-      baseSalary70?: number;
       offlineSalary1?: number;
       offlineSalary2?: number;
       offlineSalary3?: number;
       offlineSalary4?: number;
+      canCreateAttendanceLink?: boolean;
     }[],
     classType?: ClassType,
   ): Promise<{
@@ -159,6 +178,7 @@ export class ClassesService {
     offlineSalary2: number;
     offlineSalary3: number;
     offlineSalary4: number;
+    canCreateAttendanceLink: boolean;
   }[]> {
     if (!teachers?.length) return [];
     if (!classType) throw new BadRequestException('Thiếu loại lớp');
@@ -172,16 +192,25 @@ export class ClassesService {
     
     if (classType === ClassType.ONLINE) {
       return teachers.map((t) => {
-        const base = Number.isFinite(t.baseSalary70) ? Number(t.baseSalary70) : Number(t.salary2 ?? t.salary0 ?? 0);
-        if (base < 0) throw new BadRequestException('Lương 70 phút phải >= 0');
-        const computed = this.computeSalariesFromBase(base);
+        const salary0 = this.toNonNegativeNumber(t.salary0);
+        const salary1 = this.toNonNegativeNumber(t.salary1);
+        const salary2 = this.toNonNegativeNumber(t.salary2);
+        const salary3 = this.toNonNegativeNumber(t.salary3);
+        const salary4 = this.toNonNegativeNumber(t.salary4);
+        const salary5 = this.toNonNegativeNumber(t.salary5);
         return {
           teacherId: new Types.ObjectId(t.teacherId),
-          ...computed,
+          salary0,
+          salary1,
+          salary2,
+          salary3,
+          salary4,
+          salary5,
           offlineSalary1: 0,
           offlineSalary2: 0,
           offlineSalary3: 0,
           offlineSalary4: 0,
+          canCreateAttendanceLink: !!t.canCreateAttendanceLink,
         };
       });
     }
@@ -203,21 +232,14 @@ export class ClassesService {
         offlineSalary2,
         offlineSalary3,
         offlineSalary4,
+        canCreateAttendanceLink: !!t.canCreateAttendanceLink,
       };
     });
   }
 
-  private computeSalariesFromBase(baseSalary70: number) {
-    const base = Math.max(0, Number(baseSalary70) || 0);
-    const calc = (minutes: number) => Math.round((base * minutes) / 70);
-    return {
-      salary0: calc(40),
-      salary1: calc(50),
-      salary2: base,
-      salary3: calc(90),
-      salary4: calc(110),
-      salary5: calc(70),
-    };
+  private toNonNegativeNumber(value?: number) {
+    const num = Number(value);
+    return Number.isFinite(num) && num >= 0 ? num : 0;
   }
   private async findByIdPopulated(id: string | Types.ObjectId) {
     const classroom = await this.classModel

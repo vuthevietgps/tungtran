@@ -32,7 +32,6 @@ export class CreateClassDto {
     salary3?: number;
     salary4?: number;
     salary5?: number;
-    baseSalary70?: number;
     offlineSalary1?: number;
     offlineSalary2?: number;
     offlineSalary3?: number;

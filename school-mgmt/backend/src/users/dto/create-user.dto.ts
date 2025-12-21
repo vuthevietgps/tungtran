@@ -2,6 +2,10 @@ import { IsEmail, IsEnum, IsNotEmpty, IsString, MinLength } from 'class-validato
 import { Role } from '../../common/interfaces/role.enum';
 
 export class CreateUserDto {
+  @IsString()
+  @IsNotEmpty()
+  userCode!: string;
+
   @IsEmail()
   email!: string;
 

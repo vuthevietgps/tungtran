@@ -31,7 +31,7 @@ export class PaymentFrameDto {
   sessionsCollected?: number;
 
   @IsOptional()
-  @IsIn([40, 50, 70, 90, 110, 120])
+  @IsIn([40, 50, 70, 90, 110, 120, 150])
   sessionDuration?: number;
 
   @IsOptional()
@@ -66,7 +66,7 @@ export class CreateStudentDto {
 
   @IsInt()
   @Min(3)
-  @Max(25)
+  @Max(60)
   age!: number;
 
   @IsString()
@@ -76,6 +76,10 @@ export class CreateStudentDto {
   @IsString()
   @Matches(/^[0-9+\-()\s]{6,20}$/)
   parentPhone!: string;
+
+  @IsOptional()
+  @IsIn([40, 50, 70, 90, 110])
+  registeredSessionDuration?: number;
 
   @IsString()
   faceImage!: string;
@@ -93,12 +97,20 @@ export class CreateStudentDto {
   studentType?: 'ONLINE' | 'OFFLINE';
 
   @IsOptional()
+  @IsIn(['Đang học', 'Bảo lưu', 'Đã dừng học'])
+  dataStatus?: 'Đang học' | 'Bảo lưu' | 'Đã dừng học';
+
+  @IsOptional()
   @IsMongoId()
   saleId?: string;
 
   @IsOptional()
   @IsString()
   saleName?: string;
+
+  @IsOptional()
+  @IsString()
+  trialOrGift?: string;
 
   @IsOptional()
   @IsString()

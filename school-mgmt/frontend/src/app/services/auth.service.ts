@@ -61,6 +61,8 @@ export class AuthService {
 
   hasRole(roles: string[]): boolean {
     const u = this.userSignal();
-    return !!u && roles.includes(u.role);
+    if (!u) return false;
+    const role = (u.role || '').trim().toUpperCase();
+    return roles.some((r) => role === (r || '').trim().toUpperCase());
   }
 }

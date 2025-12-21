@@ -13,6 +13,9 @@ import {
   Req,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { existsSync, mkdirSync } from 'fs';
+import { join, extname } from 'path';
 import { InvoicesService } from './invoices.service';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { UpdateInvoiceDto } from './dto/update-invoice.dto';
@@ -23,6 +26,26 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '../common/interfaces/role.enum';
 import { UpdatePaymentFrameDto } from './dto/update-payment-frame.dto';
+
+const invoiceUploadPath = join(process.cwd(), 'uploads', 'invoices');
+if (!existsSync(invoiceUploadPath)) {
+  mkdirSync(invoiceUploadPath, { recursive: true });
+}
+
+const invoiceStorage = diskStorage({
+  destination: invoiceUploadPath,
+  filename: (req, file, cb) => {
+    const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    const ext = extname(file.originalname) || '.jpg';
+    cb(null, `receipt-${unique}${ext}`);
+  },
+});
+
+const invoiceFileFilter = (req: any, file: Express.Multer.File, cb: any) => {
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/jpg'];
+  if (allowedTypes.includes(file.mimetype)) return cb(null, true);
+  return cb(new BadRequestException('Chỉ chấp nhận file ảnh (JPG, PNG)'), false);
+};
 
 @Controller('invoices')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -88,23 +111,19 @@ export class InvoicesController {
   }
 
   @Post('receipt-upload')
-  @UseInterceptors(FileInterceptor('file'))
-  async uploadReceipt(@UploadedFile() file: Express.Multer.File) {
+  @UseInterceptors(FileInterceptor('file', {
+    storage: invoiceStorage,
+    fileFilter: invoiceFileFilter,
+    limits: { fileSize: 5 * 1024 * 1024 },
+  }))
+  async uploadReceipt(@UploadedFile() file: Express.Multer.File, @Req() req: Request) {
     if (!file) {
       throw new BadRequestException('Không có file được tải lên');
     }
 
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/jpg'];
-    if (!allowedTypes.includes(file.mimetype)) {
-      throw new BadRequestException('Chỉ chấp nhận file ảnh (JPG, PNG)');
-    }
-
-    if (file.size > 5 * 1024 * 1024) { // 5MB
-      throw new BadRequestException('File không được vượt quá 5MB');
-    }
-
-    // Return relative path for frontend
-    const relativePath = `/uploads/invoices/${file.filename}`;
-    return { url: relativePath };
+    // Return absolute URL so frontend stores usable path
+    const protocol = req.protocol;
+    const host = req.get('host');
+    return { url: `${protocol}://${host}/uploads/invoices/${file.filename}` };
   }
 }

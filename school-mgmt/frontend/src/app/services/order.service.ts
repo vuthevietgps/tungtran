@@ -59,6 +59,7 @@ export interface OrderPayload {
   studentId?: string;
   studentName: string;
   studentCode: string;
+  studentType?: 'ONLINE' | 'OFFLINE';
   level?: string;
   parentName: string;
   teacherId?: string;

@@ -19,13 +19,13 @@ export class AdminSeeder implements OnModuleInit {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(demoPassword, salt);
 
-    const demoUsers: Array<Pick<User, 'email' | 'fullName' | 'role'>> = [
-      { email: 'director.demo@school.local', fullName: 'Giám đốc Demo', role: Role.DIRECTOR },
-      { email: 'manager.demo@school.local', fullName: 'Quản lý Demo', role: Role.MANAGER },
-      { email: 'sale.demo@school.local', fullName: 'Nhân viên Sale Demo', role: Role.SALE },
-      { email: 'hcns.demo@school.local', fullName: 'Nhân sự Demo', role: Role.HCNS },
-      { email: 'partime.demo@school.local', fullName: 'Nhân viên Partime Demo', role: Role.PARTIME },
-      { email: 'teacher.demo@school.local', fullName: 'Giáo viên Demo', role: Role.TEACHER },
+    const demoUsers: Array<Pick<User, 'email' | 'fullName' | 'role' | 'userCode'>> = [
+      { email: 'director.demo@school.local', fullName: 'Giám đốc Demo', role: Role.DIRECTOR, userCode: 'DEMO-DIR' },
+      { email: 'manager.demo@school.local', fullName: 'Quản lý Demo', role: Role.MANAGER, userCode: 'DEMO-MGR' },
+      { email: 'sale.demo@school.local', fullName: 'Nhân viên Sale Demo', role: Role.SALE, userCode: 'DEMO-SAL' },
+      { email: 'hcns.demo@school.local', fullName: 'Nhân sự Demo', role: Role.HCNS, userCode: 'DEMO-HCNS' },
+      { email: 'partime.demo@school.local', fullName: 'Nhân viên Partime Demo', role: Role.PARTIME, userCode: 'DEMO-PT' },
+      { email: 'teacher.demo@school.local', fullName: 'Giáo viên Demo', role: Role.TEACHER, userCode: 'DEMO-TCH' },
     ];
 
     for (const demo of demoUsers) {
@@ -34,6 +34,7 @@ export class AdminSeeder implements OnModuleInit {
         existing.password = hashedPassword;
         existing.fullName = demo.fullName;
         existing.role = demo.role;
+        existing.userCode = demo.userCode;
         await existing.save();
         this.logger.log(`Refreshed demo account: ${demo.email}`);
         continue;

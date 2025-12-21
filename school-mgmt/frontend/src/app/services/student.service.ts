@@ -10,12 +10,15 @@ export interface StudentItem {
   age: number;
   parentName: string;
   parentPhone: string;
+  registeredSessionDuration?: number;
   faceImage: string;
   level?: string;
   studentType?: 'ONLINE' | 'OFFLINE';
   saleId?: string;
   saleName?: string;
   saleEmail?: string;
+  trialOrGift?: string;
+  dataStatus?: string;
   productPackage?: {
     _id: string;
     name: string;

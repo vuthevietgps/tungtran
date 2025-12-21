@@ -60,17 +60,24 @@ export class AttendanceService {
     return sessionDuration / 70;
   }
 
-  private resolveTeacherSalary(classroom: ClassLean, teacherId: Types.ObjectId, sessionDuration: number): number {
+  private resolveTeacherSalary(classroom: ClassLean, teacherId: any, sessionDuration: number): number {
     if (!classroom?.teachers?.length) return 0;
-    const teacherIdStr = teacherId?.toString?.() || '';
+    const teacherIdStr = teacherId?._id?.toString?.() || teacherId?.toString?.() || '';
     const teacher = (classroom.teachers as any[]).find((t) => {
       const id = t?.teacherId?._id?.toString?.() || t?.teacherId?.toString?.() || t?.toString?.();
       return id === teacherIdStr;
     });
     if (!teacher) return 0;
     const field = this.SALARY_DURATION_MAP[sessionDuration] || this.SALARY_DURATION_MAP[70];
-    const val = teacher[field] ?? 0;
-    return Number.isFinite(val) ? Number(val) : 0;
+    const num = Number(teacher[field] ?? 0);
+    return Number.isFinite(num) ? num : 0;
+  }
+
+  private shouldOverwriteAttendance(existing: AttendanceDocument | null, now: Date): boolean {
+    if (!existing) return false;
+    if (!existing.attendedAt) return true;
+    const diffMs = Math.abs(now.getTime() - new Date(existing.attendedAt).getTime());
+    return diffMs < 60 * 60 * 1000; // overwrite if within 1 hour
   }
 
   private attachSalary(att: any, classroom: ClassLean): any {
@@ -325,40 +332,129 @@ export class AttendanceService {
     return student;
   }
 
+  private async resolveRegisteredDuration(studentId: string, classId?: string): Promise<number> {
+    const studentDoc = await this.studentModel
+      .findById(studentId)
+      .select('registeredSessionDuration')
+      .lean<StudentLean | null>();
+
+    const candidate = studentDoc?.registeredSessionDuration;
+    if (candidate !== undefined && candidate !== null) {
+      try {
+        return this.normalizeSessionDuration(candidate);
+      } catch (err) {
+        console.warn('Invalid registeredSessionDuration, falling back to defaults', { studentId, candidate, err });
+      }
+    }
+
+    if (classId) {
+      const orderDoc = await this.orderModel
+        .findOne({ classId, studentId })
+        .select('sessionDuration')
+        .lean<OrderLean>();
+      if (orderDoc?.sessionDuration !== undefined && orderDoc.sessionDuration !== null) {
+        try {
+          return this.normalizeSessionDuration(orderDoc.sessionDuration);
+        } catch (err) {
+          console.warn('Invalid order sessionDuration, falling back to defaults', { studentId, classId, err });
+        }
+      }
+    }
+
+    return this.normalizeSessionDuration(undefined);
+  }
+
+  private async buildDurationMap(studentIds: string[], classId: string): Promise<Map<string, number>> {
+    const map = new Map<string, number>();
+    const validObjectIds = studentIds
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+
+    if (!validObjectIds.length) return map;
+
+    const [studentDocs, orderDocs] = await Promise.all([
+      this.studentModel.find({ _id: { $in: validObjectIds } }).select('registeredSessionDuration').lean<StudentLean[]>(),
+      this.orderModel.find({ classId, studentId: { $in: validObjectIds } }).select('studentId sessionDuration').lean<OrderLean[]>(),
+    ]);
+
+    studentDocs.forEach((st) => {
+      try {
+        const normalized = this.normalizeSessionDuration((st as any).registeredSessionDuration);
+        map.set(st._id.toString(), normalized);
+      } catch (err) {
+        console.warn('Invalid registeredSessionDuration in map, skipping', { studentId: st._id, err });
+      }
+    });
+
+    orderDocs.forEach((od) => {
+      if (map.has(od.studentId?.toString?.() || '')) return;
+      try {
+        const normalized = this.normalizeSessionDuration((od as any).sessionDuration);
+        map.set(od.studentId?.toString?.() || '', normalized);
+      } catch (err) {
+        console.warn('Invalid order sessionDuration in map, skipping', { studentId: od.studentId, err });
+      }
+    });
+
+    return map;
+  }
+
   // Điểm danh một học sinh
   async markAttendance(dto: CreateAttendanceDto, teacher: UserDocument) {
     const { classroom, students } = await this.loadClassroomWithStudents(dto.classId, teacher, true);
     this.ensureStudentInClass(students, dto.studentId);
 
-    const sessionDuration = this.normalizeSessionDuration(dto.sessionDuration);
+    const sessionDuration = dto.sessionDuration !== undefined && dto.sessionDuration !== null
+      ? this.normalizeSessionDuration(dto.sessionDuration)
+      : await this.resolveRegisteredDuration(dto.studentId, dto.classId);
     const status = dto.status || AttendanceStatus.PRESENT;
     const baseSessionsUsed = this.computeBaseSessionsUsed(status, sessionDuration);
+    const salaryAmount = this.resolveTeacherSalary(classroom, teacher._id as any, sessionDuration);
 
-    // Tạo hoặc cập nhật điểm danh
     const attendanceDate = new Date(dto.date);
-    attendanceDate.setHours(0, 0, 0, 0); // Đặt về đầu ngày
+    attendanceDate.setHours(0, 0, 0, 0);
+    const now = new Date();
+
+    // Find latest attendance for the same day to apply 1-hour overwrite rule
+    const latest = await this.attendanceModel.findOne({
+      classId: dto.classId,
+      studentId: dto.studentId,
+      date: attendanceDate,
+    }).sort({ attendedAt: -1 });
+
+    const payload = {
+      teacherId: teacher._id,
+      status,
+      notes: dto.notes || '',
+      sessionDuration,
+      baseSessionsUsed,
+      salaryAmount,
+      attendedAt: now,
+      date: attendanceDate,
+    } as any;
 
     try {
-      const attendance = await this.attendanceModel.findOneAndUpdate(
-        {
+      let attendance: any;
+
+      if (this.shouldOverwriteAttendance(latest, now)) {
+        attendance = await this.attendanceModel.findByIdAndUpdate(
+          latest!._id,
+          payload,
+          { new: true }
+        ).populate('studentId', 'fullName age parentName')
+         .populate('classId', 'name code')
+         .lean();
+      } else {
+        const created = await this.attendanceModel.create({
           classId: dto.classId,
           studentId: dto.studentId,
-          date: attendanceDate
-        },
-        {
-          teacherId: teacher._id,
-          status,
-          notes: dto.notes || '',
-          sessionDuration,
-          baseSessionsUsed
-        },
-        {
-          new: true,
-          upsert: true
-        }
-      ).populate('studentId', 'fullName age parentName')
-       .populate('classId', 'name code')
-       .lean();
+          ...payload,
+        });
+        attendance = await this.attendanceModel.findById(created._id)
+          .populate('studentId', 'fullName age parentName')
+          .populate('classId', 'name code')
+          .lean();
+      }
 
       const enriched = this.attachSalary(attendance, classroom);
       await this.syncOrderAttendance(dto.classId, [dto.studentId]);
@@ -378,6 +474,7 @@ export class AttendanceService {
 
     const attendanceDate = new Date(dto.date);
     attendanceDate.setHours(0, 0, 0, 0);
+    const now = new Date();
 
     // Validate teacherId if provided
     let validatedTeacherId = teacher._id;
@@ -388,6 +485,7 @@ export class AttendanceService {
       }
     }
 
+    const durationMap = await this.buildDurationMap(Array.from(allowedStudentIds), dto.classId);
     const results: any[] = [];
     const syncedStudentIds: string[] = [];
     
@@ -396,30 +494,51 @@ export class AttendanceService {
         continue; // Bỏ qua học sinh không thuộc lớp
       }
 
-      const sessionDuration = this.normalizeSessionDuration(item.sessionDuration ?? dto.sessionDuration);
+      const providedDuration = item.sessionDuration ?? dto.sessionDuration;
+      const fallbackDuration = durationMap.get(item.studentId);
+      const sessionDuration = providedDuration !== undefined && providedDuration !== null
+        ? this.normalizeSessionDuration(providedDuration)
+        : this.normalizeSessionDuration(fallbackDuration);
       const status = item.status;
       const baseSessionsUsed = this.computeBaseSessionsUsed(status, sessionDuration);
+      const salaryAmount = this.resolveTeacherSalary(classroom as any, validatedTeacherId as any, sessionDuration);
 
       try {
-        const attendance = await this.attendanceModel.findOneAndUpdate(
-          {
+        const latest = await this.attendanceModel.findOne({
+          classId: dto.classId,
+          studentId: item.studentId,
+          date: attendanceDate,
+        }).sort({ attendedAt: -1 });
+
+        const payload: any = {
+          teacherId: validatedTeacherId,
+          status,
+          notes: item.notes || '',
+          sessionDuration,
+          baseSessionsUsed,
+          salaryAmount,
+          attendedAt: now,
+          date: attendanceDate,
+        };
+
+        let attendance: any;
+        if (this.shouldOverwriteAttendance(latest as any, now)) {
+          attendance = await this.attendanceModel.findByIdAndUpdate(
+            (latest as any)._id,
+            payload,
+            { new: true }
+          ).populate('studentId', 'fullName age parentName')
+           .lean();
+        } else {
+          const created = await this.attendanceModel.create({
             classId: dto.classId,
             studentId: item.studentId,
-            date: attendanceDate
-          },
-          {
-            teacherId: validatedTeacherId,
-            status,
-            notes: item.notes || '',
-            sessionDuration,
-            baseSessionsUsed
-          },
-          {
-            new: true,
-            upsert: true
-          }
-        ).populate('studentId', 'fullName age parentName')
-         .lean();
+            ...payload,
+          });
+          attendance = await this.attendanceModel.findById(created._id)
+            .populate('studentId', 'fullName age parentName')
+            .lean();
+        }
 
         results.push(this.attachSalary(attendance, classroom as any));
         syncedStudentIds.push(item.studentId);
@@ -513,7 +632,7 @@ export class AttendanceService {
   }
 
   // Cập nhật trạng thái điểm danh
-  async updateAttendance(id: string, dto: UpdateAttendanceDto, teacher: UserDocument) {
+  async updateAttendance(id: string, dto: UpdateAttendanceDto, user: UserDocument) {
     const attendance = await this.attendanceModel.findById(id);
     
     if (!attendance) {
@@ -521,23 +640,58 @@ export class AttendanceService {
     }
 
     const classroom = await this.classModel.findById(attendance.classId).lean<ClassLean>();
-    this.assertClassAccess(classroom, teacher);
+    this.assertClassAccess(classroom, user);
 
-    const nextStatus = (dto.status ?? attendance.status) as AttendanceStatus;
-    const nextDuration = this.normalizeSessionDuration(dto.sessionDuration ?? (attendance as any).sessionDuration);
-    const nextBaseUsed = this.computeBaseSessionsUsed(nextStatus, nextDuration);
+    const isManager = user?.role === Role.MANAGER || user?.role === Role.DIRECTOR;
+    const isHcns = user?.role === Role.HCNS;
+    const isTeacher = user?.role === Role.TEACHER;
 
-    // Cho phép tất cả user cập nhật điểm danh
-    Object.assign(attendance, dto, {
-      status: nextStatus,
-      sessionDuration: nextDuration,
-      baseSessionsUsed: nextBaseUsed,
-    });
+    if (isTeacher && attendance.teacherId.toString() !== user._id.toString()) {
+      throw new ForbiddenException('Giáo viên chỉ được chỉnh sửa dữ liệu của mình');
+    }
+
+    const allowedForTeacher: Array<keyof UpdateAttendanceDto> = ['sessionContent', 'comment', 'recordLink', 'parentConfirm', 'notes'];
+    const allowedForHcnsManager: Array<keyof UpdateAttendanceDto> = [
+      'sessionContent', 'comment', 'recordLink', 'parentConfirm', 'paymentStatus', 'checkedBy', 'notes'
+    ];
+    const allowedForManager = [...allowedForHcnsManager, 'status', 'sessionDuration'];
+
+    const allowedFields = isManager
+      ? allowedForManager
+      : isHcns
+        ? allowedForHcnsManager
+        : isTeacher
+          ? allowedForTeacher
+          : [];
+
+    if (!allowedFields.length) {
+      throw new ForbiddenException('Bạn không có quyền chỉnh sửa điểm danh');
+    }
+
+    const payload: any = {};
+    for (const key of allowedFields) {
+      if (key in dto) payload[key] = (dto as any)[key];
+    }
+
+    // Only managers can adjust status/duration/baseSessions
+    if (allowedFields.includes('status')) {
+      const nextStatus = (dto.status ?? attendance.status) as AttendanceStatus;
+      const nextDuration = this.normalizeSessionDuration(dto.sessionDuration ?? (attendance as any).sessionDuration);
+      const nextBaseUsed = this.computeBaseSessionsUsed(nextStatus, nextDuration);
+      payload.status = nextStatus;
+      payload.sessionDuration = nextDuration;
+      payload.baseSessionsUsed = nextBaseUsed;
+      payload.salaryAmount = this.resolveTeacherSalary(classroom as any, attendance.teacherId as any, nextDuration);
+    }
+
+    Object.assign(attendance, payload);
     await attendance.save();
 
     const updated = await this.attendanceModel.findById(id)
       .populate('studentId', 'fullName age parentName')
       .populate('classId', 'name code')
+      .populate('teacherId', 'fullName email')
+      .populate('checkedBy', 'fullName email')
       .lean();
 
     await this.syncOrderAttendance(attendance.classId.toString(), [attendance.studentId.toString()]);
@@ -545,13 +699,29 @@ export class AttendanceService {
     return updated;
   }
 
+  private parseDateRangeOrThrow(startDate: string, endDate: string) {
+    if (!startDate || !endDate) {
+      throw new BadRequestException('startDate và endDate là bắt buộc');
+    }
+
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      throw new BadRequestException('startDate hoặc endDate không hợp lệ');
+    }
+
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+
+    return { start, end };
+  }
+
   // Thống kê điểm danh theo lớp
   async getAttendanceStats(classId: string, startDate: string, endDate: string, teacher: UserDocument) {
     await this.getClassroom(classId, teacher);
 
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
+    const { start, end } = this.parseDateRangeOrThrow(startDate, endDate);
 
     const stats = await this.attendanceModel.aggregate([
       {
@@ -578,6 +748,7 @@ export class AttendanceService {
   // Tạo link điểm danh cho học sinh
   async generateAttendanceLink(dto: GenerateAttendanceLinkDto, user: UserDocument) {
     let studentFallback: { fullName?: string; parentName?: string; age?: number; parentPhone?: string; studentCode?: string } | null = null;
+    let orderSessionDuration: number | undefined;
 
     // Handle virtual classes from orders
     if (dto.classId.startsWith('virtual_')) {
@@ -602,6 +773,13 @@ export class AttendanceService {
         studentCode: student.studentCode,
       };
 
+      // Try to pick up session duration from the order
+      const orderDoc = await this.orderModel
+        .findOne({ classCode, studentCode: student.studentCode })
+        .select('sessionDuration')
+        .lean<OrderLean>();
+      orderSessionDuration = orderDoc?.sessionDuration as number | undefined;
+
       const ensuredStudentId = await this.ensureStudentDocument({
         tentativeId: dto.studentId,
         studentCode: student.studentCode,
@@ -618,10 +796,31 @@ export class AttendanceService {
       // Handle real classes
       const { students } = await this.loadClassroomWithStudents(dto.classId, user, true);
       this.ensureStudentInClass(students, dto.studentId);
+
+      // Try to pick up session duration from the order
+      const orderDoc = await this.orderModel
+        .findOne({ classId: dto.classId, studentId: dto.studentId })
+        .select('sessionDuration')
+        .lean<OrderLean>();
+      orderSessionDuration = orderDoc?.sessionDuration as number | undefined;
     }
 
     const attendanceDate = new Date(dto.date);
     attendanceDate.setHours(0, 0, 0, 0);
+
+    const studentDoc = await this.studentModel
+      .findById(dto.studentId)
+      .select('registeredSessionDuration')
+      .lean<StudentLean | null>();
+
+    const normalizedSessionDuration = this.normalizeSessionDuration(
+      (studentDoc as any)?.registeredSessionDuration ?? orderSessionDuration
+    );
+
+    const classroom = await this.classModel.findById(dto.classId).lean<ClassLean | null>();
+    const salaryAmount = classroom
+      ? this.resolveTeacherSalary(classroom as any, user._id as any, normalizedSessionDuration)
+      : 0;
 
     // Tạo token unique
     const token = randomBytes(32).toString('hex');
@@ -641,8 +840,9 @@ export class AttendanceService {
         tokenExpiresAt,
         imageUrl: null,
         attendedAt: null,
-        sessionDuration: this.normalizeSessionDuration(),
-        baseSessionsUsed: 0
+        sessionDuration: normalizedSessionDuration,
+        baseSessionsUsed: 0,
+        salaryAmount
       },
       {
         new: true,
@@ -676,11 +876,44 @@ export class AttendanceService {
   }
 
   async getTeacherClassAssignments(user: UserDocument) {
-    if (!this.isTeacher(user)) {
-      throw new ForbiddenException('Chỉ giáo viên mới sử dụng chức năng này');
+    const isTeacher = this.isTeacher(user);
+    const isManager = user?.role === Role.MANAGER || user?.role === Role.DIRECTOR || user?.role === Role.HCNS;
+
+    if (!isTeacher && !isManager) {
+      throw new ForbiddenException('Bạn không có quyền xem danh sách lớp để điểm danh');
     }
 
-    return this.getClassesFromOrders(user);
+    const teacherId = this.getUserId(user);
+    const teacherFilter = isTeacher && teacherId && Types.ObjectId.isValid(teacherId)
+      ? {
+          teachers: {
+            $elemMatch: {
+              teacherId: new Types.ObjectId(teacherId),
+            },
+          },
+        }
+      : {};
+
+    const classes = await this.classModel
+      .find(teacherFilter)
+      .select('name code students teachers')
+      .populate('students', 'fullName studentCode age parentName parentPhone')
+      .lean<ClassLean & { students?: StudentLean[] }[]>();
+
+    return classes.map((cls) => ({
+      classId: (cls as any)._id.toString(),
+      classCode: (cls as any).code,
+      className: (cls as any).name,
+      studentCount: (cls.students || []).length,
+      students: (cls.students || []).map((st) => ({
+        studentId: st._id.toString(),
+        fullName: st.fullName,
+        studentCode: st.studentCode,
+        age: (st as any).age,
+        parentName: (st as any).parentName,
+        parentPhone: (st as any).parentPhone,
+      })),
+    }));
   }
 
   async getClassesFromOrders(user: UserDocument) {
@@ -938,12 +1171,8 @@ export class AttendanceService {
   }
 
   // Lấy báo cáo điểm danh tổng hợp
-  async getAttendanceReport(startDate: string, endDate: string, classId?: string) {
-    const start = new Date(startDate);
-    start.setHours(0, 0, 0, 0);
-    
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
+  async getAttendanceReport(startDate: string, endDate: string, classId: string | undefined, user: UserDocument) {
+    const { start, end } = this.parseDateRangeOrThrow(startDate, endDate);
 
     const filter: any = {
       date: { $gte: start, $lte: end },
@@ -957,10 +1186,20 @@ export class AttendanceService {
       filter.classId = new Types.ObjectId(classId);
     }
 
+    if (user?.role === Role.TEACHER) {
+      filter.teacherId = new Types.ObjectId(this.getUserId(user));
+    }
+
+    if (user?.role !== Role.TEACHER && user?.role !== Role.MANAGER && user?.role !== Role.DIRECTOR) {
+      // Các vai trò khác không được phép xem báo cáo
+      throw new ForbiddenException('Bạn không có quyền xem báo cáo điểm danh');
+    }
+
     const attendances = await this.attendanceModel.find(filter)
       .populate('studentId', 'fullName age parentName faceImage')
       .populate('classId', 'name code teachers')
       .populate('teacherId', 'fullName email')
+      .populate('checkedBy', 'fullName email')
       .sort({ attendedAt: -1 })
       .lean();
 

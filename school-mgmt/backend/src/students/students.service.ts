@@ -23,6 +23,14 @@ export class StudentsService {
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
   ) {}
 
+  private readonly ALLOWED_SESSION_DURATIONS = [40, 50, 70, 90, 110];
+
+  private normalizeSessionDuration(duration?: number | null): number | undefined {
+    if (duration === null || duration === undefined) return undefined;
+    const numeric = Number(duration);
+    return this.ALLOWED_SESSION_DURATIONS.includes(numeric) ? numeric : undefined;
+  }
+
   private calculatePaidSessions70(student: any): number {
     // Sale nhập số buổi 70p đã mua (sessionsRegistered/sessionsCollected), chỉ tính các payment đã được duyệt
     const payments = (student as any).payments || [];
@@ -145,10 +153,15 @@ export class StudentsService {
       age: student.age,
       parentName: student.parentName,
       parentPhone: student.parentPhone,
+      registeredSessionDuration: this.normalizeSessionDuration((student as any).registeredSessionDuration) ?? 70,
       faceImage: student.faceImage,
       level: (student as any).level,
       studentType: (student as any).studentType,
+      saleId: (student as any).saleId?.toString?.(),
+      saleName: (student as any).saleName,
+      trialOrGift: (student as any).trialOrGift,
       approvalStatus: (student as any).approvalStatus || 'PENDING',
+      dataStatus: (student as any).dataStatus,
       payments: (student as any).payments || [],
       productPackage: productPackage && typeof productPackage === 'object'
         ? {
@@ -169,8 +182,14 @@ export class StudentsService {
       age: (order as any).age || 0,
       parentName: order.parentName || 'Chưa cập nhật',
       parentPhone: (order as any).parentPhone || '',
+      registeredSessionDuration: this.normalizeSessionDuration((order as any).sessionDuration) ?? 70,
       faceImage: (order as any).faceImage || '',
       studentType: (order as any).studentType,
+      saleId: (order as any).saleId?.toString?.(),
+      saleName: (order as any).saleName,
+      saleEmail: (order as any).saleEmail,
+      trialOrGift: (order as any).trialOrGift,
+      dataStatus: (order as any).dataStatus,
       productPackage: undefined,
     };
   }
@@ -290,12 +309,16 @@ export class StudentsService {
     const { saleId } = createStudentDto;
     const saleUser = saleId ? await this.userModel.findById(saleId) : null;
     const saleCode = this.extractSaleCode(saleUser?.email || actor?.email);
-    const studentCode = await this.generateStudentCode(saleCode);
+    const studentCode = createStudentDto.studentCode
+      ? String(createStudentDto.studentCode).trim().toUpperCase()
+      : await this.generateStudentCode('HS');
+    const registeredSessionDuration = this.normalizeSessionDuration(createStudentDto.registeredSessionDuration) ?? 70;
 
     const payload = {
       ...createStudentDto,
       studentCode,
       saleCode,
+      registeredSessionDuration,
     };
 
     const student = new this.studentModel(payload);

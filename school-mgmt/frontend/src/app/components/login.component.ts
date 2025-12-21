@@ -46,6 +46,19 @@ export class LoginComponent {
       this.error.set('Sai email hoặc mật khẩu');
       return;
     }
-    this.router.navigate(['/app/users']);
+    const role = (this.auth.userSignal()?.role || '').trim().toUpperCase();
+    if (role === 'DIRECTOR') {
+      this.router.navigate(['/app/users']);
+      return;
+    }
+    if (role === 'SALE') {
+      this.router.navigate(['/app/students']);
+      return;
+    }
+    if (role === 'TEACHER') {
+      this.router.navigate(['/app/classes']);
+      return;
+    }
+    this.router.navigate(['/app']);
   }
 }

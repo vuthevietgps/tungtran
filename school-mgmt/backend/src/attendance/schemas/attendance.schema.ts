@@ -45,7 +45,7 @@ export class Attendance {
   @Prop({ type: Number, min: 0, default: 1 })
   baseSessionsUsed?: number; // Số buổi quy đổi theo 70p đã tiêu hao
 
-  @Prop({ type: String, unique: true, sparse: true })
+  @Prop({ type: String, index: { unique: true, sparse: true } })
   attendanceToken?: string; // Token để học sinh tự điểm danh qua link
 
   @Prop({ type: Date })
@@ -53,10 +53,30 @@ export class Attendance {
 
   @Prop({ type: Date })
   attendedAt?: Date; // Thời gian thực tế học sinh điểm danh
+
+  @Prop({ type: String, trim: true })
+  sessionContent?: string; // Nội dung buổi học
+
+  @Prop({ type: String, trim: true })
+  comment?: string; // Nhận xét
+
+  @Prop({ type: String, trim: true })
+  recordLink?: string; // Link record
+
+  @Prop({ type: String, trim: true })
+  parentConfirm?: string; // Xác nhận phụ huynh
+
+  @Prop({ type: Number, min: 0 })
+  paymentStatus?: number; // Trung tâm check lương (số tiền)
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: User.name })
+  checkedBy?: Types.ObjectId; // Người check lương
+
+  @Prop({ type: Number, min: 0 })
+  salaryAmount?: number; // Lương giáo viên đã chốt tại thời điểm điểm danh
 }
 
 export const AttendanceSchema = SchemaFactory.createForClass(Attendance);
 
 // Tạo index để đảm bảo một học sinh chỉ có một bản ghi điểm danh cho mỗi lớp trong một ngày
 AttendanceSchema.index({ classId: 1, studentId: 1, date: 1 }, { unique: true });
-AttendanceSchema.index({ attendanceToken: 1 }, { sparse: true });

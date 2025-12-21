@@ -63,6 +63,7 @@ export class AttendanceController {
 
   // Cập nhật trạng thái điểm danh
   @Patch(':id')
+  @Roles(Role.DIRECTOR, Role.MANAGER, Role.HCNS, Role.TEACHER)
   updateAttendance(
     @Param('id') id: string,
     @Body() dto: UpdateAttendanceDto,
@@ -83,7 +84,7 @@ export class AttendanceController {
   }
 
   @Get('teacher/classes')
-  @Roles(Role.TEACHER)
+  @Roles(Role.TEACHER, Role.MANAGER, Role.DIRECTOR, Role.HCNS)
   getTeacherClasses(@Req() req: Request) {
     return this.attendanceService.getTeacherClassAssignments(req.user as any);
   }
@@ -104,9 +105,10 @@ export class AttendanceController {
   getAttendanceReport(
     @Query('startDate') startDate: string,
     @Query('endDate') endDate: string,
-    @Query('classId') classId?: string
+    @Query('classId') classId: string | undefined,
+    @Req() req: Request
   ) {
-    return this.attendanceService.getAttendanceReport(startDate, endDate, classId);
+    return this.attendanceService.getAttendanceReport(startDate, endDate, classId, req.user as any);
   }
 }
 

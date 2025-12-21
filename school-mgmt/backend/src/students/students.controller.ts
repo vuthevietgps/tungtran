@@ -66,11 +66,12 @@ export class StudentsController {
   @Post('face-upload')
   @UseInterceptors(FileInterceptor('file', multerConfig))
   @Roles(Role.DIRECTOR, Role.MANAGER, Role.SALE)
-  async uploadFace(@UploadedFile() file: Express.Multer.File) {
+  async uploadFace(@UploadedFile() file: Express.Multer.File, @Req() req: any) {
     if (!file) {
       throw new Error('No file uploaded');
     }
-    return { url: `/uploads/${file.filename}` };
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    return { url: `${baseUrl}/uploads/students/${file.filename}` };
   }
 
   @Post(':id/approve')

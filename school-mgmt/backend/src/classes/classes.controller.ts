@@ -16,8 +16,8 @@ export class ClassesController {
 
   @Post()
   @Roles(Role.DIRECTOR)
-  create(@Body() dto: CreateClassDto) {
-    return this.classesService.create(dto);
+  create(@Body() dto: CreateClassDto, @Req() req: Request) {
+    return this.classesService.create(dto, req.user as any);
   }
 
   @Get()
@@ -27,9 +27,9 @@ export class ClassesController {
   }
 
   @Patch(':id')
-  @Roles(Role.DIRECTOR)
-  update(@Param('id') id: string, @Body() dto: UpdateClassDto) {
-    return this.classesService.update(id, dto);
+  @Roles(Role.DIRECTOR, Role.SALE)
+  update(@Param('id') id: string, @Body() dto: UpdateClassDto, @Req() req: Request) {
+    return this.classesService.update(id, dto, req.user as any);
   }
 
   @Delete(':id')

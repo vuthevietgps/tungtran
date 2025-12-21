@@ -210,27 +210,24 @@ export class AttendanceService {
     }
   }
 
-  // Cập nhật trạng thái điểm danh
-  async updateAttendance(attendanceId: string, status: AttendanceStatus, notes?: string): Promise<boolean> {
+  // Cập nhật bản ghi điểm danh (dùng cho inline editing)
+  async updateAttendance(attendanceId: string, payload: Partial<Record<string, any>>): Promise<any | null> {
     try {
       const res = await fetch(`${environment.apiBase}/attendance/${attendanceId}`, {
         method: 'PATCH',
         headers: this.headers(true),
-        body: JSON.stringify({
-          status,
-          notes: notes || ''
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
         console.error('Failed to update attendance', await res.text());
-        return false;
+        return null;
       }
 
-      return true;
+      return res.json();
     } catch (error) {
       console.error('Error updating attendance:', error);
-      return false;
+      return null;
     }
   }
 

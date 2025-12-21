@@ -15,12 +15,15 @@ interface StudentForm {
   age: number;
   parentName: string;
   parentPhone: string;
+  registeredSessionDuration: number | null;
   faceImage: string;
   level: string;
   productPackage: string;
   studentType: 'ONLINE' | 'OFFLINE' | '';
+  dataStatus: 'Đang học' | 'Bảo lưu' | 'Đã dừng học' | '';
   saleId: string;
   saleName: string;
+  trialOrGift: string;
   invoiceImage: string;
   amountCollected: number | null;
   sessionsCollected: number | null;
@@ -51,6 +54,14 @@ interface StudentForm {
     <header class="page-header">
       <div>
         <h2>Quản lý học sinh</h2>
+        <div class="stats-inline">
+          <span class="pill">Tổng: {{ totalStudents() }}</span>
+          <span class="pill success">Đang học: {{ totalByStatus().studying }}</span>
+          <span class="pill warn">Bảo lưu: {{ totalByStatus().paused }}</span>
+          <span class="pill danger">Đã dừng: {{ totalByStatus().stopped }}</span>
+          <span class="pill">Online: {{ totalByType().online }}</span>
+          <span class="pill">Offline: {{ totalByType().offline }}</span>
+        </div>
         <p>Theo dõi thông tin phụ huynh và ảnh nhận diện.</p>
       </div>
       <div class="header-actions">
@@ -61,13 +72,13 @@ interface StudentForm {
     </header>
 
     <section class="filters">
-      <input placeholder="Tìm theo tên hoặc mã học sinh" [(ngModel)]="keyword" />
-      <select [(ngModel)]="filterStudentType">
+      <input placeholder="Tìm theo tên hoặc mã học sinh" [ngModel]="keyword()" (ngModelChange)="keyword.set($event)" />
+      <select [ngModel]="filterStudentType()" (ngModelChange)="filterStudentType.set($event)">
         <option value="">-- Loại học sinh --</option>
         <option value="ONLINE">Online</option>
         <option value="OFFLINE">Offline</option>
       </select>
-      <select [(ngModel)]="filterDob">
+      <select [ngModel]="filterDob()" (ngModelChange)="filterDob.set($event)">
         <option value="">-- Tháng sinh --</option>
         <option value="01">Tháng 1</option>
         <option value="02">Tháng 2</option>
@@ -82,72 +93,90 @@ interface StudentForm {
         <option value="11">Tháng 11</option>
         <option value="12">Tháng 12</option>
       </select>
-      <select [(ngModel)]="filterProduct">
+      <select [ngModel]="filterProduct()" (ngModelChange)="filterProduct.set($event)">
         <option value="">-- Gói sản phẩm --</option>
         <option *ngFor="let p of products()" [value]="p._id">{{p.name}}</option>
+      </select>
+      <select [ngModel]="filterStudentStatus()" (ngModelChange)="filterStudentStatus.set($event)">
+        <option value="">-- Trạng thái HS --</option>
+        <option *ngFor="let st of studentStatusOptions" [value]="st">{{ st }}</option>
       </select>
       <button (click)="reload()">Làm mới</button>
     </section>
 
-    <table class="data" *ngIf="filtered().length; else empty">
-      <thead>
-        <tr>
-          <th>Ảnh</th>
-          <th>Mã học sinh</th>
-          <th>Loại học sinh</th>
-          <th>Họ và tên</th>
-          <th>Ngày sinh</th>
-          <th>Tuổi</th>
-          <th>Tên phụ huynh</th>
-          <th>Điện thoại</th>
-          <th>Gói sản phẩm</th>
-          <th>Buổi còn lại</th>
-          <th>Thanh toán lần 1</th>
-          <th>Thanh toán lần 2</th>
-          <th>Thanh toán lần 3</th>
-          <th>Thanh toán lần 4</th>
-          <th>Thanh toán lần 5</th>
-          <th>Thanh toán lần 6</th>
-          <th>Thanh toán lần 7</th>
-          <th>Thanh toán lần 8</th>
-          <th>Thanh toán lần 9</th>
-          <th>Thanh toán lần 10</th>
-          <th>Trạng thái</th>
-          <th>Hành động</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr *ngFor="let s of filtered()">
-          <td><img [src]="s.faceImage" alt="{{s.fullName}}" /></td>
-          <td><strong>{{s.studentCode}}</strong></td>
-          <td>{{ studentTypeLabel(s) }}</td>
-          <td>{{s.fullName}}</td>
-          <td>{{ s.dateOfBirth ? (s.dateOfBirth | date:'dd/MM/yyyy') : '-' }}</td>
-          <td>{{s.age}}</td>
-          <td>{{s.parentName}}</td>
-          <td>{{s.parentPhone}}</td>
-          <td>{{ s.productPackage?.name || '-' }}</td>
-          <td class="session-balance">{{ formatSessionBalances(s) }}</td>
-          <td class="payment-status"><span class="payment-badge" [class]="getPaymentStatusClass(s, 1)">{{getPaymentStatusText(s, 1)}}</span></td>
-          <td class="payment-status"><span class="payment-badge" [class]="getPaymentStatusClass(s, 2)">{{getPaymentStatusText(s, 2)}}</span></td>
-          <td class="payment-status"><span class="payment-badge" [class]="getPaymentStatusClass(s, 3)">{{getPaymentStatusText(s, 3)}}</span></td>
-          <td class="payment-status"><span class="payment-badge" [class]="getPaymentStatusClass(s, 4)">{{getPaymentStatusText(s, 4)}}</span></td>
-          <td class="payment-status"><span class="payment-badge" [class]="getPaymentStatusClass(s, 5)">{{getPaymentStatusText(s, 5)}}</span></td>
-          <td class="payment-status"><span class="payment-badge" [class]="getPaymentStatusClass(s, 6)">{{getPaymentStatusText(s, 6)}}</span></td>
-          <td class="payment-status"><span class="payment-badge" [class]="getPaymentStatusClass(s, 7)">{{getPaymentStatusText(s, 7)}}</span></td>
-          <td class="payment-status"><span class="payment-badge" [class]="getPaymentStatusClass(s, 8)">{{getPaymentStatusText(s, 8)}}</span></td>
-          <td class="payment-status"><span class="payment-badge" [class]="getPaymentStatusClass(s, 9)">{{getPaymentStatusText(s, 9)}}</span></td>
-          <td class="payment-status"><span class="payment-badge" [class]="getPaymentStatusClass(s, 10)">{{getPaymentStatusText(s, 10)}}</span></td>
-          <td><span class="status-badge" [class]="getStatusClass(s)">{{getStatusText(s)}}</span></td>
-          <td class="actions-cell">
-            <button class="ghost" (click)="edit(s)">Sửa</button>
-            <button class="ghost success" (click)="approve(s._id, 'APPROVE')" *ngIf="canApprove && isPending(s)">Duyệt</button>
-            <button class="ghost danger" (click)="approve(s._id, 'REJECT')" *ngIf="canApprove && isPending(s)">Từ chối</button>
-            <button class="ghost" (click)="remove(s)" *ngIf="canDeleteStudents">Xóa</button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+    <section class="summary-bar">
+      <div class="pill">Kết quả sau lọc: {{ filtered().length }}</div>
+    </section>
+
+    <ng-container *ngIf="filtered().length; else empty">
+      <div class="table-wrapper">
+        <table class="data">
+          <thead>
+            <tr>
+              <th>Ảnh</th>
+              <th>Mã học sinh</th>
+              <th>Loại học sinh</th>
+              <th>Họ và tên</th>
+              <th>Ngày sinh</th>
+              <th>Tuổi</th>
+              <th>Tên phụ huynh</th>
+              <th>Điện thoại</th>
+              <th class="product-col">Gói sản phẩm</th>
+              <th>Số phút đăng ký</th>
+              <th>Buổi còn lại</th>
+              <th>Trạng thái HS</th>
+              <th>Học thử/Buổi tặng</th>
+              <th>Thanh toán lần 1</th>
+              <th>Thanh toán lần 2</th>
+              <th>Thanh toán lần 3</th>
+              <th>Thanh toán lần 4</th>
+              <th>Thanh toán lần 5</th>
+              <th>Thanh toán lần 6</th>
+              <th>Thanh toán lần 7</th>
+              <th>Thanh toán lần 8</th>
+              <th>Thanh toán lần 9</th>
+              <th>Thanh toán lần 10</th>
+              <th>Trạng thái</th>
+              <th>Hành động</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let s of filtered()">
+              <td><img [src]="s.faceImage" alt="{{s.fullName}}" /></td>
+              <td><strong>{{s.studentCode}}</strong></td>
+              <td>{{ studentTypeLabel(s) }}</td>
+              <td>{{s.fullName}}</td>
+              <td>{{ s.dateOfBirth ? (s.dateOfBirth | date:'dd/MM/yyyy') : '-' }}</td>
+              <td>{{s.age}}</td>
+              <td>{{s.parentName}}</td>
+              <td>{{s.parentPhone}}</td>
+              <td class="product-col">{{ s.productPackage?.name || '-' }}</td>
+              <td>{{ sessionDurationLabel(s) }}</td>
+              <td class="session-balance">{{ formatSessionBalances(s) }}</td>
+              <td>{{ displayStudentStatus(s) }}</td>
+              <td>{{ s.trialOrGift || '-' }}</td>
+              <td class="payment-status"><span class="payment-badge" [class]="getPaymentStatusClass(s, 1)">{{getPaymentStatusText(s, 1)}}</span></td>
+              <td class="payment-status"><span class="payment-badge" [class]="getPaymentStatusClass(s, 2)">{{getPaymentStatusText(s, 2)}}</span></td>
+              <td class="payment-status"><span class="payment-badge" [class]="getPaymentStatusClass(s, 3)">{{getPaymentStatusText(s, 3)}}</span></td>
+              <td class="payment-status"><span class="payment-badge" [class]="getPaymentStatusClass(s, 4)">{{getPaymentStatusText(s, 4)}}</span></td>
+              <td class="payment-status"><span class="payment-badge" [class]="getPaymentStatusClass(s, 5)">{{getPaymentStatusText(s, 5)}}</span></td>
+              <td class="payment-status"><span class="payment-badge" [class]="getPaymentStatusClass(s, 6)">{{getPaymentStatusText(s, 6)}}</span></td>
+              <td class="payment-status"><span class="payment-badge" [class]="getPaymentStatusClass(s, 7)">{{getPaymentStatusText(s, 7)}}</span></td>
+              <td class="payment-status"><span class="payment-badge" [class]="getPaymentStatusClass(s, 8)">{{getPaymentStatusText(s, 8)}}</span></td>
+              <td class="payment-status"><span class="payment-badge" [class]="getPaymentStatusClass(s, 9)">{{getPaymentStatusText(s, 9)}}</span></td>
+              <td class="payment-status"><span class="payment-badge" [class]="getPaymentStatusClass(s, 10)">{{getPaymentStatusText(s, 10)}}</span></td>
+              <td><span class="status-badge" [class]="getStatusClass(s)">{{getStatusText(s)}}</span></td>
+              <td class="actions-cell">
+                <button class="ghost" (click)="edit(s)">Sửa</button>
+                <button class="ghost success" (click)="approve(s._id, 'APPROVE')" *ngIf="canApprove && isPending(s)">Duyệt</button>
+                <button class="ghost danger" (click)="approve(s._id, 'REJECT')" *ngIf="canApprove && isPending(s)">Từ chối</button>
+                <button class="ghost" (click)="remove(s)" *ngIf="canDeleteStudents">Xóa</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </ng-container>
     <ng-template #empty><p>Chưa có học sinh.</p></ng-template>
 
     <ng-template #sessionBalanceChips let-frameIndex="frameIndex">
@@ -194,11 +223,23 @@ interface StudentForm {
                   <option value="OFFLINE">Offline</option>
                 </select>
               </label>
+              <label>Trạng thái học sinh
+                <select name="dataStatus" [(ngModel)]="form.dataStatus">
+                  <option value="">-- Chọn trạng thái --</option>
+                  <option *ngFor="let st of studentStatusOptions" [value]="st">{{ st }}</option>
+                </select>
+              </label>
               <label>Tên phụ huynh
                 <input name="parentName" [(ngModel)]="form.parentName" required />
               </label>
               <label>Điện thoại phụ huynh
                 <input name="parentPhone" [(ngModel)]="form.parentPhone" required />
+              </label>
+              <label>Số phút đăng ký
+                <select name="registeredSessionDuration" [(ngModel)]="form.registeredSessionDuration">
+                  <option [ngValue]="null">-- Chọn số phút --</option>
+                  <option *ngFor="let d of registeredDurationOptions" [ngValue]="d">{{ d }} phút</option>
+                </select>
               </label>
             </div>
           </section>
@@ -249,17 +290,14 @@ interface StudentForm {
               <label>Mã hóa đơn
                 <input name="invoiceCode" [(ngModel)]="form.invoiceCode" placeholder="Ví dụ: HD001" />
               </label>
+              <label>Học thử / Buổi tặng
+                <input name="trialOrGift" [(ngModel)]="form.trialOrGift" placeholder="VD: 1 buổi thử, 2 buổi tặng" />
+              </label>
               <label>Số tiền đã thu
                 <input name="amountCollected" type="number" min="0" step="1000" [(ngModel)]="form.amountCollected" />
               </label>
               <label>{{ form.studentType === 'OFFLINE' ? 'Số buổi đã thu tiền' : 'Số buổi 70 phút đã thu tiền' }}
                 <input name="sessionsCollected" type="number" min="0" [(ngModel)]="form.sessionsCollected" />
-              </label>
-              <label>Số phút đăng ký
-                <select name="sessionDuration" [(ngModel)]="form.sessionDuration">
-                  <option [ngValue]="null">-- Chọn số phút --</option>
-                  <option *ngFor="let d of sessionDurationOptions" [ngValue]="d">{{ d }} phút</option>
-                </select>
               </label>
               <label>Ngày chuyển khoản
                 <input name="transferDate" type="date" [(ngModel)]="form.transferDate" />
@@ -293,12 +331,6 @@ interface StudentForm {
               <label>{{ form.studentType === 'OFFLINE' ? 'Số buổi đã thu tiền' : 'Số buổi 70 phút đã thu tiền' }}
                 <input name="sessionsCollected2" type="number" min="0" [(ngModel)]="form.sessionsCollected2" />
               </label>
-              <label>Số phút đăng ký
-                <select name="sessionDuration2" [(ngModel)]="form.sessionDuration2">
-                  <option [ngValue]="null">-- Chọn số phút --</option>
-                  <option *ngFor="let d of sessionDurationOptions" [ngValue]="d">{{ d }} phút</option>
-                </select>
-              </label>
               <label>Ngày chuyển khoản
                 <input name="transferDate2" type="date" [(ngModel)]="form.transferDate2" />
               </label>
@@ -330,12 +362,6 @@ interface StudentForm {
               </label>
               <label>{{ form.studentType === 'OFFLINE' ? 'Số buổi đã thu tiền' : 'Số buổi 70 phút đã thu tiền' }}
                 <input name="sessionsCollected3" type="number" min="0" [(ngModel)]="form.sessionsCollected3" />
-              </label>
-              <label>Số phút đăng ký
-                <select name="sessionDuration3" [(ngModel)]="form.sessionDuration3">
-                  <option [ngValue]="null">-- Chọn số phút --</option>
-                  <option *ngFor="let d of sessionDurationOptions" [ngValue]="d">{{ d }} phút</option>
-                </select>
               </label>
               <label>Ngày chuyển khoản
                 <input name="transferDate3" type="date" [(ngModel)]="form.transferDate3" />
@@ -369,12 +395,6 @@ interface StudentForm {
               <label>{{ form.studentType === 'OFFLINE' ? 'Số buổi đã thu tiền' : 'Số buổi 70 phút đã thu tiền' }}
                 <input name="sessionsCollected4" type="number" min="0" [(ngModel)]="form.sessionsCollected4" />
               </label>
-              <label>Số phút đăng ký
-                <select name="sessionDuration4" [(ngModel)]="form.sessionDuration4">
-                  <option [ngValue]="null">-- Chọn số phút --</option>
-                  <option *ngFor="let d of sessionDurationOptions" [ngValue]="d">{{ d }} phút</option>
-                </select>
-              </label>
               <label>Ngày chuyển khoản
                 <input name="transferDate4" type="date" [(ngModel)]="form.transferDate4" />
               </label>
@@ -406,12 +426,6 @@ interface StudentForm {
               </label>
               <label>{{ form.studentType === 'OFFLINE' ? 'Số buổi đã thu tiền' : 'Số buổi 70 phút đã thu tiền' }}
                 <input name="sessionsCollected5" type="number" min="0" [(ngModel)]="form.sessionsCollected5" />
-              </label>
-              <label>Số phút đăng ký
-                <select name="sessionDuration5" [(ngModel)]="form.sessionDuration5">
-                  <option [ngValue]="null">-- Chọn số phút --</option>
-                  <option *ngFor="let d of sessionDurationOptions" [ngValue]="d">{{ d }} phút</option>
-                </select>
               </label>
               <label>Ngày chuyển khoản
                 <input name="transferDate5" type="date" [(ngModel)]="form.transferDate5" />
@@ -445,12 +459,6 @@ interface StudentForm {
               <label>{{ form.studentType === 'OFFLINE' ? 'Số buổi đã thu tiền' : 'Số buổi 70 phút đã thu tiền' }}
                 <input name="sessionsCollected6" type="number" min="0" [(ngModel)]="form.sessionsCollected6" />
               </label>
-              <label>Số phút đăng ký
-                <select name="sessionDuration6" [(ngModel)]="form.sessionDuration6">
-                  <option [ngValue]="null">-- Chọn số phút --</option>
-                  <option *ngFor="let d of sessionDurationOptions" [ngValue]="d">{{ d }} phút</option>
-                </select>
-              </label>
               <label>Ngày chuyển khoản
                 <input name="transferDate6" type="date" [(ngModel)]="form.transferDate6" />
               </label>
@@ -482,12 +490,6 @@ interface StudentForm {
               </label>
               <label>{{ form.studentType === 'OFFLINE' ? 'Số buổi đã thu tiền' : 'Số buổi 70 phút đã thu tiền' }}
                 <input name="sessionsCollected7" type="number" min="0" [(ngModel)]="form.sessionsCollected7" />
-              </label>
-              <label>Số phút đăng ký
-                <select name="sessionDuration7" [(ngModel)]="form.sessionDuration7">
-                  <option [ngValue]="null">-- Chọn số phút --</option>
-                  <option *ngFor="let d of sessionDurationOptions" [ngValue]="d">{{ d }} phút</option>
-                </select>
               </label>
               <label>Ngày chuyển khoản
                 <input name="transferDate7" type="date" [(ngModel)]="form.transferDate7" />
@@ -521,12 +523,6 @@ interface StudentForm {
               <label>{{ form.studentType === 'OFFLINE' ? 'Số buổi đã thu tiền' : 'Số buổi 70 phút đã thu tiền' }}
                 <input name="sessionsCollected8" type="number" min="0" [(ngModel)]="form.sessionsCollected8" />
               </label>
-              <label>Số phút đăng ký
-                <select name="sessionDuration8" [(ngModel)]="form.sessionDuration8">
-                  <option [ngValue]="null">-- Chọn số phút --</option>
-                  <option *ngFor="let d of sessionDurationOptions" [ngValue]="d">{{ d }} phút</option>
-                </select>
-              </label>
               <label>Ngày chuyển khoản
                 <input name="transferDate8" type="date" [(ngModel)]="form.transferDate8" />
               </label>
@@ -559,12 +555,6 @@ interface StudentForm {
               <label>{{ form.studentType === 'OFFLINE' ? 'Số buổi đã thu tiền' : 'Số buổi 70 phút đã thu tiền' }}
                 <input name="sessionsCollected9" type="number" min="0" [(ngModel)]="form.sessionsCollected9" />
               </label>
-              <label>Số phút đăng ký
-                <select name="sessionDuration9" [(ngModel)]="form.sessionDuration9">
-                  <option [ngValue]="null">-- Chọn số phút --</option>
-                  <option *ngFor="let d of sessionDurationOptions" [ngValue]="d">{{ d }} phút</option>
-                </select>
-              </label>
               <label>Ngày chuyển khoản
                 <input name="transferDate9" type="date" [(ngModel)]="form.transferDate9" />
               </label>
@@ -596,12 +586,6 @@ interface StudentForm {
               </label>
               <label>{{ form.studentType === 'OFFLINE' ? 'Số buổi đã thu tiền' : 'Số buổi 70 phút đã thu tiền' }}
                 <input name="sessionsCollected10" type="number" min="0" [(ngModel)]="form.sessionsCollected10" />
-              </label>
-              <label>Số phút đăng ký
-                <select name="sessionDuration10" [(ngModel)]="form.sessionDuration10">
-                  <option [ngValue]="null">-- Chọn số phút --</option>
-                  <option *ngFor="let d of sessionDurationOptions" [ngValue]="d">{{ d }} phút</option>
-                </select>
               </label>
               <label>Ngày chuyển khoản
                 <input name="transferDate10" type="date" [(ngModel)]="form.transferDate10" />
@@ -654,16 +638,19 @@ interface StudentForm {
     </div>
   `,
   styles: [`
-    .page-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; color:var(--text); }
-    .filters { display:flex; gap:10px; margin-bottom:16px; }
+    .page-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; color:var(--text); gap:12px; }
+    .filters { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:8px; margin-bottom:10px; padding:8px 10px; background:var(--panel); border:1px solid var(--border); border-radius:10px; align-items:center; }
     input { padding:8px 10px; border:1px solid var(--border); border-radius:8px; width:100%; background:var(--panel); color:var(--text); }
     select { padding:8px 10px; border:1px solid var(--border); border-radius:8px; width:100%; background:var(--panel); color:var(--text); }
+    .filters input, .filters select { padding:6px 8px; }
+    .table-wrapper { max-height:70vh; overflow:auto; border:1px solid var(--border); border-radius:10px; background:var(--surface); }
     .data { width:100%; border-collapse:collapse; background:var(--surface); color:var(--text); }
-    th, td { padding:8px; border:1px solid var(--border); vertical-align:middle; }
+    th, td { padding:6px; border:1px solid var(--border); vertical-align:middle; }
     thead { background:#132544; color:var(--muted); }
+    thead th { position:sticky; top:0; z-index:2; background:#132544; }
     img { width:44px; height:44px; object-fit:cover; border-radius:6px; border:1px solid var(--border); }
-    .primary { background:var(--primary); color:#04121a; border:1px solid var(--primary-strong); padding:8px 12px; border-radius:8px; cursor:pointer; font-weight:600; }
-    .ghost { border:1px solid var(--border); background:transparent; padding:8px 10px; border-radius:8px; cursor:pointer; color:var(--text); }
+    .primary { background:var(--primary); color:#04121a; border:1px solid var(--primary-strong); padding:7px 10px; border-radius:8px; cursor:pointer; font-weight:600; }
+    .ghost { border:1px solid var(--border); background:transparent; padding:7px 9px; border-radius:8px; cursor:pointer; color:var(--text); }
     .modal-backdrop { position:fixed; inset:0; background:rgba(2,8,23,.65); display:flex; align-items:center; justify-content:center; padding:24px; z-index:1200; }
     .modal.modern-modal { position:relative; background:linear-gradient(135deg,#0b1224,#0f1b33); color:#e2e8f0; padding:0; border-radius:16px; width:min(1200px, 95vw); max-height:90vh; box-shadow:0 30px 60px rgba(4,12,30,0.6); overflow:hidden; display:flex; flex-direction:column; z-index:1210; }
     .modal-header { display:flex; align-items:center; justify-content:space-between; padding:18px 20px; background:linear-gradient(135deg,#102044,#142a58); border-bottom:1px solid rgba(148,163,184,0.18); }
@@ -689,8 +676,8 @@ interface StudentForm {
     .error { color:#dc2626; }
     .upload-status { display:flex; flex-direction:column; gap:6px; font-size:12px; color:#cbd5f5; }
     .modal-actions { display:flex; justify-content:flex-end; gap:10px; padding:16px 20px; border-top:1px solid rgba(148,163,184,0.18); background:rgba(9,18,38,0.7); }
-    .header-actions { display:flex; gap:10px; align-items:center; }
-    .secondary { background:#64748b; color:#fff; border:none; padding:8px 12px; border-radius:4px; cursor:pointer; }
+    .header-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .secondary { background:#64748b; color:#fff; border:none; padding:7px 10px; border-radius:6px; cursor:pointer; }
     .success { background:#059669; color:#fff; }
     .danger { background:#dc2626; color:#fff; }
     .status-badge { padding:4px 8px; border-radius:12px; font-size:12px; font-weight:500; }
@@ -702,12 +689,19 @@ interface StudentForm {
     .payment-pending { background:#fef3c7; color:#92400e; }
     .payment-confirmed { background:#d1fae5; color:#065f46; }
     .payment-none { background:#f1f5f9; color:#64748b; }
+    .product-col { min-width:170px; }
     .session-balance { white-space:pre-line; font-size:12px; line-height:1.4; min-width:220px; }
     .session-summary.vertical { margin-top:8px; background:rgba(12,24,46,0.65); border:1px solid rgba(148,163,184,0.16); border-radius:10px; padding:10px; }
     .session-rows { display:flex; flex-direction:column; gap:6px; }
     .session-row { display:grid; grid-template-columns: 1fr auto; align-items:center; background:rgba(10,20,40,0.7); border:1px solid rgba(148,163,184,0.16); border-radius:8px; padding:8px 10px; }
     .session-label { color:#cbd5f5; font-size:12px; }
     .session-value { color:#f8fafc; font-size:12px; font-weight:600; }
+    .summary-bar { display:flex; gap:10px; flex-wrap:wrap; margin:8px 0 4px; }
+    .pill { padding:6px 10px; border:1px solid var(--border, rgba(148,163,184,0.3)); border-radius:999px; background:rgba(59,130,246,0.08); font-weight:600; font-size:13px; color:#e5e7eb; }
+    .stats-inline { display:flex; gap:8px; flex-wrap:wrap; margin-top:4px; }
+    .pill.success { background:rgba(16,185,129,0.12); color:#a7f3d0; }
+    .pill.warn { background:rgba(234,179,8,0.15); color:#fcd34d; }
+    .pill.danger { background:rgba(239,68,68,0.15); color:#fecaca; }
   `]
 })
 export class StudentsComponent implements OnInit, OnDestroy {
@@ -715,12 +709,14 @@ export class StudentsComponent implements OnInit, OnDestroy {
   products = signal<ProductItem[]>([]);
   sales = signal<UserItem[]>([]);
   readonly sessionDurations = [40, 50, 70, 90, 110, 120, 150];
-  readonly sessionDurationOptions = [40, 50, 70, 90, 110, 120];
+  readonly registeredDurationOptions = [40, 50, 70, 90, 110];
   readonly displayDurations = [40, 50, 70, 90, 110];
-  keyword = '';
-  filterStudentType: '' | 'ONLINE' | 'OFFLINE' = '';
-  filterDob = '';
-  filterProduct = '';
+  readonly studentStatusOptions = ['Đang học', 'Bảo lưu', 'Đã dừng học'];
+  keyword = signal('');
+  filterStudentType = signal<'' | 'ONLINE' | 'OFFLINE'>('');
+  filterDob = signal('');
+  filterProduct = signal('');
+  filterStudentStatus = signal('');
   showModal = signal(false);
   error = signal('');
   uploadError = signal('');
@@ -731,6 +727,27 @@ export class StudentsComponent implements OnInit, OnDestroy {
   pendingStudents = signal<StudentItem[]>([]);
   editingStudent: StudentItem | null = null;
   private subscription?: Subscription;
+  totalStudents = computed(() => this.items().length);
+  totalByStatus = computed(() => {
+    const items = this.items();
+    const normalize = (s?: string) => this.normalizeStudentStatus(s as any);
+    return items.reduce((acc, st) => {
+      const status = normalize((st as any).dataStatus);
+      if (status === 'Đang học') acc.studying++;
+      else if (status === 'Bảo lưu') acc.paused++;
+      else if (status === 'Đã dừng học') acc.stopped++;
+      return acc;
+    }, { studying: 0, paused: 0, stopped: 0 });
+  });
+
+  totalByType = computed(() => {
+    return this.items().reduce((acc, st) => {
+      const t = (st as any).studentType;
+      if (t === 'ONLINE') acc.online++;
+      if (t === 'OFFLINE') acc.offline++;
+      return acc;
+    }, { online: 0, offline: 0 });
+  });
 
   constructor(
     private studentService: StudentService,
@@ -858,10 +875,11 @@ export class StudentsComponent implements OnInit, OnDestroy {
   }
 
   filtered = computed(() => {
-    const kw = this.keyword.trim().toLowerCase();
-    const type = this.filterStudentType;
-    const dob = this.filterDob;
-    const product = this.filterProduct;
+    const kw = this.keyword().trim().toLowerCase();
+    const type = this.filterStudentType();
+    const dob = this.filterDob();
+    const product = this.filterProduct();
+    const status = this.filterStudentStatus();
 
     return this.items().filter((s) => {
       if (kw && !(
@@ -879,6 +897,8 @@ export class StudentsComponent implements OnInit, OnDestroy {
       }
 
       if (product && s.productPackage?._id !== product) return false;
+
+      if (status && this.normalizeStudentStatus((s as any).dataStatus) !== status) return false;
 
       return true;
     });
@@ -927,12 +947,15 @@ export class StudentsComponent implements OnInit, OnDestroy {
       age: student.age,
       parentName: student.parentName,
       parentPhone: student.parentPhone,
+      registeredSessionDuration: this.getRegisteredSessionDuration(student) ?? 70,
       faceImage: student.faceImage,
       level: (student as any).level || student.productPackage?.name || '',
       productPackage: student.productPackage?._id || '',
       studentType: (student as any).studentType || '',
+      dataStatus: this.normalizeStudentStatus((student as any).dataStatus) || 'Đang học',
       saleId: (student as any).saleId || '',
       saleName: (student as any).saleName || '',
+      trialOrGift: (student as any).trialOrGift || '',
       invoiceImage: '',
       invoiceCode: '',
       amountCollected: null,
@@ -1003,6 +1026,45 @@ export class StudentsComponent implements OnInit, OnDestroy {
     return lines.join('\n');
   }
 
+  displayStudentStatus(student: any): string {
+    return this.normalizeStudentStatus((student as any).dataStatus) || '—';
+  }
+
+  sessionDurationLabel(student: any): string {
+    const dur = this.getRegisteredSessionDuration(student);
+    return dur ? `${dur} phút` : '-';
+  }
+
+  private normalizeStudentStatus(status?: string): StudentForm['dataStatus'] {
+    const normalized = (status || '').toUpperCase();
+    const map: Record<string, StudentForm['dataStatus']> = {
+      'ACTIVE': 'Đang học',
+      'STUDYING': 'Đang học',
+      'BAOLUU': 'Bảo lưu',
+      'BAO_LUU': 'Bảo lưu',
+      'PAUSED': 'Bảo lưu',
+      'SUSPENDED': 'Bảo lưu',
+      'STOPPED': 'Đã dừng học',
+      'INACTIVE': 'Đã dừng học',
+      'DA_DUNG_HOC': 'Đã dừng học'
+    };
+    if (map[normalized]) return map[normalized];
+    const allowed: StudentForm['dataStatus'][] = ['Đang học', 'Bảo lưu', 'Đã dừng học'];
+    if (allowed.includes(status as any)) return status as StudentForm['dataStatus'];
+    return '';
+  }
+
+  private getRegisteredSessionDuration(student: any): number | null {
+    const direct = Number((student as any).registeredSessionDuration);
+    if (Number.isFinite(direct)) return direct;
+
+    const payments = (student as any).payments || [];
+    const found = payments.find((p: any) => p.sessionDuration);
+    if (!found) return null;
+    const dur = Number(found.sessionDuration);
+    return Number.isFinite(dur) ? dur : null;
+  }
+
   studentTypeLabel(student: any): string {
     const t = (student as any)?.studentType;
     if (t === 'OFFLINE') return 'Offline';
@@ -1062,8 +1124,11 @@ export class StudentsComponent implements OnInit, OnDestroy {
     if (this.form.productPackage) payload.productPackage = this.form.productPackage;
     if (this.form.level) payload.level = this.form.level.trim();
     if (this.form.studentType) payload.studentType = this.form.studentType;
+    if (this.form.dataStatus) payload.dataStatus = this.form.dataStatus;
     if (this.form.saleId) payload.saleId = this.form.saleId;
     if (this.form.saleName) payload.saleName = this.form.saleName;
+    if (this.form.registeredSessionDuration != null) payload.registeredSessionDuration = Number(this.form.registeredSessionDuration);
+    if (this.form.trialOrGift) payload.trialOrGift = this.form.trialOrGift.trim();
 
     // Build payments array from all 10 payment frames
     const payments: any[] = [];
@@ -1071,10 +1136,14 @@ export class StudentsComponent implements OnInit, OnDestroy {
       const invoiceCode = this.form[`invoiceCode${i === 1 ? '' : i}` as keyof StudentForm] as string;
       const amountCollected = this.form[`amountCollected${i === 1 ? '' : i}` as keyof StudentForm] as number | null;
       const sessionsCollected = this.form[`sessionsCollected${i === 1 ? '' : i}` as keyof StudentForm] as number | null;
-      const sessionDuration = this.form[`sessionDuration${i === 1 ? '' : i}` as keyof StudentForm] as number | null;
+      const sessionDurationRaw = this.form[`sessionDuration${i === 1 ? '' : i}` as keyof StudentForm] as number | null;
       const invoiceImage = this.form[`invoiceImage${i === 1 ? '' : i}` as keyof StudentForm] as string;
       const confirmStatus = this.form[`confirmStatus${i === 1 ? '' : i}` as keyof StudentForm] as string;
       const transferDate = this.form[`transferDate${i === 1 ? '' : i}` as keyof StudentForm] as string;
+
+      const resolvedDuration = sessionDurationRaw != null
+        ? Number(sessionDurationRaw)
+        : (this.form.registeredSessionDuration != null ? Number(this.form.registeredSessionDuration) : null);
 
       // Only add payment frame if at least one field has data
       if (invoiceCode || amountCollected != null || sessionsCollected != null || invoiceImage || transferDate) {
@@ -1085,7 +1154,7 @@ export class StudentsComponent implements OnInit, OnDestroy {
         if (invoiceCode) paymentFrame.invoiceCode = invoiceCode.trim();
         if (amountCollected != null) paymentFrame.amountCollected = Number(amountCollected);
         if (sessionsCollected != null) paymentFrame.sessionsCollected = Number(sessionsCollected);
-        if (sessionDuration != null) paymentFrame.sessionDuration = Number(sessionDuration);
+        if (resolvedDuration != null) paymentFrame.sessionDuration = resolvedDuration;
         if (invoiceImage) paymentFrame.invoiceImage = invoiceImage;
         if (transferDate) paymentFrame.transferDate = transferDate;
         payments.push(paymentFrame);
@@ -1202,12 +1271,15 @@ export class StudentsComponent implements OnInit, OnDestroy {
       age: 6,
       parentName: '',
       parentPhone: '',
+      registeredSessionDuration: 70,
       faceImage: '',
       level: '',
       productPackage: '',
       studentType: '',
+      dataStatus: 'Đang học',
       saleId: '',
       saleName: '',
+      trialOrGift: '',
       invoiceImage: '',
       invoiceCode: '',
       amountCollected: null,

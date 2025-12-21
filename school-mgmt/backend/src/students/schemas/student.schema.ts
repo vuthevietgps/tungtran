@@ -24,7 +24,7 @@ export class PaymentFrame {
   @Prop({ type: Number, min: 0 })
   sessionsCollected?: number;
 
-  @Prop({ type: Number, enum: [40, 50, 70, 90, 110, 120], required: false })
+  @Prop({ type: Number, enum: [40, 50, 70, 90, 110, 120, 150], required: false })
   sessionDuration?: number;
 
   @Prop({ type: String })
@@ -56,7 +56,7 @@ export class Student {
   @Prop({ type: Date, required: false })
   dateOfBirth?: Date;
 
-  @Prop({ required: true, min: 3, max: 25 })
+  @Prop({ required: true, min: 3, max: 60 })
   age!: number;
 
   @Prop({ required: true, trim: true })
@@ -64,6 +64,9 @@ export class Student {
 
   @Prop({ required: true, trim: true })
   parentPhone!: string;
+
+  @Prop({ type: Number, enum: [40, 50, 70, 90, 110], default: 70 })
+  registeredSessionDuration?: number;
 
   @Prop({ required: true, trim: true })
   faceImage!: string;
@@ -82,8 +85,14 @@ export class Student {
   @Prop({ type: String, required: false })
   saleName?: string;
 
+  @Prop({ type: String, trim: true })
+  trialOrGift?: string;
+
   @Prop({ type: String, enum: ['PENDING', 'APPROVED', 'REJECTED'], default: 'PENDING' })
   approvalStatus?: 'PENDING' | 'APPROVED' | 'REJECTED';
+
+  @Prop({ type: String, enum: ['Đang học', 'Bảo lưu', 'Đã dừng học'], default: 'Đang học' })
+  dataStatus?: 'Đang học' | 'Bảo lưu' | 'Đã dừng học';
 
   @Prop({ type: SchemaTypes.ObjectId, ref: 'User', required: false })
   approvedBy?: Types.ObjectId;

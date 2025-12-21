@@ -22,6 +22,7 @@ export interface TeacherWithSalaries {
   offlineSalary2?: number;
   offlineSalary3?: number;
   offlineSalary4?: number;
+  canCreateAttendanceLink?: boolean;
 }
 
 export interface ClassItem {
@@ -40,6 +41,7 @@ export interface ClassItem {
     offlineSalary2?: number;
     offlineSalary3?: number;
     offlineSalary4?: number;
+    canCreateAttendanceLink?: boolean;
   }[];
   students?: ClassMember[];
   classType?: 'ONLINE' | 'OFFLINE';

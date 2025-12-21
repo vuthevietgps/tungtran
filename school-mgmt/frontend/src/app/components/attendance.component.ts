@@ -1,15 +1,20 @@
 import { CommonModule } from '@angular/common';
-import { Component, signal } from '@angular/core';
+import { Component, OnDestroy, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { ActivatedRoute, Router } from '@angular/router';
+import { Subscription } from 'rxjs';
 import { 
   AttendanceService, 
   AttendanceStatus, 
   AttendanceByClassResponse, 
   StudentAttendanceItem,
-  BulkAttendancePayload 
+  BulkAttendancePayload,
+  TeacherClassAssignment,
+  OrderClassSummary
 } from '../services/attendance.service';
 import { ClassItem } from '../services/class.service';
 import { StudentService, StudentItem } from '../services/student.service';
+import { AuthService } from '../services/auth.service';
 
 @Component({
   selector: 'app-attendance',
@@ -312,7 +317,7 @@ import { StudentService, StudentItem } from '../services/student.service';
     .no-data { text-align:center; color:#6b7280; font-style:italic; padding:32px; }
   `]
 })
-export class AttendanceComponent {
+export class AttendanceComponent implements OnInit, OnDestroy {
   // Expose enum to template
   readonly AttendanceStatus = AttendanceStatus;
   readonly sessionDurations = [40, 50, 70, 90, 110];
@@ -329,34 +334,79 @@ export class AttendanceComponent {
   selectedTeacherId = '';
   selectedDate = '';
   todayString = '';
+  private querySub?: Subscription;
 
   private originalAttendanceData: Map<string, { status: AttendanceStatus | null; notes: string; sessionDuration?: number }> = new Map();
 
   constructor(
     private attendanceService: AttendanceService,
-    private studentService: StudentService
+    private studentService: StudentService,
+    private auth: AuthService,
+    private route: ActivatedRoute,
+    private router: Router,
   ) {
     this.todayString = new Date().toISOString().split('T')[0];
     this.selectedDate = this.todayString;
-    this.loadClasses();
+  }
+
+  async ngOnInit(): Promise<void> {
+    this.querySub = this.route.queryParamMap.subscribe(async (params) => {
+      const classId = params.get('classId') || '';
+      const date = params.get('date');
+      const teacherId = params.get('teacherId');
+      const classChanged = classId !== this.selectedClassId;
+      this.selectedClassId = classId;
+      if (date) this.selectedDate = date;
+      if (teacherId) this.selectedTeacherId = teacherId;
+
+      if (classChanged && this.classes().length) {
+        await this.onClassChange(true);
+      }
+    });
+
+    await this.loadClasses();
+    if (this.selectedClassId) {
+      await this.onClassChange(true);
+    }
+  }
+
+  ngOnDestroy(): void {
+    this.querySub?.unsubscribe();
   }
 
   async loadClasses() {
     try {
-      const orderClasses = await this.attendanceService.getOrderClasses();
+      const isTeacher = this.auth.userSignal()?.role === 'TEACHER';
+      const [teacherClasses, orderClasses] = isTeacher
+        ? [await this.attendanceService.getTeacherClasses(), []]
+        : await Promise.all([
+            this.attendanceService.getTeacherClasses(),
+            this.attendanceService.getOrderClasses(),
+          ]);
 
-      const availableClasses: ClassItem[] = orderClasses.map<ClassItem>((cls) => ({
-        _id: cls.classId,
-        name: cls.className || cls.classCode,
-        code: cls.classCode,
-        students: cls.students.map(student => ({
-          _id: student.studentId,
-          fullName: student.fullName,
-          age: student.age,
-          parentName: student.parentName
-        })),
-        studentCount: cls.studentCount,
-      })).sort((a, b) => (a.code || '').localeCompare(b.code || '', 'vi', { sensitivity: 'base' }));
+      const map = new Map<string, ClassItem>();
+
+      const pushClass = (cls: { classId: string; classCode: string; className: string; students: any[]; studentCount?: number }) => {
+        if (!cls?.classId) return;
+        if (map.has(cls.classId)) return;
+        map.set(cls.classId, {
+          _id: cls.classId,
+          name: cls.className || cls.classCode,
+          code: cls.classCode,
+          students: (cls.students || []).map((student: any) => ({
+            _id: student.studentId,
+            fullName: student.fullName,
+            age: student.age,
+            parentName: student.parentName
+          })),
+          studentCount: cls.studentCount ?? (cls.students || []).length,
+        });
+      };
+
+      (teacherClasses || []).forEach((cls: TeacherClassAssignment) => pushClass(cls as any));
+      (orderClasses || []).forEach((cls: OrderClassSummary) => pushClass(cls as any));
+
+      const availableClasses = Array.from(map.values()).sort((a, b) => (a.code || '').localeCompare(b.code || '', 'vi', { sensitivity: 'base' }));
 
       this.classes.set(availableClasses);
 
@@ -364,17 +414,32 @@ export class AttendanceComponent {
         this.selectedClassId = '';
         this.attendanceData.set(null);
       }
+
+      if (isTeacher && !this.selectedClassId && availableClasses.length) {
+        this.selectedClassId = availableClasses[0]._id;
+      }
     } catch (error) {
       this.error.set('Không thể tải danh sách lớp học');
       console.error('Error loading classes:', error);
     }
   }
 
-  async onClassChange() {
+  async onClassChange(skipUrlSync = false) {
     this.attendanceData.set(null);
     this.classTeachers.set([]);
     this.selectedTeacherId = '';
     this.error.set('');
+
+    if (!skipUrlSync) {
+      this.router.navigate([], {
+        relativeTo: this.route,
+        queryParams: {
+          classId: this.selectedClassId || null,
+          date: this.selectedDate || null,
+        },
+        queryParamsHandling: 'merge',
+      });
+    }
     
     if (this.selectedClassId) {
       // Load teachers for this class

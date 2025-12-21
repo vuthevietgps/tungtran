@@ -4,6 +4,7 @@ import { AuthService } from './auth.service';
 
 export interface UserItem {
   _id: string;
+  userCode?: string;
   email: string;
   fullName: string;
   role: string;
@@ -47,7 +48,7 @@ export class UserService {
     return res.json();
   }
 
-  async create(payload: { email: string; password: string; fullName: string; role: string }): Promise<boolean> {
+  async create(payload: { userCode: string; email: string; password: string; fullName: string; role: string }): Promise<boolean> {
     const res = await fetch(`${environment.apiBase}/users`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...this.authHeaders() },
@@ -56,7 +57,7 @@ export class UserService {
     return res.ok;
   }
 
-  async update(id: string, payload: Partial<{ email: string; password: string; fullName: string; role: string }>): Promise<boolean> {
+  async update(id: string, payload: Partial<{ userCode: string; email: string; password: string; fullName: string; role: string }>): Promise<boolean> {
     const res = await fetch(`${environment.apiBase}/users/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...this.authHeaders() },

@@ -10,10 +10,10 @@ import { AttendanceReportComponent } from './components/attendance-report.compon
 import { StudentReportComponent } from './components/student-report.component';
 import { StudentAttendanceComponent } from './components/student-attendance.component';
 import { InvoicesComponent } from './components/invoices.component';
-import { OrdersPageComponent } from './orders/orders-page.component';
 import { StudentsComponent } from './components/students.component';
 import { ClassroomStatusComponent } from './components/classroom-status.component';
 import { TeachingReportComponent } from './components/teaching-report.component';
+import { DataManagementComponent } from './components/data-management.component';
 import { authGuard } from './guards/auth.guard';
 import { roleGuard } from './guards/role.guard';
 
@@ -35,8 +35,8 @@ export const routes: Routes = [
       { path: 'teaching-report', component: TeachingReportComponent, canActivate: [roleGuard(['DIRECTOR','TEACHER'])] },
 			{ path: 'student-report', component: StudentReportComponent },
 			{ path: 'invoices', component: InvoicesComponent, canActivate: [roleGuard(['DIRECTOR','SALE'])] },
-			{ path: 'orders', component: OrdersPageComponent, canActivate: [roleGuard(['DIRECTOR','SALE'])] },
 			{ path: 'classroom-status', component: ClassroomStatusComponent, canActivate: [roleGuard(['DIRECTOR','SALE'])] },
+			{ path: 'data-management', component: DataManagementComponent, canActivate: [roleGuard(['DIRECTOR','SALE','TEACHER'])] },
 			{ path: '', pathMatch: 'full', redirectTo: 'classes' }
 		]
 	},

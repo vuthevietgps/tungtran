@@ -31,7 +31,8 @@ export class Classroom {
       offlineSalary1: { type: Number, min: 0, default: 0 },
       offlineSalary2: { type: Number, min: 0, default: 0 },
       offlineSalary3: { type: Number, min: 0, default: 0 },
-      offlineSalary4: { type: Number, min: 0, default: 0 }
+      offlineSalary4: { type: Number, min: 0, default: 0 },
+      canCreateAttendanceLink: { type: Boolean, default: false }
     }], 
     default: [],
     validate: {

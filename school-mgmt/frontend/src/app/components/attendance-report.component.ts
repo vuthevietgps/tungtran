@@ -1,9 +1,10 @@
 import { Component, OnInit, signal, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { AttendanceService } from '../services/attendance.service';
+import { AttendanceService, TeacherClassAssignment } from '../services/attendance.service';
 import { ClassItem } from '../services/class.service';
 import { environment } from '../../environments/environment';
+import { AuthService } from '../services/auth.service';
 
 interface AttendanceReportItem {
   _id: string;
@@ -45,17 +46,17 @@ interface AttendanceReportItem {
       <div class="filters">
         <div class="filter-group">
           <label>Từ ngày:</label>
-          <input type="date" [(ngModel)]="startDate" />
+          <input type="date" [(ngModel)]="startDate" (ngModelChange)="onFiltersChanged()" />
         </div>
 
         <div class="filter-group">
           <label>Đến ngày:</label>
-          <input type="date" [(ngModel)]="endDate" />
+          <input type="date" [(ngModel)]="endDate" (ngModelChange)="onFiltersChanged()" />
         </div>
 
         <div class="filter-group">
           <label>Lớp học (tùy chọn):</label>
-          <select [(ngModel)]="selectedClassId">
+          <select [(ngModel)]="selectedClassId" (ngModelChange)="onFiltersChanged()">
             <option value="">-- Tất cả các lớp --</option>
             <option *ngFor="let cls of classes()" [value]="cls._id">
               {{cls.code}} - {{cls.name}} ({{cls.studentCount || cls.students?.length || 0}} HS)
@@ -64,7 +65,7 @@ interface AttendanceReportItem {
         </div>
 
         <button class="btn-search" (click)="loadReport()" [disabled]="loading()">
-          {{ loading() ? '⏳ Đang tải...' : '🔍 Xem báo cáo' }}
+          {{ loading() ? '⏳ Đang tải...' : '🔄 Làm mới' }}
         </button>
       </div>
 
@@ -140,58 +141,80 @@ interface AttendanceReportItem {
     </div>
   `,
   styles: [`
+    :host {
+      --bg: #0c162c;
+      --panel: #0f203d;
+      --panel-strong: #132b50;
+      --border: #1e365b;
+      --text: #e8eef9;
+      --muted: #9fb3d1;
+      --primary: #5ad1ff;
+      --primary-strong: #2ca0ff;
+      --danger: #ff7b92;
+      display:block;
+      background:var(--bg);
+      min-height:100vh;
+      color:var(--text);
+    }
+
     .report-container { padding:2rem; max-width:1400px; margin:0 auto; }
-    h1 { color:#1f2937; margin-bottom:1.5rem; }
+    h1 { color:var(--text); margin-bottom:1.5rem; font-weight:700; letter-spacing:0.2px; }
 
     .filters { 
       display:flex; 
       gap:16px; 
       flex-wrap:wrap; 
-      background:white; 
+      background:var(--panel);
       padding:20px; 
-      border-radius:8px; 
-      box-shadow:0 1px 3px rgba(0,0,0,0.1);
+      border-radius:12px; 
+      border:1px solid var(--border);
+      box-shadow:0 12px 40px rgba(0,0,0,0.35);
       margin-bottom:24px;
     }
 
-    .filter-group { display:flex; flex-direction:column; gap:8px; min-width:200px; }
-    .filter-group label { font-weight:600; color:#374151; font-size:14px; }
+    .filter-group { display:flex; flex-direction:column; gap:8px; min-width:200px; color:var(--muted); }
+    .filter-group label { font-weight:600; color:var(--text); font-size:14px; }
     .filter-group input,
     .filter-group select { 
-      padding:8px 12px; 
-      border:1px solid #d1d5db; 
-      border-radius:6px; 
+      padding:10px 12px; 
+      border:1px solid var(--border); 
+      border-radius:10px; 
       font-size:14px;
+      background:#0b1a33;
+      color:var(--text);
     }
 
     .btn-search { 
       align-self:flex-end;
-      background:#2563eb; 
-      color:white; 
+      background:linear-gradient(120deg, var(--primary) 0%, var(--primary-strong) 100%);
+      color:#031020; 
       border:none; 
-      padding:10px 24px; 
-      border-radius:6px; 
-      font-weight:600; 
+      padding:12px 26px; 
+      border-radius:12px; 
+      font-weight:700; 
       cursor:pointer;
-      transition: all 0.2s;
+      transition: all 0.2s ease;
+      box-shadow:0 10px 30px rgba(45,174,255,0.35);
     }
-    .btn-search:hover:not(:disabled) { background:#1d4ed8; }
-    .btn-search:disabled { opacity:0.5; cursor:not-allowed; }
+    .btn-search:hover:not(:disabled) { transform:translateY(-1px); box-shadow:0 12px 34px rgba(45,174,255,0.45); }
+    .btn-search:disabled { opacity:0.55; cursor:not-allowed; box-shadow:none; }
 
     .error-message { 
-      background:#fee2e2; 
-      color:#dc2626; 
+      background:#3b0b1e; 
+      color:#ff9ab5; 
       padding:16px; 
-      border-radius:8px; 
+      border-radius:10px; 
+      border:1px solid #69213d;
       margin-bottom:24px;
     }
 
     .no-data { 
       text-align:center; 
-      color:#6b7280; 
+      color:var(--muted); 
       padding:48px; 
-      background:white; 
-      border-radius:8px;
+      background:var(--panel);
+      border:1px solid var(--border);
+      border-radius:12px;
       font-style:italic;
     }
 
@@ -202,42 +225,46 @@ interface AttendanceReportItem {
     }
 
     .summary-card { 
-      background:linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-      color:white; 
+      background:radial-gradient(circle at 10% 10%, rgba(90,209,255,0.18), transparent 35%),
+        linear-gradient(135deg, #1b3b6a 0%, #0f284d 40%, #0b1c36 100%);
+      color:var(--text); 
       padding:24px; 
-      border-radius:8px; 
+      border-radius:12px; 
       flex:1;
-      box-shadow:0 4px 6px rgba(0,0,0,0.1);
+      border:1px solid var(--border);
+      box-shadow:0 14px 40px rgba(0,0,0,0.45);
     }
 
     .summary-card h3 { margin:0 0 8px; font-size:14px; opacity:0.9; }
-    .summary-number { margin:0; font-size:32px; font-weight:700; }
+    .summary-number { margin:0; font-size:32px; font-weight:800; letter-spacing:0.5px; }
 
     .report-table-container { 
-      background:white; 
-      border-radius:8px; 
-      box-shadow:0 1px 3px rgba(0,0,0,0.1);
+      background:var(--panel);
+      border-radius:12px; 
+      border:1px solid var(--border);
+      box-shadow:0 12px 36px rgba(0,0,0,0.4);
       overflow-x:auto;
     }
 
     .report-table { 
       width:100%; 
       border-collapse:collapse;
+      min-width:960px;
     }
 
     .report-table thead { 
-      background:#f9fafb; 
-      border-bottom:2px solid #e5e7eb;
+      background:var(--panel-strong); 
+      border-bottom:2px solid var(--border);
     }
 
     .report-table th { 
       padding:12px 16px; 
       text-align:left; 
-      font-weight:600; 
+      font-weight:700; 
       color:var(--text); 
-      font-size:14px;
+      font-size:13px;
+      letter-spacing:0.25px;
       white-space:nowrap;
-      background:#132544;
     }
 
     .report-table td { 
@@ -245,27 +272,22 @@ interface AttendanceReportItem {
       border-bottom:1px solid var(--border);
       font-size:14px;
       color:var(--text);
+      background:linear-gradient(180deg, rgba(19,43,80,0.35) 0%, rgba(12,22,44,0.7) 100%);
     }
 
-    .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; font-size:12px; color:var(--text); }
-    .salary { font-weight:700; color:#34d399; white-space:nowrap; }
+    .report-table tbody tr:nth-child(2n) td { background:linear-gradient(180deg, rgba(19,43,80,0.5) 0%, rgba(12,22,44,0.85) 100%); }
+
+    .report-table tbody tr:hover td { 
+      background:#1f3c67; 
+      transition:background 0.15s ease;
+    }
+
+    .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; font-size:12px; color:var(--muted); }
+    .salary { font-weight:700; color:#8df0c8; white-space:nowrap; }
     .actions { display:flex; gap:8px; }
-    .actions .ghost { padding:6px 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel); cursor:pointer; color:var(--text); }
+    .actions .ghost { padding:6px 10px; border-radius:8px; border:1px solid var(--border); background:transparent; cursor:pointer; color:var(--text); transition:all 0.15s; }
     .actions .ghost.danger { border-color:var(--danger); color:var(--danger); }
-    .actions .ghost:hover { background:#132544; }
-
-    .report-table tbody tr:hover { 
-      background:#1a2f55; 
-    }
-
-    .class-info strong { color:var(--text); }
-    .class-info small { color:var(--muted); }
-
-    .student-info strong { color:var(--text); }
-    .student-info small { color:var(--muted); }
-
-    .teacher-info strong { color:var(--text); }
-    .teacher-info small { color:var(--muted); }
+    .actions .ghost:hover { background:var(--panel-strong); }
 
     .image-cell { text-align:center; }
 
@@ -277,11 +299,13 @@ interface AttendanceReportItem {
       cursor:pointer;
       border:2px solid var(--border);
       transition: all 0.2s;
+      background:#0b1c33;
     }
 
     .thumbnail:hover { 
-      transform:scale(1.1); 
+      transform:scale(1.05); 
       border-color:var(--primary);
+      box-shadow:0 10px 28px rgba(90,209,255,0.3);
     }
 
     .no-image { 
@@ -299,38 +323,44 @@ interface AttendanceReportItem {
       top:0; 
       width:100%; 
       height:100%; 
-      background:rgba(0,0,0,0.9);
+      background:rgba(3,10,20,0.92);
       align-items:center;
       justify-content:center;
+      backdrop-filter: blur(6px);
     }
 
     .modal-content { 
       position:relative;
       max-width:90%;
       max-height:90%;
+      border-radius:12px;
+      overflow:hidden;
+      box-shadow:0 18px 40px rgba(0,0,0,0.6);
     }
 
     .modal-content img { 
       width:100%;
       height:auto;
-      border-radius:8px;
+      display:block;
     }
 
     .close { 
       position:absolute; 
-      top:-40px; 
+      top:-44px; 
       right:0; 
-      color:#fff; 
-      font-size:40px; 
-      font-weight:bold; 
+      color:var(--text); 
+      font-size:34px; 
+      font-weight:700; 
       cursor:pointer;
+      padding:8px 12px;
     }
 
-    .close:hover { color:#ccc; }
+    .close:hover { color:var(--primary); }
   `]
 })
 export class AttendanceReportComponent implements OnInit {
   private attendanceService = inject(AttendanceService);
+  private auth = inject(AuthService);
 
   classes = signal<ClassItem[]>([]);
   reportData = signal<AttendanceReportItem[]>([]);
@@ -352,10 +382,35 @@ export class AttendanceReportComponent implements OnInit {
     this.startDate = lastWeek.toISOString().split('T')[0];
 
     this.loadClasses();
+    this.loadReport();
   }
 
   async loadClasses(): Promise<void> {
     try {
+      const user = this.auth.userSignal();
+      if (user?.role === 'TEACHER') {
+        const teacherClasses = await this.attendanceService.getTeacherClasses();
+        const mapped: ClassItem[] = teacherClasses.map<ClassItem>((cls: TeacherClassAssignment) => ({
+          _id: cls.classId,
+          name: cls.className || cls.classCode,
+          code: cls.classCode,
+          students: (cls.students || []).map((student) => ({
+            _id: student.studentId,
+            fullName: student.fullName,
+          })),
+          studentCount: cls.students?.length,
+        })).sort((a, b) => (a.code || '').localeCompare(b.code || '', 'vi', { sensitivity: 'base' }));
+
+        this.classes.set(mapped);
+        if (this.selectedClassId && !mapped.some((c) => c._id === this.selectedClassId)) {
+          this.selectedClassId = '';
+        }
+        if (!this.selectedClassId && mapped.length) {
+          this.selectedClassId = mapped[0]._id;
+        }
+        return;
+      }
+
       const orderClasses = await this.attendanceService.getOrderClasses();
       const mapped: ClassItem[] = orderClasses.map<ClassItem>((cls) => ({
         _id: cls.classId,
@@ -398,6 +453,11 @@ export class AttendanceReportComponent implements OnInit {
     } finally {
       this.loading.set(false);
     }
+  }
+
+  onFiltersChanged() {
+    if (this.loading()) return;
+    this.loadReport();
   }
 
   getImageUrl(imageUrl: string): string {

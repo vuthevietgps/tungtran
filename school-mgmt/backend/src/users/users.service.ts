@@ -19,10 +19,13 @@ export class UsersService {
 
   async createByDirector(dto: CreateUserDto, actor: UserDocument): Promise<User> {
     if (actor.role !== Role.DIRECTOR) throw new ForbiddenException('Only director');
-    const existed = await this.userModel.findOne({ email: dto.email }).lean();
-    if (existed) throw new ConflictException('Email already exists');
+    const userCode = dto.userCode.trim().toUpperCase();
+    const existedCode = await this.userModel.findOne({ userCode }).lean();
+    if (existedCode) throw new ConflictException('User code already exists');
+    const existedEmail = await this.userModel.findOne({ email: dto.email }).lean();
+    if (existedEmail) throw new ConflictException('Email already exists');
     const password = await this.hashPassword(dto.password);
-    const user = new this.userModel({ ...dto, password });
+    const user = new this.userModel({ ...dto, userCode, password });
     return user.save();
   }
 
@@ -47,6 +50,12 @@ export class UsersService {
   async updateByDirector(id: string, dto: UpdateUserDto, actor: UserDocument): Promise<User> {
     if (actor.role !== Role.DIRECTOR) throw new ForbiddenException('Only director');
     const update: any = { ...dto };
+    if (dto.userCode) {
+      const userCode = dto.userCode.trim().toUpperCase();
+      const existedCode = await this.userModel.findOne({ userCode, _id: { $ne: id } }).lean();
+      if (existedCode) throw new ConflictException('User code already exists');
+      update.userCode = userCode;
+    }
     if (dto.password) {
       update.password = await this.hashPassword(dto.password);
     }

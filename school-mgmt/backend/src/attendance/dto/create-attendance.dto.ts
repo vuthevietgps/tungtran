@@ -30,6 +30,30 @@ export class CreateAttendanceDto {
   @IsOptional()
   @IsIn([40, 50, 70, 90, 110])
   sessionDuration?: number; // Độ dài buổi học (phút)
+
+  @IsString()
+  @IsOptional()
+  sessionContent?: string;
+
+  @IsString()
+  @IsOptional()
+  comment?: string;
+
+  @IsString()
+  @IsOptional()
+  recordLink?: string;
+
+  @IsString()
+  @IsOptional()
+  parentConfirm?: string;
+
+  @IsNumber()
+  @IsOptional()
+  paymentStatus?: number;
+
+  @IsMongoId()
+  @IsOptional()
+  checkedBy?: string;
 }
 
 // DTO để điểm danh nhiều học sinh cùng lúc

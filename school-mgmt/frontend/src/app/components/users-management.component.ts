@@ -28,10 +28,11 @@ import { AuthService } from '../services/auth.service';
 
   <table class="data" *ngIf="filtered().length; else empty">
     <thead>
-      <tr><th>Email</th><th>Họ tên</th><th>Role</th><th>Trạng thái</th><th>Hành động</th></tr>
+      <tr><th>Mã user</th><th>Email</th><th>Họ tên</th><th>Role</th><th>Trạng thái</th><th>Hành động</th></tr>
     </thead>
     <tbody>
       <tr *ngFor="let u of filtered()">
+        <td>{{u.userCode || '—'}}</td>
         <td>{{u.email}}</td>
         <td>{{u.fullName}}</td>
         <td>{{translateRole(u.role)}}</td>
@@ -49,6 +50,7 @@ import { AuthService } from '../services/auth.service';
     <div class="modal">
       <h3>{{ editingId ? 'Chỉnh sửa user' : 'Thêm user mới' }}</h3>
       <form (ngSubmit)="submit()" #f="ngForm">
+        <label>Mã user<input [(ngModel)]="form.userCode" name="userCode" required /></label>
         <label>Email<input [(ngModel)]="form.email" name="email" type="email" required /></label>
         <label>Mật khẩu
           <input
@@ -99,7 +101,7 @@ export class UsersManagementComponent {
   error = signal('');
   search = '';
   roleFilter = '';
-  form = { email: '', password: '', fullName: '', role: 'DIRECTOR' };
+  form = { userCode: '', email: '', password: '', fullName: '', role: 'DIRECTOR' };
   editingId: string | null = null;
 
   roleOptions = [
@@ -119,7 +121,7 @@ export class UsersManagementComponent {
     const term = this.search.toLowerCase();
     return this.users().filter(u =>
       (!this.roleFilter || u.role === this.roleFilter) &&
-      (!term || u.email.toLowerCase().includes(term) || (u.fullName || '').toLowerCase().includes(term))
+      (!term || u.email.toLowerCase().includes(term) || (u.fullName || '').toLowerCase().includes(term) || (u.userCode || '').toLowerCase().includes(term))
     );
   });
 
@@ -134,7 +136,7 @@ export class UsersManagementComponent {
 
   openModal(){
     this.error.set('');
-    this.form = { email:'', password:'', fullName:'', role:'DIRECTOR' };
+    this.form = { userCode:'', email:'', password:'', fullName:'', role:'DIRECTOR' };
     this.editingId = null;
     this.showModal.set(true);
   }
@@ -146,6 +148,7 @@ export class UsersManagementComponent {
 
   async submit(){
     const payload = {
+      userCode: this.form.userCode.trim(),
       email: this.form.email.trim(),
       password: this.form.password.trim(),
       fullName: this.form.fullName.trim(),
@@ -154,7 +157,7 @@ export class UsersManagementComponent {
 
     let success = false;
     if (this.editingId) {
-      const updatePayload: any = { email: payload.email, fullName: payload.fullName, role: payload.role };
+      const updatePayload: any = { userCode: payload.userCode, email: payload.email, fullName: payload.fullName, role: payload.role };
       if (payload.password) updatePayload.password = payload.password;
       success = await this.userService.update(this.editingId, updatePayload);
     } else {
@@ -171,7 +174,7 @@ export class UsersManagementComponent {
 
   edit(user: UserItem) {
     this.editingId = user._id;
-    this.form = { email: user.email, password: '', fullName: user.fullName, role: user.role };
+    this.form = { userCode: user.userCode || '', email: user.email, password: '', fullName: user.fullName, role: user.role };
     this.error.set('');
     this.showModal.set(true);
   }
