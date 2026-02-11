@@ -1,92 +1,126 @@
-import { IsEmail, IsMongoId, IsNotEmpty, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsNumber, IsArray, IsEnum, IsDate, ValidateNested, Min, Max } from 'class-validator';
+import { Type } from 'class-transformer';
+import { OrderType, PaymentPlan, LeadSource } from '../schemas/order.schema';
+
+export class OrderItemDto {
+  @IsString()
+  @IsNotEmpty()
+  productId!: string;
+
+  @IsString()
+  @IsOptional()
+  productName?: string;
+
+  @IsNumber()
+  @Min(1)
+  sessions!: number;
+
+  @IsNumber()
+  @Min(15)
+  @IsOptional()
+  sessionDuration?: number;
+
+  @IsNumber()
+  @Min(0)
+  pricePerSession!: number;
+
+  @IsNumber()
+  @Min(0)
+  amount!: number;
+
+  @IsString()
+  @IsOptional()
+  teachingMode?: string;
+
+  @IsString()
+  @IsOptional()
+  preferredSchedule?: string;
+
+  @IsString()
+  @IsOptional()
+  preferredTeacherId?: string;
+
+  @IsString()
+  @IsOptional()
+  notes?: string;
+}
 
 export class CreateOrderDto {
-  @IsOptional()
-  @IsMongoId()
-  studentId?: string;
+  @IsEnum(OrderType)
+  orderType!: string;
 
   @IsString()
   @IsNotEmpty()
-  @MaxLength(120)
+  parentName!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  parentPhone!: string;
+
+  @IsString()
+  @IsOptional()
+  parentEmail?: string;
+
+  @IsString()
+  @IsOptional()
+  parentUserId?: string;
+
+  @IsString()
+  @IsNotEmpty()
   studentName!: string;
 
   @IsString()
-  @IsNotEmpty()
-  @MaxLength(60)
-  studentCode!: string;
-
   @IsOptional()
-  @IsString()
-  @MaxLength(120)
-  level?: string;
+  studentDob?: string;
 
   @IsString()
-  @IsNotEmpty()
-  @MaxLength(120)
-  parentName!: string;
-
   @IsOptional()
-  @IsMongoId()
-  teacherId?: string;
+  studentGrade?: string;
 
-  @IsOptional()
   @IsString()
-  @MaxLength(120)
-  teacherName?: string;
-
   @IsOptional()
-  @IsEmail()
-  teacherEmail?: string;
+  existingStudentId?: string;
 
-  @IsOptional()
-  @IsString()
-  @MaxLength(60)
-  teacherCode?: string;
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => OrderItemDto)
+  items!: OrderItemDto[];
 
-  @IsOptional()
   @IsNumber()
   @Min(0)
-  teacherSalary?: number;
+  totalAmount!: number;
 
-  @IsOptional()
-  @IsMongoId()
-  saleId?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(120)
-  saleName?: string;
-
-  @IsOptional()
-  @IsEmail()
-  saleEmail?: string;
-
-  @IsOptional()
-  @IsMongoId()
-  classId?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(60)
-  classCode?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(120)
-  invoiceNumber?: string;
-
-  @IsOptional()
   @IsNumber()
   @Min(0)
-  sessionsByInvoice?: number;
-
   @IsOptional()
-  @IsString()
-  @MaxLength(160)
-  dataStatus?: string;
+  discountAmount?: number;
 
-  @IsOptional()
   @IsString()
-  @MaxLength(160)
-  trialOrGift?: string;
+  @IsOptional()
+  discountReason?: string;
+
+  @IsNumber()
+  @Min(0)
+  finalAmount!: number;
+
+  @IsEnum(PaymentPlan)
+  @IsOptional()
+  paymentPlan?: string;
+
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  saleCommission?: number;
+
+  @IsEnum(LeadSource)
+  @IsOptional()
+  leadSource?: string;
+
+  @IsString()
+  @IsOptional()
+  leadId?: string;
+
+  @IsString()
+  @IsOptional()
+  consultationNotes?: string;
 }

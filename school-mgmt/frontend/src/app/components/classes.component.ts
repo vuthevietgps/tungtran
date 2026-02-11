@@ -14,9 +14,9 @@ import { AuthService } from '../services/auth.service';
   <header class="page-header">
     <div>
       <h2>Quản lý lớp học</h2>
-      <p>Tạo lớp, chọn giáo viên, nhân viên Sale và học viên tham gia.</p>
+      <p>Tạo lớp, chỉ định giáo viên & học viên, thiết lập giá/buổi và lương/buổi.</p>
     </div>
-    <button class="primary" (click)="openModal()" *ngIf="isDirector()">+ Thêm lớp học</button>
+    <button class="primary" (click)="openModal()" *ngIf="canManage()">+ Thêm lớp học</button>
   </header>
 
   <table class="data" *ngIf="classes().length; else empty">
@@ -25,12 +25,14 @@ import { AuthService } from '../services/auth.service';
         <th>Mã lớp</th>
         <th>Tên lớp</th>
         <th>Giáo viên</th>
-        <th>Sale</th>
         <th>Học viên</th>
-        <th>Doanh thu/HV</th>
-        <th>Chi phí/HV</th>
-        <th>Tổng DT</th>
-        <th>Lợi nhuận</th>
+        <th>Giá cơ sở (HS)</th>
+        <th>Lương cơ sở (GV)</th>
+        <th>TL cơ sở</th>
+        <th>TL buổi học</th>
+        <th>Giá thực/buổi</th>
+        <th>Lương thực/buổi</th>
+        <th>Lợi nhuận/buổi</th>
         <th>Hành động</th>
       </tr>
     </thead>
@@ -39,23 +41,27 @@ import { AuthService } from '../services/auth.service';
         <td>{{c.code}}</td>
         <td>{{c.name}}</td>
         <td>{{c.teacher?.fullName || '—'}}</td>
-        <td>{{c.sale?.fullName || '—'}}</td>
         <td>
           <span class="chip" *ngFor="let s of c.students">{{s.fullName}}</span>
           <span *ngIf="!c.students?.length">Chưa có</span>
         </td>
-        <td>{{formatCurrency(c.revenuePerStudent)}}</td>
-        <td>{{formatCurrency(c.teacherSalaryCost)}}</td>
-        <td class="total-revenue">{{formatCurrency(c.totalRevenue)}}</td>
-        <td [class]="getProfitClass(c.profit)">{{formatCurrency(c.profit)}}</td>
+        <td>{{formatCurrency(c.pricePerSession)}}</td>
+        <td>{{formatCurrency(c.teacherPayPerSession)}}</td>
+        <td>{{c.baseDuration || 60}}p</td>
+        <td>{{c.sessionDuration || 60}}p</td>
+        <td><strong>{{formatCurrency(c.actualPricePerSession ?? c.pricePerSession)}}</strong></td>
+        <td>{{formatCurrency(c.actualTeacherPayPerSession ?? c.teacherPayPerSession)}}</td>
+        <td [class]="getProfitClass(getProfit(c))">
+          {{formatCurrency(getProfit(c))}}
+        </td>
         <td class="actions-cell">
-          <ng-container *ngIf="isDirector(); else saleActions">
+          <ng-container *ngIf="canManage()">
             <button class="ghost" (click)="edit(c)">Sửa</button>
-            <button class="danger" (click)="remove(c)">Xóa</button>
+            <button class="danger" (click)="remove(c)" *ngIf="isDirector()">Xóa</button>
           </ng-container>
-          <ng-template #saleActions>
-            <button class="ghost" *ngIf="canSaleAssign(c)" (click)="edit(c)">Chọn học viên</button>
-          </ng-template>
+          <ng-container *ngIf="isSale() && canSaleAssign(c)">
+            <button class="ghost" (click)="edit(c)">Chọn học viên</button>
+          </ng-container>
         </td>
       </tr>
     </tbody>
@@ -78,27 +84,56 @@ import { AuthService } from '../services/auth.service';
             <option *ngFor="let t of teachers()" [value]="t._id">{{t.fullName}} ({{t.email}})</option>
           </select>
         </label>
-        <label>Nhân viên Sale
-          <select name="saleId" [(ngModel)]="form.saleId" required [disabled]="isSale()">
-            <option value="" disabled [selected]="!form.saleId">-- Chọn Sale --</option>
+        <label *ngIf="!isOps()">Nhân viên Sale (tùy chọn)
+          <select name="saleId" [(ngModel)]="form.saleId" [disabled]="isSale()">
+            <option value="">-- Không chọn --</option>
             <option *ngFor="let s of sales()" [value]="s._id">{{s.fullName}} ({{s.email}})</option>
           </select>
         </label>
         
-        <div class="financial-info" *ngIf="isDirector()">
-          <h4>Thông tin tài chính</h4>
-          <label>Doanh thu mỗi học sinh (VNĐ)
-            <input name="revenuePerStudent" [(ngModel)]="form.revenuePerStudent" type="number" min="0" step="1000" />
-          </label>
-          <label>Chi phí lương giáo viên mỗi học sinh (VNĐ)
-            <input name="teacherSalaryCost" [(ngModel)]="form.teacherSalaryCost" type="number" min="0" step="1000" />
-          </label>
-          <div class="financial-summary" *ngIf="form.revenuePerStudent || form.teacherSalaryCost">
-            <p><strong>Số học sinh:</strong> {{selectedStudents().length}}</p>
-            <p><strong>Tổng doanh thu:</strong> {{formatCurrency((form.revenuePerStudent || 0) * selectedStudents().length)}}</p>
-            <p><strong>Tổng chi phí:</strong> {{formatCurrency((form.teacherSalaryCost || 0) * selectedStudents().length)}}</p>
-            <p [class]="getProfitClass(((form.revenuePerStudent || 0) - (form.teacherSalaryCost || 0)) * selectedStudents().length)">
-              <strong>Lợi nhuận:</strong> {{formatCurrency(((form.revenuePerStudent || 0) - (form.teacherSalaryCost || 0)) * selectedStudents().length)}}
+        <div class="financial-info" *ngIf="canManage()">
+          <h4>💰 Thiết lập giá theo buổi</h4>
+          <div class="pricing-grid">
+            <label>Giá thu HS / buổi (VNĐ)
+              <input name="pricePerSession" [(ngModel)]="form.pricePerSession" type="number" min="0" step="10000" />
+            </label>
+            <label>Lương GV / buổi (VNĐ)
+              <input name="teacherPayPerSession" [(ngModel)]="form.teacherPayPerSession" type="number" min="0" step="10000" />
+            </label>
+            <label>Thời lượng cơ sở (phút)
+              <select name="baseDuration" [(ngModel)]="form.baseDuration">
+                <option *ngFor="let d of standardDurations" [ngValue]="d">{{d}} phút</option>
+              </select>
+            </label>
+            <label>Thời lượng buổi học (phút)
+              <input name="sessionDuration" [(ngModel)]="form.sessionDuration" type="number" min="15" step="5" />
+            </label>
+          </div>
+
+          <div class="price-reference" *ngIf="form.pricePerSession">
+            <h5>📊 Bảng giá tham chiếu theo thời lượng</h5>
+            <table class="ref-table">
+              <thead><tr><th>Thời lượng</th><th>Học phí HS</th><th>Lương GV</th><th>Lợi nhuận</th></tr></thead>
+              <tbody>
+                <tr *ngFor="let d of standardDurations" [class.active-row]="d === form.sessionDuration">
+                  <td>{{d}} phút <span class="badge" *ngIf="d === form.baseDuration">cơ sở</span></td>
+                  <td>{{formatCurrency(calcProportional(form.pricePerSession, d))}}</td>
+                  <td>{{formatCurrency(calcProportional(form.teacherPayPerSession, d))}}</td>
+                  <td [class]="getProfitClass(calcProportional(form.pricePerSession, d) - calcProportional(form.teacherPayPerSession, d))">
+                    {{formatCurrency(calcProportional(form.pricePerSession, d) - calcProportional(form.teacherPayPerSession, d))}}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="financial-summary" *ngIf="form.pricePerSession || form.teacherPayPerSession">
+            <p><strong>Số học viên:</strong> {{selectedStudents().length}}</p>
+            <p><strong>Giá cơ sở ({{form.baseDuration}}p):</strong> {{formatCurrency(form.pricePerSession)}}</p>
+            <p><strong>Giá thực tế ({{form.sessionDuration}}p):</strong> {{formatCurrency(calcProportional(form.pricePerSession, form.sessionDuration))}}</p>
+            <p><strong>Lương GV thực tế ({{form.sessionDuration}}p):</strong> {{formatCurrency(calcProportional(form.teacherPayPerSession, form.sessionDuration))}}</p>
+            <p [class]="getProfitClass(calcProportional(form.pricePerSession, form.sessionDuration) - calcProportional(form.teacherPayPerSession, form.sessionDuration))">
+              <strong>Lợi nhuận/buổi:</strong> {{formatCurrency(calcProportional(form.pricePerSession, form.sessionDuration) - calcProportional(form.teacherPayPerSession, form.sessionDuration))}}
             </p>
           </div>
         </div>
@@ -152,8 +187,8 @@ import { AuthService } from '../services/auth.service';
     select, input { padding:6px 8px; border:1px solid #cbd5f5; border-radius:4px; width:100%; }
     .actions { display:flex; gap:8px; justify-content:flex-end; }
     .actions-cell { white-space:nowrap; width:140px; }
-    .modal-backdrop { position:fixed; inset:0; background:rgba(15,23,42,.55); display:flex; align-items:center; justify-content:center; }
-    .modal { background:#fff; padding:20px; border-radius:8px; width:420px; max-height:90vh; overflow:auto; box-shadow:0 12px 32px rgba(15,23,42,.2); }
+    .modal-backdrop { position:fixed; inset:0; background:rgba(15,23,42,.55); display:flex; align-items:center; justify-content:center; z-index:100; }
+    .modal { background:#fff; padding:20px; border-radius:8px; width:520px; max-height:90vh; overflow:auto; box-shadow:0 12px 32px rgba(15,23,42,.2); }
     .modal form { display:flex; flex-direction:column; gap:12px; }
     .error { color:#dc2626; }
     .student-picker { display:flex; gap:16px; }
@@ -165,14 +200,22 @@ import { AuthService } from '../services/auth.service';
     .student-row button { border:1px solid #2563eb; background:#2563eb; color:#fff; border-radius:4px; padding:4px 10px; cursor:pointer; }
     .student-row button.remove { background:#dc2626; border-color:#dc2626; }
     .muted { text-align:center; padding:12px; color:#94a3b8; font-size:13px; margin:0; }
-    .financial-info { border-top:1px solid #e2e8f0; padding-top:16px; margin-top:16px; }
+    .financial-info { border-top:1px solid #e2e8f0; padding-top:16px; margin-top:8px; }
     .financial-info h4 { margin:0 0 12px 0; color:#334155; }
+    .pricing-grid { display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:12px; }
+    .ref-table { width:100%; margin-top:8px; border-collapse:collapse; font-size:13px; }
+    .ref-table th, .ref-table td { padding:6px 10px; border:1px solid #e2e8f0; text-align:right; }
+    .ref-table th { background:#f1f5f9; text-align:center; font-weight:600; }
+    .ref-table td:first-child { text-align:left; }
+    .ref-table .active-row { background:#eff6ff; font-weight:600; }
+    .price-reference { margin-top:12px; }
+    .price-reference h5 { margin:0 0 8px 0; color:#334155; font-size:14px; }
+    .badge { display:inline-block; background:#2563eb; color:#fff; font-size:10px; padding:1px 6px; border-radius:99px; margin-left:4px; font-weight:500; }
     .financial-summary { background:#f1f5f9; padding:12px; border-radius:6px; margin-top:12px; }
     .financial-summary p { margin:4px 0; font-size:14px; }
     .profit-positive { color:#059669; font-weight:600; }
     .profit-negative { color:#dc2626; font-weight:600; }
     .profit-zero { color:#6b7280; }
-    .total-revenue { font-weight:600; color:#059669; }
   `]
 })
 export class ClassesComponent {
@@ -186,6 +229,7 @@ export class ClassesComponent {
   editingId: string | null = null;
   form = this.blankForm();
   submitLabel = 'Lưu';
+  standardDurations = [30, 40, 50, 60, 70, 80, 90, 120];
 
   constructor(
     private classService: ClassService,
@@ -204,6 +248,10 @@ export class ClassesComponent {
       teacherId: '', 
       saleId: '', 
       studentIds: [] as string[],
+      pricePerSession: 0,
+      teacherPayPerSession: 0,
+      baseDuration: 60,
+      sessionDuration: 60,
       revenuePerStudent: 0,
       teacherSalaryCost: 0
     };
@@ -222,7 +270,7 @@ export class ClassesComponent {
   }
 
   openModal() {
-    if (!this.isDirector()) return;
+    if (!this.canManage()) return;
     this.form = this.blankForm();
     this.editingId = null;
     this.error.set('');
@@ -254,16 +302,20 @@ export class ClassesComponent {
       return;
     }
 
-    if (!this.form.teacherId || !this.form.saleId) {
-      this.error.set('Vui lòng chọn giáo viên và Sale');
+    if (!this.form.teacherId) {
+      this.error.set('Vui lòng chọn giáo viên');
       return;
     }
     const payload = {
       name: this.form.name.trim(),
       code: this.form.code.trim(),
       teacherId: this.form.teacherId,
-      saleId: this.form.saleId,
+      saleId: this.form.saleId || undefined,
       studentIds: [...this.form.studentIds],
+      pricePerSession: this.form.pricePerSession || 0,
+      teacherPayPerSession: this.form.teacherPayPerSession || 0,
+      baseDuration: this.form.baseDuration || 60,
+      sessionDuration: this.form.sessionDuration || 60,
       revenuePerStudent: this.form.revenuePerStudent || 0,
       teacherSalaryCost: this.form.teacherSalaryCost || 0,
     };
@@ -289,6 +341,10 @@ export class ClassesComponent {
       teacherId: classItem.teacher?._id || '',
       saleId: classItem.sale?._id || '',
       studentIds: this.isSale() ? classStudentIds.filter((id) => myStudents.has(id)) : classStudentIds,
+      pricePerSession: classItem.pricePerSession || 0,
+      teacherPayPerSession: classItem.teacherPayPerSession || 0,
+      baseDuration: classItem.baseDuration || 60,
+      sessionDuration: classItem.sessionDuration || 60,
       revenuePerStudent: classItem.revenuePerStudent || 0,
       teacherSalaryCost: classItem.teacherSalaryCost || 0,
     };
@@ -335,8 +391,17 @@ export class ClassesComponent {
     return this.auth.userSignal()?.role === 'DIRECTOR';
   }
 
+  isOps() {
+    return this.auth.userSignal()?.role === 'OPS';
+  }
+
   isSale() {
     return this.auth.userSignal()?.role === 'SALE';
+  }
+
+  canManage() {
+    const role = this.auth.userSignal()?.role;
+    return role === 'DIRECTOR' || role === 'OPS';
   }
 
   canSaleAssign(classItem: ClassItem) {
@@ -357,5 +422,19 @@ export class ClassesComponent {
     if (profit > 0) return 'profit-positive';
     if (profit < 0) return 'profit-negative';
     return 'profit-zero';
+  }
+
+  /** Tính giá tỷ lệ theo thời lượng */
+  calcProportional(basePrice: number | undefined, targetDuration: number): number {
+    if (!basePrice) return 0;
+    const base = this.form.baseDuration || 60;
+    return Math.round(basePrice * (targetDuration / base));
+  }
+
+  /** Lợi nhuận thực tế (sau tỷ lệ) của 1 lớp */
+  getProfit(c: ClassItem): number {
+    const price = c.actualPricePerSession ?? c.pricePerSession ?? 0;
+    const pay = c.actualTeacherPayPerSession ?? c.teacherPayPerSession ?? 0;
+    return price - pay;
   }
 }

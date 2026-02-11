@@ -1,6 +1,7 @@
-import { Injectable } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Injectable, inject } from '@angular/core';
+import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
-import { AuthService } from './auth.service';
 
 export interface InvoiceItem {
   _id: string;
@@ -10,10 +11,19 @@ export interface InvoiceItem {
     fullName: string;
     parentName: string;
     parentPhone: string;
+    studentCode?: string;
   };
+  classId?: {
+    _id: string;
+    name: string;
+    code: string;
+    pricePerSession?: number;
+  };
+  sessions?: number;          // Số buổi đăng ký
+  pricePerSession?: number;   // Giá mỗi buổi tại thời điểm lập hóa đơn
   amount: number;
   paymentDate: string;
-  receiptImage: string;
+  receiptImage?: string;
   description?: string;
   status: string;
   createdBy: {
@@ -36,86 +46,84 @@ export interface ReceiptUploadResult extends InvoiceMutationResult {
 
 @Injectable({ providedIn: 'root' })
 export class InvoiceService {
-  constructor(private auth: AuthService) {}
-
-  private authHeaders(): Record<string, string> {
-    const token = this.auth.getToken();
-    const headers: Record<string, string> = {};
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    return headers;
-  }
+  private http = inject(HttpClient);
 
   async list(): Promise<InvoiceItem[]> {
-    const res = await fetch(`${environment.apiBase}/invoices`, { headers: this.authHeaders() });
-    if (!res.ok) {
-      console.error('Failed to load invoices', await res.text());
+    try {
+      const res = await firstValueFrom(
+        this.http.get<InvoiceItem[]>(`${environment.apiBase}/invoices`, { withCredentials: true }),
+      );
+      return res;
+    } catch (error) {
+      console.error('Failed to load invoices', error);
       return [];
     }
-    return res.json();
   }
 
   async create(payload: Omit<InvoiceItem, '_id' | 'createdBy' | 'createdAt' | 'updatedAt'>): Promise<InvoiceMutationResult> {
-    const res = await fetch(`${environment.apiBase}/invoices`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...this.authHeaders() },
-      body: JSON.stringify(payload),
-    });
-    if (res.ok) return { ok: true };
-    return this.fail(res);
+    try {
+      await firstValueFrom(
+        this.http.post(`${environment.apiBase}/invoices`, payload, { withCredentials: true }),
+      );
+      return { ok: true };
+    } catch (error: any) {
+      return this.fail(error);
+    }
   }
 
   async update(id: string, payload: Partial<Omit<InvoiceItem, '_id' | 'createdBy' | 'createdAt' | 'updatedAt'>>): Promise<InvoiceMutationResult> {
-    const res = await fetch(`${environment.apiBase}/invoices/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', ...this.authHeaders() },
-      body: JSON.stringify(payload),
-    });
-    if (res.ok) return { ok: true };
-    return this.fail(res);
+    try {
+      await firstValueFrom(
+        this.http.patch(`${environment.apiBase}/invoices/${id}`, payload, { withCredentials: true }),
+      );
+      return { ok: true };
+    } catch (error: any) {
+      return this.fail(error);
+    }
   }
 
   async remove(id: string): Promise<InvoiceMutationResult> {
-    const res = await fetch(`${environment.apiBase}/invoices/${id}`, {
-      method: 'DELETE',
-      headers: this.authHeaders(),
-    });
-    if (res.ok) return { ok: true };
-    return this.fail(res);
+    try {
+      await firstValueFrom(
+        this.http.delete(`${environment.apiBase}/invoices/${id}`, { withCredentials: true }),
+      );
+      return { ok: true };
+    } catch (error: any) {
+      return this.fail(error);
+    }
   }
 
   async uploadReceipt(file: File): Promise<ReceiptUploadResult> {
     const formData = new FormData();
     formData.append('file', file);
-    const res = await fetch(`${environment.apiBase}/invoices/receipt-upload`, {
-      method: 'POST',
-      headers: this.authHeaders(),
-      body: formData,
-    });
-    if (res.ok) {
-      const data = await res.json();
-      return { ok: true, url: data?.url };
+    try {
+      const res = await firstValueFrom(
+        this.http.post<{ url?: string }>(`${environment.apiBase}/invoices/receipt-upload`, formData, {
+          withCredentials: true,
+        }),
+      );
+      return { ok: true, url: res?.url };
+    } catch (error: any) {
+      return this.fail(error, 'Không thể tải ảnh lên');
     }
-    return this.fail(res, 'Không thể tải ảnh lên');
   }
 
   async getInvoicesByStudent(studentId: string): Promise<InvoiceItem[]> {
-    const res = await fetch(`${environment.apiBase}/invoices/student/${studentId}`, { headers: this.authHeaders() });
-    if (!res.ok) {
-      console.error('Failed to load student invoices', await res.text());
+    try {
+      const res = await firstValueFrom(
+        this.http.get<InvoiceItem[]>(`${environment.apiBase}/invoices/student/${studentId}`, {
+          withCredentials: true,
+        }),
+      );
+      return res;
+    } catch (error) {
+      console.error('Failed to load student invoices', error);
       return [];
     }
-    return res.json();
   }
 
-  private async fail(res: Response, fallback = 'Không thể thực hiện thao tác'): Promise<InvoiceMutationResult> {
-    let message = fallback;
-    try {
-      const data = await res.json();
-      message = data?.message ?? message;
-    } catch {
-      const text = await res.text();
-      if (text) message = text;
-    }
+  private fail(error: any, fallback = 'Không thể thực hiện thao tác'): InvoiceMutationResult {
+    const message = error?.error?.message || fallback;
     return { ok: false, message };
   }
 }

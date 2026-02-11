@@ -46,6 +46,6 @@ export class LoginComponent {
       this.error.set('Sai email hoặc mật khẩu');
       return;
     }
-    this.router.navigate(['/app/users']);
+    this.router.navigate(['/app/dashboard']);
   }
 }

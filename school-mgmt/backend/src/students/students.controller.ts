@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards, UseInterceptors, UploadedFile } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards, UseInterceptors, UploadedFile, Req } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { StudentsService } from './students.service';
 import { CreateStudentDto } from './dto/create-student.dto';
@@ -9,6 +9,8 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '../common/interfaces/role.enum';
 import { multerConfig } from '../common/config/multer.config';
+import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
+import { ParseMongoIdPipe } from '../common/pipes/parse-mongo-id.pipe';
 
 @Controller('students')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -16,56 +18,58 @@ export class StudentsController {
   constructor(private readonly studentsService: StudentsService) {}
 
   @Get()
-  @Roles(Role.DIRECTOR, Role.MANAGER, Role.SALE)
-  findAll() {
-    return this.studentsService.findAll();
+  @Roles(Role.DIRECTOR, Role.SALE, Role.OPS, Role.PARENT)
+  findAll(@Req() req: AuthenticatedRequest) {
+    return this.studentsService.findAll(req.user);
   }
 
   @Get('pending')
-  @Roles(Role.DIRECTOR, Role.MANAGER, Role.SALE)
+  @Roles(Role.DIRECTOR, Role.OPS)
   findPendingApproval() {
     return this.studentsService.findPendingApproval();
   }
 
   @Get('report')
-  @Roles(Role.DIRECTOR, Role.MANAGER, Role.SALE)
-  getStudentReport(@Query() query: StudentReportQueryDto) {
-    return this.studentsService.getStudentReport(query.classId, query.searchTerm);
+  @Roles(Role.DIRECTOR, Role.SALE, Role.OPS)
+  getStudentReport(@Query() query: StudentReportQueryDto, @Req() req: AuthenticatedRequest) {
+    return this.studentsService.getStudentReport(query.classId, query.searchTerm, req.user);
+  }
+
+  @Get('comprehensive-report')
+  @Roles(Role.DIRECTOR, Role.SALE, Role.OPS, Role.ACCOUNTING)
+  getComprehensiveReport(@Query() query: StudentReportQueryDto, @Req() req: AuthenticatedRequest) {
+    return this.studentsService.getComprehensiveReport(query.classId, query.searchTerm, req.user);
   }
 
   @Post()
-  @Roles(Role.DIRECTOR, Role.MANAGER, Role.SALE)
-  create(@Body() createStudentDto: CreateStudentDto) {
-    return this.studentsService.create(createStudentDto);
+  @Roles(Role.DIRECTOR, Role.SALE, Role.OPS)
+  create(@Body() createStudentDto: CreateStudentDto, @Req() req: AuthenticatedRequest) {
+    return this.studentsService.create(createStudentDto, req.user);
   }
 
   @Get(':id')
-  @Roles(Role.DIRECTOR, Role.MANAGER, Role.SALE)
-  findOne(@Param('id') id: string) {
-    return this.studentsService.findOne(id);
+  @Roles(Role.DIRECTOR, Role.SALE, Role.OPS, Role.PARENT)
+  findOne(@Param('id', ParseMongoIdPipe) id: string, @Req() req: AuthenticatedRequest) {
+    return this.studentsService.findOne(id, req.user);
   }
 
   @Patch(':id')
-  @Roles(Role.DIRECTOR, Role.MANAGER, Role.SALE)
-  update(@Param('id') id: string, @Body() updateStudentDto: UpdateStudentDto) {
+  @Roles(Role.DIRECTOR, Role.SALE, Role.OPS)
+  update(@Param('id', ParseMongoIdPipe) id: string, @Body() updateStudentDto: UpdateStudentDto) {
     return this.studentsService.update(id, updateStudentDto);
   }
 
-  @Delete('clear-all')
-  @Roles(Role.DIRECTOR, Role.MANAGER, Role.SALE)
-  clearAllData() {
-    return this.studentsService.clearAllStudentData();
-  }
+  // clear-all route removed — bulk deletion is permanently disabled
 
   @Delete(':id')
-  @Roles(Role.DIRECTOR, Role.MANAGER, Role.SALE)
-  remove(@Param('id') id: string) {
+  @Roles(Role.DIRECTOR, Role.OPS)
+  remove(@Param('id', ParseMongoIdPipe) id: string) {
     return this.studentsService.remove(id);
   }
 
   @Post('face-upload')
   @UseInterceptors(FileInterceptor('file', multerConfig))
-  @Roles(Role.DIRECTOR, Role.MANAGER, Role.SALE)
+  @Roles(Role.DIRECTOR, Role.SALE, Role.OPS)
   async uploadFace(@UploadedFile() file: Express.Multer.File) {
     if (!file) {
       throw new Error('No file uploaded');
@@ -74,8 +78,8 @@ export class StudentsController {
   }
 
   @Post(':id/approve')
-  @Roles(Role.DIRECTOR, Role.MANAGER, Role.SALE)
-  async approve(@Param('id') id: string, @Body() body: { action: 'APPROVE' | 'REJECT'; userId: string }) {
-    return this.studentsService.approve(id, body.action, body.userId);
+  @Roles(Role.DIRECTOR, Role.OPS)
+  async approve(@Param('id', ParseMongoIdPipe) id: string, @Body() body: { action: 'APPROVE' | 'REJECT' }, @Req() req: AuthenticatedRequest) {
+    return this.studentsService.approve(id, body.action, req.user.sub);
   }
 }

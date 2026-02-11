@@ -27,11 +27,26 @@ export class PaymentFrame {
   @Prop({ type: String })
   invoiceImage?: string;
 
-  @Prop({ type: String, enum: ['PENDING', 'CONFIRMED'], default: 'PENDING' })
-  confirmStatus?: 'PENDING' | 'CONFIRMED';
+  @Prop({ type: String, enum: ['PENDING', 'CONFIRMED', 'REJECTED'], default: 'PENDING' })
+  confirmStatus?: 'PENDING' | 'CONFIRMED' | 'REJECTED';
 }
 
 export const PaymentFrameSchema = SchemaFactory.createForClass(PaymentFrame);
+
+// Sub-schema for preferred schedule
+@Schema({ _id: false })
+export class PreferredTimeSlot {
+  @Prop({ type: String, required: true }) // e.g., "MONDAY", "TUESDAY"
+  day!: string;
+
+  @Prop({ type: String, required: true }) // Format: "HH:mm"
+  startTime!: string;
+
+  @Prop({ type: String, required: true }) // Format: "HH:mm"
+  endTime!: string;
+}
+
+export const PreferredTimeSlotSchema = SchemaFactory.createForClass(PreferredTimeSlot);
 
 @Schema({ timestamps: true })
 export class Student {
@@ -44,6 +59,17 @@ export class Student {
   @Prop({ required: true, min: 3, max: 25 })
   age!: number;
 
+  // Birthday info (for birthday promotions)
+  @Prop({ type: Number, min: 1, max: 12, required: false })
+  studentBirthMonth?: number; // Tháng sinh học sinh (1-12)
+
+  @Prop({ type: Number, min: 1, max: 12, required: false })
+  parentBirthMonth?: number; // Tháng sinh phụ huynh (1-12)
+
+  // Parent info
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'User', required: false })
+  parentUserId?: Types.ObjectId; // Link to parent's login account (PARENT role)
+
   @Prop({ required: true, trim: true })
   parentName!: string;
 
@@ -55,6 +81,27 @@ export class Student {
 
   @Prop({ type: SchemaTypes.ObjectId, ref: Product.name })
   productPackage?: Types.ObjectId;
+
+  // Learning needs & preferences
+  @Prop({ type: String, trim: true })
+  learningNeeds?: string; // Nhu cầu học, mục tiêu (e.g., "Ôn thi đại học", "Tăng điểm Toán")
+
+  @Prop({ type: [String], default: [] })
+  subjects?: string[]; // Môn học muốn học (e.g., ["Toán", "Lý"])
+
+  @Prop({ type: String, trim: true })
+  grade?: string; // Lớp đang học (e.g., "Lớp 10", "Lớp 12")
+
+  @Prop({ type: String, enum: ['ONLINE', 'OFFLINE', 'BOTH'], default: 'BOTH' })
+  preferredTeachingMode?: string;
+
+  @Prop({ type: String, trim: true })
+  preferredLocation?: string; // Khu vực nếu học offline
+
+  @Prop({ type: [PreferredTimeSlotSchema], default: [] })
+  preferredSchedule?: PreferredTimeSlot[]; // Khung giờ mong muốn
+
+  // Legacy field (keep for backward compatibility)
   @Prop({ type: String, enum: ['ONLINE', 'OFFLINE'], required: false })
   studentType?: 'ONLINE' | 'OFFLINE';
 
@@ -78,3 +125,9 @@ export class Student {
 }
 
 export const StudentSchema = SchemaFactory.createForClass(Student);
+
+// Indexes for frequently queried fields
+StudentSchema.index({ approvalStatus: 1 });
+StudentSchema.index({ saleId: 1 });
+StudentSchema.index({ parentUserId: 1 });
+StudentSchema.index({ studentCode: 1 }, { unique: true });

@@ -3,22 +3,24 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { OrdersService } from './orders.service';
 import { OrdersController } from './orders.controller';
 import { Order, OrderSchema } from './schemas/order.schema';
+import { EnrollmentService } from './enrollment.service';
+import { AuditLogModule } from '../audit-log/audit-log.module';
 import { Student, StudentSchema } from '../students/schemas/student.schema';
+import { Invoice, InvoiceSchema } from '../invoices/schemas/invoice.schema';
 import { Classroom, ClassroomSchema } from '../classes/schemas/class.schema';
-import { Attendance, AttendanceSchema } from '../attendance/schemas/attendance.schema';
-import { User, UserSchema } from '../users/schemas/user.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: Order.name, schema: OrderSchema },
       { name: Student.name, schema: StudentSchema },
+      { name: Invoice.name, schema: InvoiceSchema },
       { name: Classroom.name, schema: ClassroomSchema },
-      { name: Attendance.name, schema: AttendanceSchema },
-      { name: User.name, schema: UserSchema },
     ]),
+    AuditLogModule,
   ],
   controllers: [OrdersController],
-  providers: [OrdersService],
+  providers: [OrdersService, EnrollmentService],
+  exports: [OrdersService, EnrollmentService],
 })
 export class OrdersModule {}

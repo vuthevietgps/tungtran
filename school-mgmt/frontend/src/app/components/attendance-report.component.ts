@@ -360,8 +360,8 @@ export class AttendanceReportComponent implements OnInit {
 
   async loadClasses(): Promise<void> {
     try {
-      const orderClasses = await this.attendanceService.getOrderClasses();
-      const mapped: ClassItem[] = orderClasses.map<ClassItem>((cls) => ({
+      const classes = await this.attendanceService.getClassesWithStudents();
+      const mapped: ClassItem[] = classes.map<ClassItem>((cls) => ({
         _id: cls.classId,
         name: cls.className || cls.classCode,
         code: cls.classCode,

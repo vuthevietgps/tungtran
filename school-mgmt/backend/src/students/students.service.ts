@@ -1,14 +1,15 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { createHash } from 'crypto';
 import { Student, StudentDocument } from './schemas/student.schema';
 import { Attendance, AttendanceDocument } from '../attendance/schemas/attendance.schema';
 import { Classroom, ClassroomDocument } from '../classes/schemas/class.schema';
-import { Order, OrderDocument } from '../orders/schemas/order.schema';
+import { Session, SessionDocument } from '../sessions/schemas/session.schema';
+import { UserDocument } from '../users/schemas/user.schema';
+import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
+import { Role } from '../common/interfaces/role.enum';
 
 type StudentLean = Student & { _id: Types.ObjectId };
-type OrderLean = Order & { _id: Types.ObjectId };
 
 @Injectable()
 export class StudentsService {
@@ -16,44 +17,34 @@ export class StudentsService {
     @InjectModel(Student.name) private readonly studentModel: Model<StudentDocument>,
     @InjectModel(Attendance.name) private readonly attendanceModel: Model<AttendanceDocument>,
     @InjectModel(Classroom.name) private readonly classroomModel: Model<ClassroomDocument>,
-    @InjectModel(Order.name) private readonly orderModel: Model<OrderDocument>,
+    @InjectModel(Session.name) private readonly sessionModel: Model<SessionDocument>,
   ) {}
 
-  findAll() {
-    return this.buildStudentListFromOrders();
+  findAll(actor?: JwtPayload) {
+    return this.getStudentList(actor);
   }
 
-  private async buildStudentListFromOrders() {
-    const [studentsFromDb, orders] = await Promise.all([
-      this.studentModel.find()
-        .populate('productPackage', 'name price')
-        .sort({ createdAt: -1 })
-        .lean<StudentLean[]>(),
-      this.orderModel.find({ studentName: { $exists: true, $ne: '' } })
-        .sort({ createdAt: -1 })
-        .lean<OrderLean[]>(),
-    ]);
+  private async getStudentList(actor?: JwtPayload) {
+    // Sale chỉ thấy HS của mình
+    const isSale = actor?.role === Role.SALE;
+    const saleOid = isSale ? new Types.ObjectId(actor._id) : undefined;
 
-    const studentMap = new Map<string, any>();
+    // Parent chỉ thấy con mình
+    const isParent = actor?.role === Role.PARENT;
+    const parentOid = isParent ? new Types.ObjectId(actor.sub) : undefined;
 
-    const pushStudent = (student: any) => {
-      const normalizedCode = this.normalizeStudentCode(student.studentCode);
-      const key = normalizedCode || student._id;
-      if (!key) return;
-      studentMap.set(key, student);
-    };
+    const studentFilter: any = {};
+    if (saleOid) studentFilter.saleId = saleOid;
+    if (parentOid) studentFilter.parentUserId = parentOid;
 
-    studentsFromDb.forEach(student => pushStudent(this.mapStudentDocument(student)));
+    const studentsFromDb = await this.studentModel.find(studentFilter)
+      .populate('productPackage', 'name price')
+      .sort({ createdAt: -1 })
+      .lean<StudentLean[]>();
 
-    for (const order of orders) {
-      const normalizedCode = this.normalizeStudentCode(order.studentCode);
-      if (!normalizedCode || studentMap.has(normalizedCode)) continue;
-      pushStudent(this.mapOrderStudent(order));
-    }
-
-    return Array.from(studentMap.values()).sort((a, b) =>
-      a.fullName.localeCompare(b.fullName, 'vi', { sensitivity: 'base' })
-    );
+    return studentsFromDb
+      .map(student => this.mapStudentDocument(student))
+      .sort((a, b) => a.fullName.localeCompare(b.fullName, 'vi', { sensitivity: 'base' }));
   }
 
   private mapStudentDocument(student: StudentLean) {
@@ -78,38 +69,26 @@ export class StudentsService {
     };
   }
 
-  private mapOrderStudent(order: OrderLean) {
-    const normalizedCode = this.normalizeStudentCode(order.studentCode) || 'UNKNOWN';
-    return {
-      _id: order.studentId?.toString() || this.generateVirtualId(`${normalizedCode}_${order._id}`),
-      studentCode: normalizedCode,
-      fullName: order.studentName || 'Chưa cập nhật',
-      age: (order as any).age || 0,
-      parentName: order.parentName || 'Chưa cập nhật',
-      parentPhone: (order as any).parentPhone || '',
-      faceImage: (order as any).faceImage || '',
-      productPackage: undefined,
-    };
-  }
-
   private normalizeStudentCode(code?: string | null) {
     if (!code) return null;
     const trimmed = code.trim();
     return trimmed ? trimmed.toUpperCase() : null;
   }
 
-  private generateVirtualId(seed: string) {
-    const hash = createHash('md5').update(seed).digest('hex').slice(0, 24);
-    return new Types.ObjectId(hash).toHexString();
-  }
-  async getStudentReport(classId?: string, searchTerm?: string) {
+  async getStudentReport(classId?: string, searchTerm?: string, actor?: JwtPayload) {
     // Build filter for students
     const studentFilter: any = {};
+    // Sale chỉ thấy HS của mình
+    if (actor?.role === Role.SALE) {
+      studentFilter.saleId = new Types.ObjectId((actor as any)._id);
+    }
     if (searchTerm) {
+      // Escape special regex characters to prevent MongoDB injection
+      const escapedTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       studentFilter.$or = [
-        { fullName: { $regex: searchTerm, $options: 'i' } },
-        { parentName: { $regex: searchTerm, $options: 'i' } },
-        { parentPhone: { $regex: searchTerm, $options: 'i' } }
+        { fullName: { $regex: escapedTerm, $options: 'i' } },
+        { parentName: { $regex: escapedTerm, $options: 'i' } },
+        { parentPhone: { $regex: escapedTerm, $options: 'i' } }
       ];
     }
 
@@ -185,7 +164,123 @@ export class StudentsService {
     return reportData;
   }
 
-  async create(createStudentDto: any) {
+  /**
+   * Comprehensive report: each row = (student + classCode) pair.
+   * Columns = student info + class info + numbered session columns (Buổi 1, 2, ...).
+   * Each session cell: { date, status, attendedAt, duration, teacherCode }.
+   */
+  async getComprehensiveReport(classId?: string, searchTerm?: string, actor?: JwtPayload) {
+    // 1. Build class filter
+    const classFilter: any = {};
+    if (classId) classFilter._id = new Types.ObjectId(classId);
+    // SALE can only see their own classes
+    if (actor?.role === Role.SALE) {
+      classFilter.sale = new Types.ObjectId(actor.sub);
+    }
+
+    // 2. Get classes with populated teacher + students
+    const classes = await this.classroomModel.find(classFilter)
+      .populate('teacher', 'fullName email')
+      .populate('students', 'studentCode fullName age parentName parentPhone faceImage productPackage')
+      .lean();
+
+    if (classes.length === 0) {
+      return { maxSessions: 0, rows: [] };
+    }
+
+    // 3. Build (student, class) pairs
+    type Pair = { student: any; cls: any };
+    const pairs: Pair[] = [];
+    for (const cls of classes) {
+      const students = (cls.students || []) as any[];
+      for (const student of students) {
+        if (searchTerm) {
+          const term = searchTerm.toLowerCase();
+          const match =
+            student.fullName?.toLowerCase().includes(term) ||
+            student.parentName?.toLowerCase().includes(term) ||
+            student.parentPhone?.includes(term) ||
+            student.studentCode?.toLowerCase().includes(term);
+          if (!match) continue;
+        }
+        pairs.push({ student, cls });
+      }
+    }
+
+    // 4. Get all attendance records for the queried classes, populate teacher
+    const classIds = classes.map(c => (c as any)._id);
+    const attendances = await this.attendanceModel.find({
+      classId: { $in: classIds },
+    })
+      .populate('teacherId', 'fullName email')
+      .sort({ date: 1 })
+      .lean();
+
+    // 5. Build lookup: key = `studentId_classId` -> ordered array of session info
+    const attendanceLookup = new Map<string, any[]>();
+
+    for (const att of attendances) {
+      const key = `${att.studentId?.toString()}_${att.classId?.toString()}`;
+      if (!attendanceLookup.has(key)) {
+        attendanceLookup.set(key, []);
+      }
+      const cls = classes.find(c => (c as any)._id.toString() === att.classId?.toString());
+
+      attendanceLookup.get(key)!.push({
+        date: att.date ? new Date(att.date).toISOString().split('T')[0] : null,
+        status: att.status || null,
+        attendedAt: att.attendedAt || null,
+        duration: (cls as any)?.sessionDuration || (cls as any)?.baseDuration || 0,
+        teacherCode: (att.teacherId as any)?.email || (att.teacherId as any)?.fullName || '',
+      });
+    }
+
+    // 6. Find max session count across all pairs
+    let maxSessions = 0;
+    for (const sessions of attendanceLookup.values()) {
+      maxSessions = Math.max(maxSessions, sessions.length);
+    }
+
+    // 7. Build rows
+    const rows = pairs.map(({ student, cls }) => {
+      const key = `${student._id?.toString()}_${(cls as any)._id?.toString()}`;
+      const sessions = attendanceLookup.get(key) || [];
+
+      const attendedCount = sessions.filter(s => s.status === 'PRESENT' || s.status === 'LATE').length;
+      const absentCount = sessions.filter(s => s.status === 'ABSENT').length;
+
+      return {
+        studentId: student._id?.toString(),
+        studentCode: student.studentCode || '',
+        fullName: student.fullName || '',
+        age: student.age || 0,
+        parentName: student.parentName || '',
+        parentPhone: student.parentPhone || '',
+        faceImage: student.faceImage || '',
+        classId: (cls as any)._id?.toString(),
+        classCode: cls.code || '',
+        className: cls.name || '',
+        subject: cls.subject || '',
+        grade: cls.grade || '',
+        teacherName: (cls.teacher as any)?.fullName || '',
+        pricePerSession: cls.pricePerSession || 0,
+        totalSessions: cls.totalSessions || 0,
+        sessionsCompleted: cls.sessionsCompleted || 0,
+        attendedCount,
+        absentCount,
+        sessions, // array of { date, status, attendedAt, duration, teacherCode }
+      };
+    });
+
+    return { maxSessions, rows };
+  }
+
+  async create(createStudentDto: any, actor?: JwtPayload) {
+    // Auto-set saleId khi SALE tạo học sinh
+    if (actor?.role === Role.SALE && !createStudentDto.saleId) {
+      createStudentDto.saleId = (actor as any)._id;
+      createStudentDto.saleName = (actor as any).fullName || '';
+    }
     const student = new this.studentModel(createStudentDto);
     return student.save();
   }
@@ -195,63 +290,56 @@ export class StudentsService {
   }
 
   async remove(id: string) {
-    try {
-      console.log('=== DELETE STUDENT REQUEST ===');
-      console.log('Student ID:', id);
-      
-      // Check if student exists in DB
-      const existingStudent = await this.studentModel.findById(id);
-      console.log('Student exists in DB:', !!existingStudent);
-      
-      let deletedCount = 0;
-      
-      if (existingStudent) {
-        console.log('Student code:', existingStudent.studentCode);
-        console.log('Student name:', existingStudent.fullName);
-        
-        // Delete related data first
-        const studentObjectId = new Types.ObjectId(id);
-        
-        // Delete attendance records
-        const attendanceResult = await this.attendanceModel.deleteMany({ studentId: studentObjectId });
-        console.log('Deleted attendance records:', attendanceResult.deletedCount);
-        
-        // Delete order records  
-        const orderResult = await this.orderModel.deleteMany({ studentId: studentObjectId });
-        console.log('Deleted order records:', orderResult.deletedCount);
-        
-        // Finally delete the student
-        const result = await this.studentModel.findByIdAndDelete(id);
-        console.log('Deleted student from DB');
-        deletedCount++;
-      } else {
-        // This is a virtual student from orders - try to delete by studentId in orders
-        console.log('Virtual student detected - searching in orders...');
-        const orderResult = await this.orderModel.deleteMany({ studentId: new Types.ObjectId(id) });
-        console.log('Deleted orders with studentId:', orderResult.deletedCount);
-        deletedCount += orderResult.deletedCount;
-        
-        // If no orders found by ID, this student might not exist at all
-        if (orderResult.deletedCount === 0) {
-          console.log('No records found to delete');
-        }
-      }
-      
-      console.log('=== DELETE COMPLETED ===');
-      console.log('Total records affected:', deletedCount);
-      
-      return { deletedCount };
-    } catch (error) {
-      console.error('Error deleting student:', error);
-      throw error;
+    const existingStudent = await this.studentModel.findById(id);
+    if (!existingStudent) return { deletedCount: 0 };
+
+    // Check for active sessions
+    const activeSessions = await this.sessionModel.countDocuments({
+      studentId: new Types.ObjectId(id),
+      status: { $in: ['SCHEDULED', 'TEACHER_COMPLETED', 'PARENT_CONFIRMED'] },
+    });
+    if (activeSessions > 0) {
+      throw new BadRequestException(
+        `Không thể xóa học sinh đang có ${activeSessions} buổi học chưa hoàn tất`,
+      );
     }
+
+    const studentObjectId = new Types.ObjectId(id);
+
+    // Remove student from all classes
+    await this.classroomModel.updateMany(
+      { students: studentObjectId },
+      { $pull: { students: studentObjectId } },
+    );
+
+    // Delete attendance records
+    await this.attendanceModel.deleteMany({ studentId: studentObjectId });
+
+    // Finally delete the student
+    await this.studentModel.findByIdAndDelete(id);
+
+    return { deletedCount: 1 };
   }
 
-  async findOne(id: string) {
-    return this.studentModel.findById(id).populate('productPackage', 'name price');
+  async findOne(id: string, actor?: JwtPayload) {
+    const student = await this.studentModel.findById(id).populate('productPackage', 'name price');
+    if (!student) return null;
+
+    // PARENT can only view their own children
+    if (actor?.role === Role.PARENT) {
+      if (student.parentUserId?.toString() !== actor.sub) {
+        return null;
+      }
+    }
+    return student;
   }
 
   async approve(id: string, action: 'APPROVE' | 'REJECT', userId: string) {
+    const student = await this.studentModel.findById(id);
+    if (!student) throw new NotFoundException('Học sinh không tồn tại');
+    if (student.approvalStatus !== 'PENDING') {
+      throw new BadRequestException('Học sinh đã được xử lý trước đó');
+    }
     const updateData: any = {
       approvalStatus: action === 'APPROVE' ? 'APPROVED' : 'REJECTED',
       approvedBy: userId,
@@ -266,16 +354,10 @@ export class StudentsService {
       .sort({ createdAt: -1 });
   }
 
+  /** @deprecated Dangerous — disabled. Use individual delete instead. */
   async clearAllStudentData() {
-    // Delete all students
-    await this.studentModel.deleteMany({});
-    
-    // Delete all related attendance records
-    await this.attendanceModel.deleteMany({});
-    
-    // Delete all orders (if they reference students)
-    await this.orderModel.deleteMany({});
-    
-    return { message: 'All student data cleared successfully' };
+    throw new ForbiddenException(
+      'Bulk deletion is disabled. Please delete students individually to ensure data integrity.',
+    );
   }
 }

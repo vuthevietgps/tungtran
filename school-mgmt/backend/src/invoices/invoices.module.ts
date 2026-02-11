@@ -9,6 +9,8 @@ import { InvoicesService } from './invoices.service';
 import { InvoicesController } from './invoices.controller';
 import { Invoice, InvoiceSchema } from './schemas/invoice.schema';
 import { Student, StudentSchema } from '../students/schemas/student.schema';
+import { Classroom, ClassroomSchema } from '../classes/schemas/class.schema';
+import { WalletsModule } from '../wallets/wallets.module';
 
 const receiptUploadPath = join(process.cwd(), 'uploads', 'invoices');
 
@@ -39,8 +41,10 @@ const imageFileFilter = (req: any, file: Express.Multer.File, cb: any) => {
     MongooseModule.forFeature([
       { name: Invoice.name, schema: InvoiceSchema },
       { name: Student.name, schema: StudentSchema },
+      { name: Classroom.name, schema: ClassroomSchema },
     ]),
     MulterModule.register({ storage, fileFilter: imageFileFilter }),
+    WalletsModule,
   ],
   controllers: [InvoicesController],
   providers: [InvoicesService],

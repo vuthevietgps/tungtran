@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Req, UseGuards } from '@nestjs/common';
 import { ClassesService } from './classes.service';
 import { CreateClassDto } from './dto/create-class.dto';
 import { UpdateClassDto } from './dto/update-class.dto';
@@ -7,7 +7,9 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '../common/interfaces/role.enum';
 import { AssignStudentsDto } from './dto/assign-students.dto';
-import { Request } from 'express';
+import { UpdateCurriculumDto } from './dto/update-curriculum.dto';
+import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
+import { ParseMongoIdPipe } from '../common/pipes/parse-mongo-id.pipe';
 
 @Controller('classes')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -15,36 +17,72 @@ export class ClassesController {
   constructor(private readonly classesService: ClassesService) {}
 
   @Post()
-  @Roles(Role.DIRECTOR)
-  create(@Body() dto: CreateClassDto) {
-    return this.classesService.create(dto);
+  @Roles(Role.DIRECTOR, Role.OPS, Role.SALE)
+  create(@Body() dto: CreateClassDto, @Req() req: AuthenticatedRequest) {
+    return this.classesService.create(dto, req.user);
   }
 
   @Get()
-  @Roles(Role.DIRECTOR, Role.SALE, Role.TEACHER)
-  findAll(@Req() req: Request) {
-    return this.classesService.findAll(req.user as any);
+  @Roles(Role.DIRECTOR, Role.OPS, Role.SALE, Role.TEACHER)
+  findAll(@Req() req: AuthenticatedRequest) {
+    return this.classesService.findAll(req.user);
+  }
+
+  @Get(':id')
+  @Roles(Role.DIRECTOR, Role.OPS, Role.SALE, Role.TEACHER, Role.PARENT)
+  findOne(@Param('id', ParseMongoIdPipe) id: string) {
+    return this.classesService.findOne(id);
   }
 
   @Patch(':id')
-  @Roles(Role.DIRECTOR)
-  update(@Param('id') id: string, @Body() dto: UpdateClassDto) {
+  @Roles(Role.DIRECTOR, Role.OPS)
+  update(@Param('id', ParseMongoIdPipe) id: string, @Body() dto: UpdateClassDto) {
     return this.classesService.update(id, dto);
   }
 
   @Delete(':id')
   @Roles(Role.DIRECTOR)
-  remove(@Param('id') id: string) {
+  remove(@Param('id', ParseMongoIdPipe) id: string) {
     return this.classesService.remove(id);
   }
 
   @Post(':id/assign-students')
-  @Roles(Role.SALE)
+  @Roles(Role.DIRECTOR, Role.OPS, Role.SALE)
   assignStudents(
-    @Param('id') id: string,
+    @Param('id', ParseMongoIdPipe) id: string,
     @Body() dto: AssignStudentsDto,
-    @Req() req: Request,
+    @Req() req: AuthenticatedRequest,
   ) {
-    return this.classesService.assignStudentsBySale(id, dto, req.user as any);
+    return this.classesService.assignStudentsBySale(id, dto, req.user);
+  }
+
+  // ── CURRICULUM (Chương trình học) ──────────────────────────────────
+
+  /** Xem tiến độ chương trình học */
+  @Get(':id/curriculum')
+  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.PARENT)
+  getCurriculumProgress(@Param('id', ParseMongoIdPipe) id: string) {
+    return this.classesService.getCurriculumProgress(id);
+  }
+
+  /** Cập nhật toàn bộ chương trình học */
+  @Put(':id/curriculum')
+  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER)
+  updateCurriculum(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Body() dto: UpdateCurriculumDto,
+  ) {
+    return this.classesService.updateCurriculum(id, dto.curriculum);
+  }
+
+  /** Đánh dấu một mục chương trình đã hoàn thành */
+  @Post(':id/curriculum/:itemId/complete')
+  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER)
+  markCurriculumItemCompleted(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Param('itemId', ParseMongoIdPipe) itemId: string,
+    @Body() body: { sessionId?: string },
+  ) {
+    return this.classesService.markCurriculumItemCompleted(id, itemId, body.sessionId);
   }
 }

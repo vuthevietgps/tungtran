@@ -1,4 +1,5 @@
-import { IsInt, IsNotEmpty, IsOptional, IsString, Matches, Max, Min, IsMongoId } from 'class-validator';
+import { IsInt, IsNotEmpty, IsOptional, IsString, Matches, Max, Min, IsMongoId, IsArray, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class PaymentFrameDto {
   @IsInt()
@@ -36,7 +37,7 @@ export class PaymentFrameDto {
 
   @IsOptional()
   @IsString()
-  confirmStatus?: 'PENDING' | 'CONFIRMED';
+  confirmStatus?: 'PENDING' | 'CONFIRMED' | 'REJECTED';
 }
 
 export class CreateStudentDto {
@@ -53,6 +54,18 @@ export class CreateStudentDto {
   @Max(25)
   age!: number;
 
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(12)
+  studentBirthMonth?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(12)
+  parentBirthMonth?: number;
+
   @IsString()
   @IsNotEmpty()
   parentName!: string;
@@ -62,6 +75,7 @@ export class CreateStudentDto {
   parentPhone!: string;
 
   @IsString()
+  @IsNotEmpty()
   faceImage!: string;
 
   @IsOptional()
@@ -80,15 +94,12 @@ export class CreateStudentDto {
   @IsString()
   saleName?: string;
 
-  @IsOptional()
-  @IsString()
-  approvalStatus?: 'PENDING' | 'APPROVED' | 'REJECTED';
+  // approvalStatus and approvedBy removed — system-managed only via approve() endpoint
 
   @IsOptional()
-  @IsMongoId()
-  approvedBy?: string;
-
-  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PaymentFrameDto)
   payments?: PaymentFrameDto[];
 
 }

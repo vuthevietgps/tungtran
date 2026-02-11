@@ -1,5 +1,7 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
+import { HttpClient } from '@angular/common/http';
+import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
 
 export interface AuthPayload {
@@ -11,50 +13,64 @@ export interface AuthPayload {
 
 @Injectable({ providedIn: 'root' })
 export class AuthService {
-  private readonly storageKey = 'auth_token';
   private readonly router = inject(Router);
+  private readonly http = inject(HttpClient);
   userSignal = signal<AuthPayload | null>(null);
-
-  constructor() {
-    const token = this.getToken();
-    if (token) {
-      const payload = this.decode(token);
-      if (payload) this.userSignal.set(payload);
-    }
-  }
-
-  private decode(token: string): AuthPayload | null {
-    try {
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      return { sub: payload.sub, email: payload.email, role: payload.role, fullName: payload.fullName };
-    } catch {
-      return null;
-    }
-  }
-
-  getToken(): string | null {
-    return localStorage.getItem(this.storageKey);
-  }
+  private _restored = false;
 
   isLoggedIn(): boolean {
     return !!this.userSignal();
   }
 
-  async login(email: string, password: string): Promise<boolean> {
-    const res = await fetch(`${environment.apiBase}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
-    });
-    if (!res.ok) return false;
-    const data = await res.json();
-    localStorage.setItem(this.storageKey, data.access_token);
-    this.userSignal.set(data.user);
-    return true;
+  /** Restore session from httpOnly cookie on page load */
+  async restoreSession(): Promise<boolean> {
+    if (this._restored) return this.isLoggedIn();
+    this._restored = true;
+    try {
+      const data = await firstValueFrom(
+        this.http.get<AuthPayload & { _id: string }>(`${environment.apiBase}/users/me`, {
+          withCredentials: true,
+        }),
+      );
+      if (data?.email) {
+        this.userSignal.set({
+          sub: data._id,
+          email: data.email,
+          role: data.role,
+          fullName: data.fullName,
+        });
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
   }
 
-  logout() {
-    localStorage.removeItem(this.storageKey);
+  async login(email: string, password: string): Promise<boolean> {
+    try {
+      const data = await firstValueFrom(
+        this.http.post<{ user: AuthPayload }>(
+          `${environment.apiBase}/auth/login`,
+          { email, password },
+          { withCredentials: true },
+        ),
+      );
+      this.userSignal.set(data.user);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async logout() {
+    try {
+      await firstValueFrom(
+        this.http.post(`${environment.apiBase}/auth/logout`, {}, { withCredentials: true }),
+      );
+    } catch {
+      // ignore
+    }
     this.userSignal.set(null);
     this.router.navigate(['/login']);
   }

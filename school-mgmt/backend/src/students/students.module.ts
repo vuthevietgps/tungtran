@@ -5,7 +5,7 @@ import { StudentsController } from './students.controller';
 import { Student, StudentSchema } from './schemas/student.schema';
 import { Attendance, AttendanceSchema } from '../attendance/schemas/attendance.schema';
 import { Classroom, ClassroomSchema } from '../classes/schemas/class.schema';
-import { Order, OrderSchema } from '../orders/schemas/order.schema';
+import { Session, SessionSchema } from '../sessions/schemas/session.schema';
 
 @Module({
   imports: [
@@ -13,7 +13,7 @@ import { Order, OrderSchema } from '../orders/schemas/order.schema';
       { name: Student.name, schema: StudentSchema },
       { name: Attendance.name, schema: AttendanceSchema },
       { name: Classroom.name, schema: ClassroomSchema },
-      { name: Order.name, schema: OrderSchema },
+      { name: Session.name, schema: SessionSchema },
     ]),
   ],
   controllers: [StudentsController],

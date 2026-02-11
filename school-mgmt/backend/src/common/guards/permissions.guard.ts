@@ -12,7 +12,8 @@ export class PermissionsGuard implements CanActivate {
       context.getClass(),
     ]);
     if (!requiredPerms || requiredPerms.length === 0) return true;
-    // Placeholder: always allow for now. Implement real permission checks later.
-    return true;
+    // Deny by default — no permission system implemented yet.
+    // Any endpoint using @Permissions() will be blocked until the system is built.
+    return false;
   }
 }

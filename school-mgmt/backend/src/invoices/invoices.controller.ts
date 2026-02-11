@@ -16,12 +16,13 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { InvoicesService } from './invoices.service';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { UpdateInvoiceDto } from './dto/update-invoice.dto';
+import { ApproveInvoiceDto } from './dto/approve-invoice.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { Request } from 'express';
-import { UserDocument } from '../users/schemas/user.schema';
+import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '../common/interfaces/role.enum';
+import { ParseMongoIdPipe } from '../common/pipes/parse-mongo-id.pipe';
 
 @Controller('invoices')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -29,54 +30,77 @@ export class InvoicesController {
   constructor(private readonly invoicesService: InvoicesService) {}
 
   @Post()
-  @Roles(Role.DIRECTOR, Role.SALE)
-  create(@Body() createInvoiceDto: CreateInvoiceDto, @Req() req: Request) {
-    return this.invoicesService.create(createInvoiceDto, req.user as any);
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.SALE)
+  create(@Body() createInvoiceDto: CreateInvoiceDto, @Req() req: AuthenticatedRequest) {
+    return this.invoicesService.create(createInvoiceDto, req.user);
   }
 
   @Get()
-  @Roles(Role.DIRECTOR, Role.SALE)
-  findAll(@Req() req: Request) {
-    return this.invoicesService.findAll(req.user as any);
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.SALE)
+  findAll(@Req() req: AuthenticatedRequest) {
+    return this.invoicesService.findAll(req.user);
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.invoicesService.findOne(id);
+  /** Danh sách hóa đơn chờ duyệt (DIRECTOR / ACCOUNTING) */
+  @Get('pending')
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING)
+  findPendingApproval() {
+    return this.invoicesService.findPendingApproval();
   }
 
   @Get('student/:studentId')
-  getInvoicesByStudent(@Param('studentId') studentId: string) {
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.SALE)
+  getInvoicesByStudent(@Param('studentId', ParseMongoIdPipe) studentId: string) {
     return this.invoicesService.getInvoicesByStudent(studentId);
   }
 
   @Get('payments/all')
-  @Roles(Role.DIRECTOR, Role.MANAGER, Role.SALE)
+  @Roles(Role.DIRECTOR, Role.OPS, Role.SALE)
   getAllPaymentInvoices() {
     return this.invoicesService.getAllPaymentInvoices();
   }
 
+  @Get(':id')
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.SALE)
+  findOne(@Param('id', ParseMongoIdPipe) id: string) {
+    return this.invoicesService.findOne(id);
+  }
+
   @Post('payments/:studentId/:frameIndex/confirm')
-  @Roles(Role.DIRECTOR, Role.MANAGER)
+  @Roles(Role.DIRECTOR, Role.OPS)
   confirmPayment(
-    @Param('studentId') studentId: string,
+    @Param('studentId', ParseMongoIdPipe) studentId: string,
     @Param('frameIndex') frameIndex: string,
     @Body() body: { action: 'CONFIRM' | 'REJECT' }
   ) {
     return this.invoicesService.confirmPayment(studentId, parseInt(frameIndex), body.action);
   }
 
+  /** Duyệt hoặc từ chối hóa đơn (DIRECTOR / ACCOUNTING) */
+  @Post(':id/approve')
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING)
+  approveInvoice(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Body() dto: ApproveInvoiceDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.invoicesService.approveInvoice(id, dto, req.user);
+  }
+
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateInvoiceDto: UpdateInvoiceDto) {
-    return this.invoicesService.update(id, updateInvoiceDto);
+  @Roles(Role.DIRECTOR, Role.SALE, Role.ACCOUNTING)
+  update(@Param('id', ParseMongoIdPipe) id: string, @Body() updateInvoiceDto: UpdateInvoiceDto, @Req() req: AuthenticatedRequest) {
+    return this.invoicesService.update(id, updateInvoiceDto, req.user);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
+  @Roles(Role.DIRECTOR)
+  remove(@Param('id', ParseMongoIdPipe) id: string) {
     return this.invoicesService.remove(id);
   }
 
   @Post('receipt-upload')
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.SALE)
   @UseInterceptors(FileInterceptor('file'))
   async uploadReceipt(@UploadedFile() file: Express.Multer.File) {
     if (!file) {

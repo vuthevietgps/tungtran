@@ -1,12 +1,12 @@
-import { IsNotEmpty, IsString, IsDateString } from 'class-validator';
+import { IsNotEmpty, IsString, IsDateString, IsMongoId } from 'class-validator';
 
 export class GenerateAttendanceLinkDto {
   @IsNotEmpty()
-  @IsString()
+  @IsMongoId()
   classId!: string;
 
   @IsNotEmpty()
-  @IsString()
+  @IsMongoId()
   studentId!: string;
 
   @IsNotEmpty()

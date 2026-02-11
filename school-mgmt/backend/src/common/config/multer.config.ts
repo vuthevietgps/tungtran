@@ -29,5 +29,8 @@ const imageFileFilter = (req: any, file: Express.Multer.File, cb: any) => {
 
 export const multerConfig = { 
   storage, 
-  fileFilter: imageFileFilter 
+  fileFilter: imageFileFilter,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB
+  }
 };

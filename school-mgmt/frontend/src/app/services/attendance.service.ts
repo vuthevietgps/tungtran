@@ -1,6 +1,7 @@
-import { Injectable } from '@angular/core';
+import { HttpClient, HttpParams } from '@angular/common/http';
+import { Injectable, inject } from '@angular/core';
+import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
-import { AuthService } from './auth.service';
 
 export enum AttendanceStatus {
   PRESENT = 'PRESENT',    // Có mặt
@@ -15,6 +16,7 @@ export interface StudentAttendanceItem {
     fullName: string;
     age: number;
     parentName: string;
+    studentCode?: string;
   };
   attendance: {
     _id?: string;
@@ -23,6 +25,9 @@ export interface StudentAttendanceItem {
     date: string;
     status: AttendanceStatus | null;
     notes: string;
+    attendedAt?: string | null;
+    imageUrl?: string | null;
+    sessionId?: string | null;
   };
 }
 
@@ -49,20 +54,19 @@ export interface TeacherClassAssignment {
   }>;
 }
 
-export interface OrderClassStudentSummary {
-  studentId: string;
-  fullName: string;
-  studentCode: string;
-  age?: number;
-  parentName?: string;
-}
-
-export interface OrderClassSummary {
+export interface ClassWithStudents {
   classId: string;
   classCode: string;
   className: string;
   studentCount: number;
-  students: OrderClassStudentSummary[];
+  students: Array<{
+    studentId: string;
+    fullName: string;
+    studentCode: string;
+    age?: number;
+    parentName?: string;
+    parentPhone?: string;
+  }>;
 }
 
 export interface BulkAttendancePayload {
@@ -89,29 +93,31 @@ export interface AttendanceStatsResponse {
 
 @Injectable({ providedIn: 'root' })
 export class AttendanceService {
-  constructor(private auth: AuthService) {}
+  private http = inject(HttpClient);
 
-  private headers(json = false): HeadersInit {
-    const token = this.auth.getToken();
-    const headers: Record<string, string> = {};
-    if (json) headers['Content-Type'] = 'application/json';
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    return headers;
+  private buildParams(params: Record<string, any>): HttpParams {
+    let httpParams = new HttpParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        httpParams = httpParams.set(key, String(value));
+      }
+    });
+    return httpParams;
   }
 
   // Lấy danh sách điểm danh theo lớp và ngày
   async getAttendanceByClass(classId: string, date: string): Promise<AttendanceByClassResponse | null> {
     try {
-      const res = await fetch(`${environment.apiBase}/attendance/class/${classId}?date=${date}`, {
-        headers: this.headers()
-      });
-      
-      if (!res.ok) {
-        console.error('Failed to load attendance', await res.text());
-        return null;
-      }
-      
-      return res.json();
+      const res = await firstValueFrom(
+        this.http.get<AttendanceByClassResponse>(
+          `${environment.apiBase}/attendance/class/${classId}`,
+          {
+            params: this.buildParams({ date }),
+            withCredentials: true,
+          },
+        ),
+      );
+      return res;
     } catch (error) {
       console.error('Error loading attendance:', error);
       return null;
@@ -121,17 +127,13 @@ export class AttendanceService {
   // Điểm danh nhiều học sinh cùng lúc
   async bulkMarkAttendance(payload: BulkAttendancePayload): Promise<boolean> {
     try {
-      const res = await fetch(`${environment.apiBase}/attendance/bulk-mark`, {
-        method: 'POST',
-        headers: this.headers(true),
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        console.error('Failed to mark attendance', await res.text());
-        return false;
-      }
-
+      await firstValueFrom(
+        this.http.post(
+          `${environment.apiBase}/attendance/bulk-mark`,
+          payload,
+          { withCredentials: true },
+        ),
+      );
       return true;
     } catch (error) {
       console.error('Error marking attendance:', error);
@@ -142,23 +144,19 @@ export class AttendanceService {
   // Điểm danh một học sinh
   async markSingleAttendance(classId: string, studentId: string, date: string, status: AttendanceStatus, notes?: string): Promise<boolean> {
     try {
-      const res = await fetch(`${environment.apiBase}/attendance/mark`, {
-        method: 'POST',
-        headers: this.headers(true),
-        body: JSON.stringify({
-          classId,
-          studentId,
-          date,
-          status,
-          notes: notes || ''
-        }),
-      });
-
-      if (!res.ok) {
-        console.error('Failed to mark single attendance', await res.text());
-        return false;
-      }
-
+      await firstValueFrom(
+        this.http.post(
+          `${environment.apiBase}/attendance/mark`,
+          {
+            classId,
+            studentId,
+            date,
+            status,
+            notes: notes || '',
+          },
+          { withCredentials: true },
+        ),
+      );
       return true;
     } catch (error) {
       console.error('Error marking single attendance:', error);
@@ -168,36 +166,28 @@ export class AttendanceService {
 
   async getTeacherClasses(): Promise<TeacherClassAssignment[]> {
     try {
-      const res = await fetch(`${environment.apiBase}/attendance/teacher/classes`, {
-        headers: this.headers()
-      });
-
-      if (!res.ok) {
-        console.error('Failed to load teacher classes', await res.text());
-        return [];
-      }
-
-      return res.json();
+      const res = await firstValueFrom(
+        this.http.get<TeacherClassAssignment[]>(`${environment.apiBase}/attendance/teacher/classes`, {
+          withCredentials: true,
+        }),
+      );
+      return res;
     } catch (error) {
       console.error('Error loading teacher classes:', error);
       return [];
     }
   }
 
-  async getOrderClasses(): Promise<OrderClassSummary[]> {
+  async getClassesWithStudents(): Promise<ClassWithStudents[]> {
     try {
-      const res = await fetch(`${environment.apiBase}/attendance/order-classes`, {
-        headers: this.headers()
-      });
-
-      if (!res.ok) {
-        console.error('Failed to load order-based classes', await res.text());
-        return [];
-      }
-
-      return res.json();
+      const res = await firstValueFrom(
+        this.http.get<ClassWithStudents[]>(`${environment.apiBase}/attendance/classes-with-students`, {
+          withCredentials: true,
+        }),
+      );
+      return res;
     } catch (error) {
-      console.error('Error loading order-based classes:', error);
+      console.error('Error loading classes with students:', error);
       return [];
     }
   }
@@ -205,20 +195,16 @@ export class AttendanceService {
   // Cập nhật trạng thái điểm danh
   async updateAttendance(attendanceId: string, status: AttendanceStatus, notes?: string): Promise<boolean> {
     try {
-      const res = await fetch(`${environment.apiBase}/attendance/${attendanceId}`, {
-        method: 'PATCH',
-        headers: this.headers(true),
-        body: JSON.stringify({
-          status,
-          notes: notes || ''
-        }),
-      });
-
-      if (!res.ok) {
-        console.error('Failed to update attendance', await res.text());
-        return false;
-      }
-
+      await firstValueFrom(
+        this.http.patch(
+          `${environment.apiBase}/attendance/${attendanceId}`,
+          {
+            status,
+            notes: notes || '',
+          },
+          { withCredentials: true },
+        ),
+      );
       return true;
     } catch (error) {
       console.error('Error updating attendance:', error);
@@ -229,17 +215,13 @@ export class AttendanceService {
   // Lấy lịch sử điểm danh của học sinh
   async getStudentAttendanceHistory(studentId: string, classId?: string): Promise<any[]> {
     try {
-      const queryParams = classId ? `?classId=${classId}` : '';
-      const res = await fetch(`${environment.apiBase}/attendance/student/${studentId}${queryParams}`, {
-        headers: this.headers()
-      });
-      
-      if (!res.ok) {
-        console.error('Failed to load student attendance history', await res.text());
-        return [];
-      }
-      
-      return res.json();
+      const res = await firstValueFrom(
+        this.http.get<any[]>(`${environment.apiBase}/attendance/student/${studentId}`, {
+          params: this.buildParams({ classId }),
+          withCredentials: true,
+        }),
+      );
+      return res;
     } catch (error) {
       console.error('Error loading student attendance history:', error);
       return [];
@@ -249,16 +231,14 @@ export class AttendanceService {
   // Lấy thống kê điểm danh
   async getAttendanceStats(classId: string, startDate: string, endDate: string): Promise<AttendanceStatsResponse | null> {
     try {
-      const res = await fetch(`${environment.apiBase}/attendance/stats/${classId}?startDate=${startDate}&endDate=${endDate}`, {
-        headers: this.headers()
-      });
+      const res = await firstValueFrom(
+        this.http.get<AttendanceStatsResponse>(`${environment.apiBase}/attendance/stats/${classId}`, {
+          params: this.buildParams({ startDate, endDate }),
+          withCredentials: true,
+        }),
+      );
       
-      if (!res.ok) {
-        console.error('Failed to load attendance stats', await res.text());
-        return null;
-      }
-      
-      return res.json();
+      return res;
     } catch (error) {
       console.error('Error loading attendance stats:', error);
       return null;
@@ -303,45 +283,27 @@ export class AttendanceService {
   }
 
   // Tạo link điểm danh cho học sinh
-  async generateAttendanceLink(classId: string, studentId: string, date: string) {
-    const token = this.auth.getToken();
-    const response = await fetch(`${environment.apiBase}/attendance/generate-link`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify({ classId, studentId, date })
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || 'Không thể tạo link điểm danh');
-    }
-
-    return await response.json();
+  async generateAttendanceLink(
+    classId: string,
+    studentId: string,
+    date: string,
+  ): Promise<{ attendanceUrl: string; expiresAt: string }> {
+    return firstValueFrom(
+      this.http.post<{ attendanceUrl: string; expiresAt: string }>(
+        `${environment.apiBase}/attendance/generate-link`,
+        { classId, studentId, date },
+        { withCredentials: true },
+      ),
+    );
   }
 
   // Lấy báo cáo điểm danh tổng hợp
   async getAttendanceReport(startDate: string, endDate: string, classId?: string) {
-    const token = this.auth.getToken();
-    let url = `${environment.apiBase}/attendance/report?startDate=${startDate}&endDate=${endDate}`;
-    
-    if (classId) {
-      url += `&classId=${classId}`;
-    }
-
-    const response = await fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${token}`
-      }
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || 'Không thể tải báo cáo');
-    }
-
-    return await response.json();
+    return firstValueFrom(
+      this.http.get<any[]>(`${environment.apiBase}/attendance/report`, {
+        params: this.buildParams({ startDate, endDate, classId }),
+        withCredentials: true,
+      }),
+    );
   }
 }

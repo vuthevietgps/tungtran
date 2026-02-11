@@ -1,596 +1,528 @@
+import { Component, computed, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { Component, computed, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { OrderItem, OrderPayload, OrderService, OrderSessionEntry } from '../services/order.service';
-import { UserItem, UserService } from '../services/user.service';
-import { ClassItem, ClassService } from '../services/class.service';
-import { environment } from '../../environments/environment';
+import { ActivatedRoute } from '@angular/router';
+import { OrderService, OrderData, OrderPipeline } from '../services/order.service';
+import { ProductService, ProductItem } from '../services/product.service';
+import { LeadService, LeadItem } from '../services/lead.service';
+import { AuthService } from '../services/auth.service';
+import { Role } from '../models/role.enum';
+
+const STATUS_LABELS: Record<string, string> = {
+  DRAFT: 'Nháp', SUBMITTED: 'Chờ duyệt', APPROVED: 'Đã duyệt', REJECTED: 'Từ chối',
+  NEEDS_INFO: 'Cần bổ sung', COMPLETED: 'Hoàn tất', CANCELLED: 'Đã hủy',
+};
+const STATUS_COLORS: Record<string, string> = {
+  DRAFT: '#64748b', SUBMITTED: '#f59e0b', APPROVED: '#10b981', REJECTED: '#ef4444',
+  NEEDS_INFO: '#8b5cf6', COMPLETED: '#059669', CANCELLED: '#9ca3af',
+};
+const TYPE_LABELS: Record<string, string> = {
+  NEW_ENROLLMENT: 'Đăng ký mới', RENEWAL: 'Gia hạn', ADDITIONAL: 'Mua thêm', PACKAGE_CHANGE: 'Đổi gói',
+};
+const SOURCE_LABELS: Record<string, string> = {
+  FACEBOOK: 'Facebook', GOOGLE: 'Google', TIKTOK: 'TikTok', ZALO: 'Zalo',
+  WEBSITE: 'Website', REFERRAL: 'Giới thiệu', WALK_IN: 'Đến trực tiếp', OTHER: 'Khác',
+};
 
 @Component({
   selector: 'app-orders',
   standalone: true,
   imports: [CommonModule, FormsModule],
   template: `
-    <div class="orders-screen">
-      <header class="control-bar">
-        <div class="control-actions">
-          <button type="button" class="primary" (click)="startCreate()" [disabled]="isEditing()">+ Thêm đơn hàng</button>
-          <button type="button" class="ghost" (click)="reload()" [disabled]="isEditing()">Làm mới</button>
-          <button type="button" class="ghost" disabled title="Tính năng sắp ra mắt">Tải CSV</button>
-        </div>
-        <div class="control-stats">
-          <span class="badge badge-total">Tổng: {{ orders().length }}</span>
-          <span class="badge badge-active">Đang hiển thị: {{ filtered().length }}</span>
-        </div>
-      </header>
-
-      <section class="filters-panel">
-        <div class="filter">
-          <label>Từ khóa</label>
-          <input class="search-input" placeholder="Tìm học sinh, phụ huynh hoặc sale" [ngModel]="keyword()" (ngModelChange)="keyword.set($event)" />
-        </div>
-        <div class="filter">
-          <label>Giáo viên</label>
-          <select class="filter-select" [ngModel]="teacherFilter()" (ngModelChange)="teacherFilter.set($event)">
-            <option value="">Tất cả</option>
-            <option *ngFor="let teacher of teachers()" [value]="teacher._id">{{ teacher.fullName }}</option>
-          </select>
-        </div>
-        <div class="filter">
-          <label>Lớp học</label>
-          <select class="filter-select" [ngModel]="classFilter()" (ngModelChange)="classFilter.set($event)">
-            <option value="">Tất cả</option>
-            <option *ngFor="let classroom of classes()" [value]="classroom._id">{{ classroom.code }} - {{ classroom.name }}</option>
-          </select>
-        </div>
-        <div class="filter actions">
-          <button type="button" class="ghost" (click)="resetFilters()">Đặt lại</button>
-        </div>
-      </section>
-
-      <section class="table-area">
-        <ng-container *ngIf="filtered().length || isCreating(); else empty">
-          <div class="table-scroll">
-            <table class="orders-table">
-              <thead>
-                <tr>
-                  <th class="col-student">Tên HS</th>
-                  <th>Mã HS</th>
-                  <th>Level</th>
-                  <th>Tên PH</th>
-                  <th>Giáo viên</th>
-                  <th>Mã GV</th>
-                  <th>Email GV</th>
-                  <th>Lương GV</th>
-                  <th>Sale</th>
-                  <th>Email Sale</th>
-                  <th>Mã lớp</th>
-                  <th>Số hóa đơn</th>
-                  <th>Số buổi theo hóa đơn</th>
-                  <th>Tình trạng data</th>
-                  <th>Học thử/Buổi tặng</th>
-                  <th *ngFor="let col of sessionColumns">Buổi {{ col }}</th>
-                  <th>Hành động</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr *ngIf="isCreating()">
-                  <ng-container *ngTemplateOutlet="editRow; context: { order: null, isNew: true }"></ng-container>
-                </tr>
-                <tr *ngFor="let order of filtered()">
-                  <ng-container *ngIf="isEditing(order._id); else viewRow">
-                    <ng-container *ngTemplateOutlet="editRow; context: { order: order, isNew: false }"></ng-container>
-                  </ng-container>
-                  <ng-template #viewRow>
-                    <td class="cell student">{{ order.studentName }}</td>
-                    <td class="cell code">{{ order.studentCode }}</td>
-                    <td class="cell level">{{ order.level || '-' }}</td>
-                    <td class="cell parent">{{ order.parentName }}</td>
-                    <td class="cell teacher">{{ order.teacherName || '-' }}</td>
-                    <td class="cell teacher-code">{{ order.teacherCode || '-' }}</td>
-                    <td class="cell teacher-email">{{ order.teacherEmail || '-' }}</td>
-                    <td class="cell teacher-salary">{{ order.teacherSalary != null ? (order.teacherSalary | number:'1.0-0') : '-' }}</td>
-                    <td class="cell sale">{{ order.saleName || '-' }}</td>
-                    <td class="cell sale-email">{{ order.saleEmail || '-' }}</td>
-                    <td class="cell class-code">{{ order.classCode || '-' }}</td>
-                    <td class="cell invoice">{{ order.invoiceNumber || '-' }}</td>
-                    <td class="cell sessions">{{ order.sessionsByInvoice ?? '-' }}</td>
-                    <td class="cell data-status">{{ order.dataStatus || '-' }}</td>
-                    <td class="cell gift">{{ order.trialOrGift || '-' }}</td>
-                    <td *ngFor="let col of sessionColumns" class="cell session" [class.filled]="sessionCell(order, col)">
-                      <ng-container *ngIf="sessionCell(order, col) as session; else emptyCell">
-                        <div class="session-details">
-                          <div><span class="label">Học sinh:</span><span>{{ order.studentName }}</span></div>
-                          <div><span class="label">Lớp:</span><span>{{ order.classCode || '-' }}</span></div>
-                          <div><span class="label">Giáo viên:</span><span>{{ order.teacherName || '-' }}</span></div>
-                          <div><span class="label">Ngày:</span><span>{{ formatDate(session.date) || '-' }}</span></div>
-                          <div *ngIf="session.attendedAt"><span class="label">Điểm danh:</span><span>{{ formatDateTime(session.attendedAt) }}</span></div>
-                        </div>
-                        <div class="session-actions">
-                          <a *ngIf="session.lookupUrl" [href]="session.lookupUrl" target="_blank">Xem</a>
-                          <a *ngIf="session.imageUrl" [href]="imageUrl(session.imageUrl)" target="_blank">Ảnh</a>
-                        </div>
-                      </ng-container>
-                    </td>
-                    <td class="cell actions">
-                      <button class="ghost" (click)="startEdit(order)" [disabled]="isEditing()">Sửa</button>
-                      <button class="ghost danger" (click)="remove(order)" [disabled]="isEditing()">Xóa</button>
-                    </td>
-                  </ng-template>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </ng-container>
-      </section>
+  <header class="page-header">
+    <div>
+      <h2>Đơn đăng ký học</h2>
+      <p>Quản lý đơn đăng ký, gia hạn, mua thêm buổi.</p>
     </div>
+    <button class="primary" (click)="openCreate()">+ Tạo đơn</button>
+  </header>
 
-    <ng-template #empty>
-      <div class="empty-state">
-        <p>Chưa có đơn hàng.</p>
-        <button type="button" class="primary" (click)="startCreate()" [disabled]="isEditing()">+ Tạo đơn đầu tiên</button>
+  <!-- Pipeline -->
+  <section class="pipeline" *ngIf="pipeline()">
+    <div class="pipe-card" *ngFor="let s of pipelineStatuses" [style.border-left-color]="statusColor(s)">
+      <div class="pipe-count">{{getPipeCount(s)}}</div>
+      <div class="pipe-label">{{statusLabel(s)}}</div>
+      <div class="pipe-value" *ngIf="getPipeValue(s)">{{getPipeValue(s) | number}}đ</div>
+    </div>
+  </section>
+
+  <!-- Filters -->
+  <section class="filters">
+    <input placeholder="Tìm mã, tên, SĐT..." [(ngModel)]="keyword" />
+    <select [(ngModel)]="filterStatus">
+      <option value="">Tất cả</option>
+      <option *ngFor="let s of allStatuses" [value]="s">{{statusLabel(s)}}</option>
+    </select>
+    <select [(ngModel)]="filterType">
+      <option value="">Tất cả loại</option>
+      <option *ngFor="let t of allTypes" [value]="t.value">{{t.label}}</option>
+    </select>
+    <button (click)="reload()">Làm mới</button>
+  </section>
+
+  <!-- Table -->
+  <table class="data" *ngIf="filtered().length; else empty">
+    <thead><tr>
+      <th>Mã đơn</th><th>Loại</th><th>Học viên</th><th>PH</th>
+      <th>Tổng tiền</th><th>Trạng thái</th><th>Sale</th><th>Ngày tạo</th><th></th>
+    </tr></thead>
+    <tbody>
+      <tr *ngFor="let o of filtered()" class="clickable" (click)="openDetail(o)">
+        <td><code>{{o.orderCode}}</code></td>
+        <td>{{typeLabel(o.orderType)}}</td>
+        <td>{{o.studentName}}</td>
+        <td>{{o.parentName}}<br/><small>{{o.parentPhone}}</small></td>
+        <td class="right"><strong>{{o.finalAmount | number}}đ</strong></td>
+        <td>
+          <span class="badge" [style.background]="statusColor(o.status) + '20'" [style.color]="statusColor(o.status)">
+            {{statusLabel(o.status)}}
+          </span>
+        </td>
+        <td>{{o.saleName || '-'}}</td>
+        <td>{{o.createdAt | date:'dd/MM/yyyy'}}</td>
+        <td class="actions-cell" (click)="$event.stopPropagation()">
+          <button class="btn-sm" *ngIf="o.status === 'DRAFT' || o.status === 'NEEDS_INFO'" (click)="submitOrder(o)">Gửi duyệt</button>
+          <button class="btn-sm success" *ngIf="o.status === 'SUBMITTED' && canApprove" (click)="approveOrder(o)">Duyệt</button>
+          <button class="btn-sm danger" *ngIf="o.status === 'SUBMITTED' && canApprove" (click)="rejectOrder(o)">Từ chối</button>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <ng-template #empty><p class="empty-text">Không có đơn nào.</p></ng-template>
+
+  <!-- Modal Create -->
+  <div class="modal-backdrop" *ngIf="showModal()">
+    <div class="modal wide">
+      <h3>{{editingId ? 'Sửa đơn' : 'Tạo đơn đăng ký'}}</h3>
+      <form (ngSubmit)="submitForm()" #f="ngForm">
+        <div class="form-grid">
+          <label>Loại đơn <span class="req">*</span>
+            <select name="orderType" [(ngModel)]="form.orderType" required>
+              <option *ngFor="let t of allTypes" [value]="t.value">{{t.label}}</option>
+            </select>
+          </label>
+          <label>Nguồn
+            <select name="leadSource" [(ngModel)]="form.leadSource">
+              <option value="">--</option>
+              <option *ngFor="let s of allSources" [value]="s.value">{{s.label}}</option>
+            </select>
+          </label>
+        </div>
+
+        <h4>Thông tin phụ huynh</h4>
+        <div class="form-grid">
+          <label>Tên PH <span class="req">*</span>
+            <input name="parentName" [(ngModel)]="form.parentName" required />
+          </label>
+          <label>SĐT <span class="req">*</span>
+            <input name="parentPhone" [(ngModel)]="form.parentPhone" required />
+          </label>
+          <label>Email
+            <input name="parentEmail" [(ngModel)]="form.parentEmail" />
+          </label>
+        </div>
+
+        <h4>Thông tin học viên</h4>
+        <div class="form-grid">
+          <label>Tên HS <span class="req">*</span>
+            <input name="studentName" [(ngModel)]="form.studentName" required />
+          </label>
+          <label>Lớp
+            <input name="studentGrade" [(ngModel)]="form.studentGrade" />
+          </label>
+        </div>
+
+        <h4>Sản phẩm</h4>
+        <div *ngFor="let item of form.items; let i = index" class="item-row">
+          <div class="form-grid">
+            <label>Gói học <span class="req">*</span>
+              <select [(ngModel)]="item.productId" [name]="'productId_'+i" (ngModelChange)="onProductSelect(item, $event)">
+                <option value="">-- Chọn gói --</option>
+                <option *ngFor="let p of products()" [value]="p._id">{{p.name}} ({{p.code}})</option>
+              </select>
+            </label>
+            <label>Số buổi <span class="req">*</span>
+              <input type="number" [(ngModel)]="item.sessions" [name]="'sessions_'+i" min="1" (ngModelChange)="calcItemAmount(item)" />
+            </label>
+            <label>Giá/buổi (đ) <span class="req">*</span>
+              <input type="number" [(ngModel)]="item.pricePerSession" [name]="'price_'+i" min="0" (ngModelChange)="calcItemAmount(item)" />
+            </label>
+            <label>Thành tiền
+              <input type="number" [value]="item.amount" disabled />
+            </label>
+            <label>Hình thức
+              <select [(ngModel)]="item.teachingMode" [name]="'mode_'+i">
+                <option value="ONLINE">Online</option>
+                <option value="OFFLINE">Offline</option>
+              </select>
+            </label>
+            <label>
+              <button type="button" class="btn-sm danger" (click)="removeItem(i)" *ngIf="form.items.length > 1" style="margin-top:20px">Xóa</button>
+            </label>
+          </div>
+        </div>
+        <button type="button" class="btn-sm" (click)="addItem()" style="margin:8px 0">+ Thêm sản phẩm</button>
+
+        <h4>Tổng kết</h4>
+        <div class="form-grid">
+          <label>Tổng tiền
+            <input type="number" [value]="calcTotal()" disabled />
+          </label>
+          <label>Giảm giá (đ)
+            <input type="number" name="discountAmount" [(ngModel)]="form.discountAmount" min="0" />
+          </label>
+          <label>Lý do giảm
+            <input name="discountReason" [(ngModel)]="form.discountReason" />
+          </label>
+          <label>Thành tiền cuối
+            <input type="number" [value]="calcFinal()" disabled class="final-amount" />
+          </label>
+        </div>
+
+        <label class="full">Ghi chú tư vấn
+          <textarea name="consultationNotes" [(ngModel)]="form.consultationNotes" rows="2"></textarea>
+        </label>
+
+        <div class="form-actions">
+          <button type="submit" class="primary">{{editingId ? 'Cập nhật' : 'Tạo đơn (Nháp)'}}</button>
+          <button type="button" (click)="closeModal()">Hủy</button>
+        </div>
+        <p class="error" *ngIf="error()">{{error()}}</p>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal Detail -->
+  <div class="modal-backdrop" *ngIf="detailOrder()">
+    <div class="modal wide">
+      <div class="detail-header">
+        <h3>{{detailOrder()!.orderCode}}</h3>
+        <span class="badge lg" [style.background]="statusColor(detailOrder()!.status) + '20'" [style.color]="statusColor(detailOrder()!.status)">
+          {{statusLabel(detailOrder()!.status)}}
+        </span>
       </div>
-    </ng-template>
+      <div class="detail-grid">
+        <div><strong>Loại:</strong> {{typeLabel(detailOrder()!.orderType)}}</div>
+        <div><strong>Sale:</strong> {{detailOrder()!.saleName || '-'}}</div>
+        <div><strong>PH:</strong> {{detailOrder()!.parentName}} — {{detailOrder()!.parentPhone}}</div>
+        <div><strong>HS:</strong> {{detailOrder()!.studentName}} {{detailOrder()!.studentGrade ? '(Lớp ' + detailOrder()!.studentGrade + ')' : ''}}</div>
+        <div><strong>Tổng tiền:</strong> {{detailOrder()!.finalAmount | number}}đ</div>
+        <div><strong>Hoa hồng:</strong> {{detailOrder()!.saleCommission ? (detailOrder()!.saleCommission! | number) + 'đ' : '-'}}</div>
+        <div><strong>Ngày tạo:</strong> {{detailOrder()!.createdAt | date:'dd/MM/yyyy HH:mm'}}</div>
+        <div *ngIf="detailOrder()!.approvedAt"><strong>Ngày duyệt:</strong> {{detailOrder()!.approvedAt | date:'dd/MM/yyyy HH:mm'}}</div>
+      </div>
+      <div *ngIf="detailOrder()!.rejectionReason" class="reject-msg">Lý do từ chối: {{detailOrder()!.rejectionReason}}</div>
+      <div *ngIf="detailOrder()!.needsInfoReason" class="info-msg">Cần bổ sung: {{detailOrder()!.needsInfoReason}}</div>
+      <div *ngIf="detailOrder()!.consultationNotes"><strong>Ghi chú:</strong> {{detailOrder()!.consultationNotes}}</div>
 
-    <ng-template #emptyCell><span>-</span></ng-template>
+      <h4>Sản phẩm ({{detailOrder()!.items.length}})</h4>
+      <table class="data compact">
+        <thead><tr><th>Gói</th><th>Số buổi</th><th>Giá/buổi</th><th>Thành tiền</th><th>HT</th></tr></thead>
+        <tbody>
+          <tr *ngFor="let item of detailOrder()!.items">
+            <td>{{item.productName || item.productId}}</td>
+            <td class="center">{{item.sessions}}</td>
+            <td class="right">{{item.pricePerSession | number}}đ</td>
+            <td class="right">{{item.amount | number}}đ</td>
+            <td>{{item.teachingMode || '-'}}</td>
+          </tr>
+        </tbody>
+      </table>
+      <div *ngIf="detailOrder()!.discountAmount" class="discount-row">
+        Giảm giá: -{{detailOrder()!.discountAmount | number}}đ
+        <span *ngIf="detailOrder()!.discountReason"> ({{detailOrder()!.discountReason}})</span>
+      </div>
 
-    <ng-template #editRow let-order="order" let-isNew="isNew">
-      <td class="cell student editing">
-        <input placeholder="Tên học sinh" [(ngModel)]="form.studentName" [ngModelOptions]="{ standalone: true }" />
-      </td>
-      <td class="cell code editing">
-        <input [(ngModel)]="form.studentCode" [ngModelOptions]="{ standalone: true }" />
-      </td>
-      <td class="cell level editing">
-        <input [(ngModel)]="form.level" [ngModelOptions]="{ standalone: true }" />
-      </td>
-      <td class="cell parent editing">
-        <input [(ngModel)]="form.parentName" [ngModelOptions]="{ standalone: true }" />
-      </td>
-      <td class="cell teacher editing">
-        <select [(ngModel)]="form.teacherId" (ngModelChange)="handleTeacherChange($event)" [ngModelOptions]="{ standalone: true }">
-          <option value="">-- Chọn giáo viên --</option>
-          <option *ngFor="let teacher of teachers()" [value]="teacher._id">{{ teacher.fullName }}</option>
-          <option value="__new__">+ Thêm giáo viên mới</option>
-        </select>
-      </td>
-      <td class="cell teacher-code editing">
-        <input 
-          [(ngModel)]="form.teacherCode" 
-          [ngModelOptions]="{ standalone: true }" 
-          [disabled]="form.teacherId && form.teacherId !== '__new__'"
-        />
-      </td>
-      <td class="cell teacher-email editing">
-        <input 
-          [(ngModel)]="form.teacherEmail" 
-          [ngModelOptions]="{ standalone: true }" 
-          [disabled]="form.teacherId && form.teacherId !== '__new__'"
-        />
-      </td>
-      <td class="cell teacher-salary editing">
-        <input type="number" min="0" step="10000" [(ngModel)]="form.teacherSalary" [ngModelOptions]="{ standalone: true }" />
-      </td>
-      <td class="cell sale editing">
-        <select [(ngModel)]="form.saleId" (ngModelChange)="handleSaleChange($event)" [ngModelOptions]="{ standalone: true }">
-          <option value="">-- Chọn sale --</option>
-          <option *ngFor="let sale of sales()" [value]="sale._id">{{ sale.fullName }}</option>
-        </select>
-        <input class="compact" placeholder="Tên sale" [(ngModel)]="form.saleName" [ngModelOptions]="{ standalone: true }" />
-      </td>
-      <td class="cell sale-email editing">
-        <input [(ngModel)]="form.saleEmail" [ngModelOptions]="{ standalone: true }" />
-      </td>
-      <td class="cell class-code editing">
-        <select [(ngModel)]="form.classId" (ngModelChange)="handleClassChange($event)" [ngModelOptions]="{ standalone: true }">
-          <option value="">-- Chọn lớp học --</option>
-          <option *ngFor="let classroom of classes()" [value]="classroom._id">{{ classroom.name }} ({{ classroom.code }})</option>
-          <option value="__new__">+ Thêm mã lớp mới</option>
-        </select>
-        <input 
-          class="compact" 
-          placeholder="Mã lớp" 
-          [(ngModel)]="form.classCode" 
-          (ngModelChange)="handleClassCodeChange($event)"
-          [ngModelOptions]="{ standalone: true }" 
-          [disabled]="form.classId && form.classId !== '__new__'"
-        />
-      </td>
-      <td class="cell invoice editing">
-        <input [(ngModel)]="form.invoiceNumber" [ngModelOptions]="{ standalone: true }" />
-      </td>
-      <td class="cell sessions editing">
-        <input type="number" min="0" [(ngModel)]="form.sessionsByInvoice" [ngModelOptions]="{ standalone: true }" />
-      </td>
-      <td class="cell data-status editing">
-        <input [(ngModel)]="form.dataStatus" [ngModelOptions]="{ standalone: true }" />
-      </td>
-      <td class="cell gift editing">
-        <input [(ngModel)]="form.trialOrGift" [ngModelOptions]="{ standalone: true }" />
-      </td>
-      <td *ngFor="let col of sessionColumns" class="cell session editing" [class.filled]="sessionCell(order, col)">
-        <ng-container *ngIf="sessionCell(order, col) as session; else emptyCell">
-          <div class="session-details">
-            <div><span class="label">Học sinh:</span><span>{{ form.studentName || order?.studentName }}</span></div>
-            <div><span class="label">Lớp:</span><span>{{ form.classCode || order?.classCode || '-' }}</span></div>
-            <div><span class="label">Giáo viên:</span><span>{{ form.teacherName || order?.teacherName || '-' }}</span></div>
-            <div><span class="label">Ngày:</span><span>{{ formatDate(session.date) || '-' }}</span></div>
-            <div *ngIf="session.attendedAt"><span class="label">Điểm danh:</span><span>{{ formatDateTime(session.attendedAt) }}</span></div>
+      <!-- Enrollment Results -->
+      <div *ngIf="detailOrder()!.processedResults" class="enrollment-results">
+        <h4>Kết quả xử lý tự động</h4>
+        <div class="enrollment-grid">
+          <div *ngIf="detailOrder()!.processedResults.studentId" class="enrollment-item success-item">
+            <span class="enrollment-icon">👤</span>
+            <span>Học viên: <strong>{{detailOrder()!.processedResults.studentId}}</strong></span>
           </div>
-          <div class="session-actions">
-            <a *ngIf="session.lookupUrl" [href]="session.lookupUrl" target="_blank">Xem</a>
-            <a *ngIf="session.imageUrl" [href]="imageUrl(session.imageUrl)" target="_blank">Ảnh</a>
+          <div *ngIf="detailOrder()!.processedResults.invoiceIds?.length" class="enrollment-item success-item">
+            <span class="enrollment-icon">🧾</span>
+            <span>Hóa đơn tạo: <strong>{{detailOrder()!.processedResults.invoiceIds.length}}</strong></span>
           </div>
-        </ng-container>
-      </td>
-      <td class="cell actions editing">
-        <button class="primary" type="button" (click)="save()">{{ isNew ? 'Tạo đơn' : 'Lưu' }}</button>
-        <button class="ghost" type="button" (click)="cancel()">Hủy</button>
-        <div class="error" *ngIf="error()">{{ error() }}</div>
-      </td>
-    </ng-template>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <button class="primary" *ngIf="detailOrder()!.status === 'DRAFT' || detailOrder()!.status === 'NEEDS_INFO'" (click)="openEdit(detailOrder()!)">Sửa</button>
+        <button class="btn-sm" *ngIf="detailOrder()!.status === 'DRAFT' || detailOrder()!.status === 'NEEDS_INFO'" (click)="submitOrder(detailOrder()!)">Gửi duyệt</button>
+        <button class="btn-sm success" *ngIf="detailOrder()!.status === 'SUBMITTED' && canApprove" (click)="approveOrder(detailOrder()!)">Duyệt</button>
+        <button class="btn-sm danger" *ngIf="detailOrder()!.status === 'SUBMITTED' && canApprove" (click)="rejectOrder(detailOrder()!)">Từ chối</button>
+        <button class="btn-sm" *ngIf="!['COMPLETED','CANCELLED'].includes(detailOrder()!.status)" (click)="cancelOrder(detailOrder()!)">Hủy đơn</button>
+        <button type="button" (click)="detailOrder.set(null)">Đóng</button>
+      </div>
+    </div>
+  </div>
   `,
   styles: [`
-    :host { display:block; color:#e2e8f0; }
-    .orders-screen { display:flex; flex-direction:column; gap:18px; }
-    .control-bar { display:flex; justify-content:space-between; align-items:center; background:linear-gradient(135deg,#061432,#0b1f47); padding:18px 24px; border-radius:16px; box-shadow:0 18px 45px rgba(4,12,30,0.55); }
-    .control-actions { display:flex; gap:12px; align-items:center; }
-    .control-stats { display:flex; gap:10px; align-items:center; }
-    .badge { padding:6px 12px; border-radius:999px; font-size:13px; font-weight:600; letter-spacing:0.02em; }
-    .badge-total { background:rgba(37,99,235,0.18); color:#93c5fd; }
-    .badge-active { background:rgba(16,185,129,0.2); color:#6ee7b7; }
-    .filters-panel { display:grid; grid-template-columns: minmax(220px, 1fr) repeat(2, minmax(180px, 240px)) auto; gap:16px; align-items:end; background:linear-gradient(135deg,#081734,#102544); padding:16px 20px; border-radius:16px; box-shadow:0 14px 32px rgba(7,16,36,0.5); }
-    .filter { display:flex; flex-direction:column; gap:6px; color:#cbd5f5; font-size:13px; }
-    .filter.actions { align-items:flex-end; }
-    .search-input, .filter-select { width:100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(99,102,241,0.35); background:rgba(12,23,45,0.85); color:#f8fafc; }
-    .search-input:focus, .filter-select:focus { outline:none; border-color:#60a5fa; box-shadow:0 0 0 1px rgba(96,165,250,0.45); }
-    .ghost { border:1px solid rgba(148,163,184,0.45); background:rgba(8,17,33,0.6); color:#e2e8f0; padding:8px 16px; border-radius:10px; cursor:pointer; transition:background 0.15s ease, border-color 0.15s ease; }
-    .ghost:hover { background:rgba(37,99,235,0.15); border-color:rgba(96,165,250,0.6); }
-    .ghost.danger { border-color:rgba(248,113,113,0.6); color:#fca5a5; }
-    .ghost.danger:hover { background:rgba(248,113,113,0.12); }
-    .primary { background:linear-gradient(135deg,#2563eb,#4f46e5); color:#fff; border:none; padding:9px 18px; border-radius:12px; cursor:pointer; font-weight:600; letter-spacing:0.01em; box-shadow:0 10px 22px rgba(37,99,235,0.35); transition:transform 0.15s ease, box-shadow 0.15s ease; }
-    .primary:disabled { opacity:0.55; cursor:not-allowed; box-shadow:none; }
-    .primary:not(:disabled):hover { transform:translateY(-1px); box-shadow:0 16px 28px rgba(37,99,235,0.45); }
-    .table-area { background:linear-gradient(135deg,#051028,#0c1c3d); border-radius:16px; box-shadow:0 18px 40px rgba(4,15,35,0.6); padding:0; }
-    .table-scroll { width:100%; overflow:auto; border-radius:16px; }
-    .orders-table { width:100%; border-collapse:separate; border-spacing:0; min-width:1400px; color:#e2e8f0; }
-    .orders-table thead th { position:sticky; top:0; background:linear-gradient(135deg,#4338ca,#2563eb); color:#f8fafc; padding:14px 16px; text-transform:uppercase; font-size:12px; letter-spacing:0.08em; border-bottom:1px solid rgba(148,163,184,0.35); z-index:2; }
-    .orders-table tbody td { padding:14px 16px; border-bottom:1px solid rgba(148,163,184,0.18); background:rgba(9,18,38,0.92); font-size:14px; }
-    .orders-table tbody tr:nth-child(odd) td { background:rgba(12,24,46,0.9); }
-    .cell { min-width:150px; border-right:1px solid rgba(148,163,184,0.12); }
-    .orders-table tbody td:first-child { background:rgba(20,35,72,0.94); font-weight:600; }
-    .orders-table tbody td:nth-child(2) { background:rgba(27,40,84,0.94); font-weight:600; letter-spacing:0.04em; }
-    .orders-table tbody td:nth-child(8) { color:#facc15; font-weight:600; }
-    .cell.session { min-width:180px; background:rgba(24,44,82,0.9); }
-    .cell.session.filled { background:rgba(40,69,120,0.9); }
-    .session-details { display:flex; flex-direction:column; gap:6px; font-size:12px; color:#e2e8f0; }
-    .session-details .label { display:inline-block; min-width:68px; font-weight:600; color:#cbd5f5; margin-right:4px; }
-    .session-details span + span { font-weight:500; }
-    .session-actions { display:flex; gap:8px; margin-top:8px; }
-    .session-actions a { color:#93c5fd; text-decoration:none; font-weight:600; font-size:12px; }
-    .session-actions a:hover { text-decoration:underline; }
-    .cell.actions { display:flex; flex-direction:column; gap:8px; align-items:flex-end; background:rgba(12,30,58,0.95); }
-    .cell.editing { background:rgba(25,53,94,0.9); }
-    .cell.editing select,
-    .cell.editing input { background:rgba(5,18,40,0.95); color:#f1f5f9; border:1px solid rgba(96,165,250,0.4); border-radius:10px; padding:9px 12px; }
-    .cell.editing select:focus,
-    .cell.editing input:focus { outline:none; border-color:#60a5fa; box-shadow:0 0 0 1px rgba(96,165,250,0.45); }
-    .cell.editing .compact { padding:7px 12px; font-size:13px; }
-    .empty-state { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; padding:48px; border-radius:16px; background:linear-gradient(135deg,#061432,#0c1f42); box-shadow:0 18px 38px rgba(4,15,37,0.55); }
-    .empty-state p { margin:0; font-size:15px; }
-    .error { color:#fca5a5; font-size:12px; text-align:right; }
-  `],
+    .page-header { display:flex; justify-content:space-between; align-items:center; padding:16px; }
+    .pipeline { display:flex; gap:12px; padding:0 16px 16px; flex-wrap:wrap; }
+    .pipe-card { background:#fff; padding:12px 16px; border-radius:8px; border-left:4px solid #e2e8f0; min-width:100px; }
+    .pipe-count { font-size:24px; font-weight:700; }
+    .pipe-label { font-size:12px; color:#64748b; }
+    .pipe-value { font-size:11px; color:#059669; margin-top:2px; }
+    .filters { display:flex; gap:10px; padding:0 16px 12px; flex-wrap:wrap; }
+    input, select, textarea { padding:6px 8px; border:1px solid #cbd5e1; border-radius:4px; font-size:13px; }
+    textarea { width:100%; resize:vertical; }
+    .data { width:100%; border-collapse:collapse; background:#fff; font-size:13px; }
+    .data.compact { font-size:12px; margin:8px 0; }
+    th, td { padding:8px 10px; border:1px solid #e2e8f0; }
+    thead { background:#f1f5f9; font-size:12px; text-transform:uppercase; color:#64748b; }
+    .center { text-align:center; }
+    .right { text-align:right; }
+    .clickable { cursor:pointer; }
+    .clickable:hover { background:#f8fafc; }
+    .badge { font-size:11px; padding:2px 8px; border-radius:9px; font-weight:600; white-space:nowrap; }
+    .badge.lg { font-size:13px; padding:4px 12px; }
+    .primary { background:#2563eb; color:#fff; border:none; padding:8px 14px; border-radius:4px; cursor:pointer; font-weight:600; }
+    .btn-sm { padding:4px 10px; border:1px solid #cbd5e1; border-radius:4px; background:#fff; cursor:pointer; font-size:12px; margin-right:4px; }
+    .btn-sm.success { color:#059669; border-color:#6ee7b7; }
+    .btn-sm.danger { color:#dc2626; border-color:#fca5a5; }
+    .actions-cell { white-space:nowrap; }
+    .modal-backdrop { position:fixed; inset:0; background:rgba(15,23,42,.55); display:flex; align-items:center; justify-content:center; z-index:100; }
+    .modal { background:#fff; padding:24px; border-radius:8px; max-width:720px; width:95%; box-shadow:0 8px 24px rgba(15,23,42,.2); max-height:90vh; overflow-y:auto; }
+    .modal.wide { max-width:720px; }
+    .form-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
+    .form-grid label, .full { display:flex; flex-direction:column; gap:4px; font-size:13px; color:#334155; }
+    .full { margin-top:8px; }
+    .req { color:#dc2626; }
+    .form-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:16px; }
+    .error { color:#dc2626; font-size:13px; }
+    .empty-text { padding:16px; color:#64748b; }
+    .detail-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+    .detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:13px; margin-bottom:12px; }
+    h4 { margin:16px 0 8px; color:#334155; font-size:14px; }
+    .item-row { background:#f8fafc; padding:12px; border-radius:6px; margin-bottom:8px; }
+    .final-amount { font-weight:700; color:#059669; }
+    .reject-msg { background:#fef2f2; padding:8px 12px; border-radius:6px; color:#991b1b; margin:8px 0; font-size:13px; }
+    .info-msg { background:#fef3c7; padding:8px 12px; border-radius:6px; color:#92400e; margin:8px 0; font-size:13px; }
+    .discount-row { text-align:right; font-size:13px; color:#dc2626; margin:4px 0; }
+    .enrollment-results { background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:12px 16px; margin:12px 0; }
+    .enrollment-grid { display:flex; gap:16px; flex-wrap:wrap; }
+    .enrollment-item { display:flex; align-items:center; gap:6px; font-size:13px; padding:4px 8px; background:#fff; border-radius:4px; }
+    .enrollment-item.success-item { border:1px solid #86efac; }
+    .enrollment-icon { font-size:16px; }
+  `]
 })
-export class OrdersComponent {
-  private readonly NEW_ID = '__new__';
-
-  orders = signal<OrderItem[]>([]);
-  teachers = signal<UserItem[]>([]);
-  sales = signal<UserItem[]>([]);
-  classes = signal<ClassItem[]>([]);
-  keyword = signal('');
-  teacherFilter = signal('');
-  classFilter = signal('');
+export class OrdersComponent implements OnInit {
+  items = signal<OrderData[]>([]);
+  pipeline = signal<OrderPipeline | null>(null);
+  products = signal<ProductItem[]>([]);
+  showModal = signal(false);
+  detailOrder = signal<OrderData | null>(null);
   error = signal('');
-  sessionColumns = [1, 2, 3, 4, 5];
-  form: OrderFormState = this.blankForm();
   editingId: string | null = null;
 
-  filtered = computed(() => {
-    const kw = this.keyword().trim().toLowerCase();
-    const teacherFilter = this.teacherFilter();
-    const classFilter = this.classFilter();
-    return this.orders()
-      .filter((order) => {
-        if (teacherFilter && order.teacherId !== teacherFilter) return false;
-        if (classFilter && order.classId !== classFilter) return false;
-        if (!kw) return true;
-        return (
-          order.studentName.toLowerCase().includes(kw) ||
-          order.studentCode.toLowerCase().includes(kw) ||
-          (order.parentName || '').toLowerCase().includes(kw) ||
-          (order.saleName || '').toLowerCase().includes(kw)
-        );
-      })
-      .sort((a, b) => {
-        const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return bTime - aTime;
-      });
-  });
+  keyword = '';
+  filterStatus = '';
+  filterType = '';
+
+  canApprove = false;
+
+  form: any = this.emptyForm();
+
+  pipelineStatuses = ['DRAFT', 'SUBMITTED', 'APPROVED', 'COMPLETED'];
+  allStatuses = Object.keys(STATUS_LABELS);
+  allTypes = Object.entries(TYPE_LABELS).map(([value, label]) => ({ value, label }));
+  allSources = Object.entries(SOURCE_LABELS).map(([value, label]) => ({ value, label }));
 
   constructor(
     private orderService: OrderService,
-    private userService: UserService,
-    private classService: ClassService,
-  ) {
-    this.loadReferenceData();
+    private productService: ProductService,
+    private leadService: LeadService,
+    private auth: AuthService,
+    private route: ActivatedRoute,
+  ) {}
+
+  ngOnInit() {
+    const role = this.auth.userSignal()?.role;
+    this.canApprove = role === Role.DIRECTOR || role === Role.OPS;
+    this.reload();
+
+    // Check if navigated from lead conversion
+    this.route.queryParams.subscribe(async params => {
+      if (params['fromLead']) {
+        const lead = await this.leadService.getOne(params['fromLead']);
+        if (lead) {
+          this.openCreate();
+          this.form.parentName = lead.parentName;
+          this.form.parentPhone = lead.parentPhone;
+          this.form.parentEmail = lead.parentEmail || '';
+          this.form.studentName = lead.studentName || '';
+          this.form.studentGrade = lead.studentGrade || '';
+          this.form.leadId = lead._id;
+          this.form.leadSource = lead.source;
+        }
+      }
+    });
+  }
+
+  statusLabel(s: string) { return STATUS_LABELS[s] || s; }
+  statusColor(s: string) { return STATUS_COLORS[s] || '#64748b'; }
+  typeLabel(s: string) { return TYPE_LABELS[s] || s; }
+
+  getPipeCount(s: string): number {
+    const p = this.pipeline();
+    return p && p[s] ? p[s].count : 0;
+  }
+  getPipeValue(s: string): number {
+    const p = this.pipeline();
+    return p && p[s] ? p[s].totalValue : 0;
+  }
+
+  emptyForm(): any {
+    return {
+      orderType: 'NEW_ENROLLMENT', parentName: '', parentPhone: '', parentEmail: '',
+      studentName: '', studentGrade: '', leadSource: '', leadId: '',
+      items: [this.emptyItem()],
+      discountAmount: 0, discountReason: '', consultationNotes: '',
+    };
+  }
+
+  emptyItem() {
+    return { productId: '', productName: '', sessions: 24, sessionDuration: 90, pricePerSession: 0, amount: 0, teachingMode: 'ONLINE', notes: '' };
+  }
+
+  filtered = computed(() => {
+    let list = this.items();
+    const kw = this.keyword.trim().toLowerCase();
+    if (kw) list = list.filter(o =>
+      o.orderCode.toLowerCase().includes(kw) || o.studentName.toLowerCase().includes(kw) ||
+      o.parentName.toLowerCase().includes(kw) || o.parentPhone.includes(kw));
+    if (this.filterStatus) list = list.filter(o => o.status === this.filterStatus);
+    if (this.filterType) list = list.filter(o => o.orderType === this.filterType);
+    return list;
+  });
+
+  async reload() {
+    const [items, pipeline, products] = await Promise.all([
+      this.orderService.list(),
+      this.orderService.getPipeline(),
+      this.productService.list(),
+    ]);
+    this.items.set(items);
+    this.pipeline.set(pipeline);
+    this.products.set(products);
+  }
+
+  onProductSelect(item: any, productId: string) {
+    const product = this.products().find(p => p._id === productId);
+    if (product) {
+      item.productName = product.name;
+      item.sessions = product.defaultSessions || 24;
+      item.sessionDuration = product.defaultSessionDuration || 90;
+      item.pricePerSession = product.pricePerSession || 0;
+      this.calcItemAmount(item);
+    }
+  }
+
+  calcItemAmount(item: any) {
+    item.amount = (item.sessions || 0) * (item.pricePerSession || 0);
+  }
+
+  calcTotal() {
+    return (this.form.items || []).reduce((s: number, i: any) => s + (i.amount || 0), 0);
+  }
+
+  calcFinal() {
+    return this.calcTotal() - (this.form.discountAmount || 0);
+  }
+
+  addItem() { this.form.items.push(this.emptyItem()); }
+  removeItem(i: number) { this.form.items.splice(i, 1); }
+
+  openCreate() {
+    this.editingId = null;
+    this.form = this.emptyForm();
+    this.error.set('');
+    this.showModal.set(true);
+  }
+
+  openEdit(o: OrderData) {
+    this.editingId = o._id;
+    this.form = { ...o, items: o.items.map((i: any) => ({ ...i })) };
+    this.error.set('');
+    this.detailOrder.set(null);
+    this.showModal.set(true);
+  }
+
+  closeModal() { this.showModal.set(false); this.editingId = null; }
+
+  openDetail(o: OrderData) { this.detailOrder.set(o); }
+
+  async submitForm() {
+    const payload = {
+      ...this.form,
+      totalAmount: this.calcTotal(),
+      finalAmount: this.calcFinal(),
+    };
+
+    if (this.editingId) {
+      const res = await this.orderService.update(this.editingId, payload);
+      if (!res.ok) { this.error.set(res.message || 'Lỗi'); return; }
+    } else {
+      const res = await this.orderService.create(payload);
+      if (!res.ok) { this.error.set(res.message || 'Lỗi'); return; }
+    }
+    this.closeModal();
     this.reload();
   }
 
-  async loadReferenceData() {
-    const [teachers, sales, classes] = await Promise.all([
-      this.userService.listTeachers(),
-      this.userService.listSales(),
-      this.classService.list(),
-    ]);
-    this.teachers.set(teachers);
-    this.sales.set(sales);
-    this.classes.set(classes);
+  async submitOrder(o: OrderData) {
+    if (!confirm(`Gửi duyệt đơn ${o.orderCode}?`)) return;
+    const res = await this.orderService.submit(o._id);
+    if (!res.ok) { alert(res.message); return; }
+    this.detailOrder.set(null);
+    this.reload();
   }
 
-  async reload() {
-    const data = await this.orderService.list();
-    this.orders.set(data);
-  }
+  async approveOrder(o: OrderData) {
+    if (!confirm(`Duyệt đơn ${o.orderCode} — ${o.studentName}?\n\nHệ thống sẽ tự động:\n• Tạo hồ sơ học viên\n• Tạo hóa đơn học phí\n\nXác nhận duyệt?`)) return;
+    const res = await this.orderService.approve(o._id);
+    if (!res.ok) { alert(res.message); return; }
 
-  resetFilters() {
-    this.keyword.set('');
-    this.teacherFilter.set('');
-    this.classFilter.set('');
-  }
-
-  startCreate() {
-    if (this.isEditing()) return;
-    this.editingId = this.NEW_ID;
-    this.form = this.blankForm();
-    this.error.set('');
-  }
-
-  startEdit(order: OrderItem) {
-    if (this.isEditing()) return;
-    this.editingId = order._id;
-    this.form = {
-      studentName: order.studentName,
-      studentCode: order.studentCode,
-      level: order.level || '',
-      parentName: order.parentName,
-      teacherId: order.teacherId || '',
-      teacherName: order.teacherName || '',
-      teacherEmail: order.teacherEmail || '',
-      teacherCode: order.teacherCode || '',
-      teacherSalary: order.teacherSalary != null ? String(order.teacherSalary) : '',
-      saleId: order.saleId || '',
-      saleName: order.saleName || '',
-      saleEmail: order.saleEmail || '',
-      classId: order.classId || '',
-      classCode: order.classCode || '',
-      invoiceNumber: order.invoiceNumber || '',
-      sessionsByInvoice: order.sessionsByInvoice != null ? String(order.sessionsByInvoice) : '',
-      dataStatus: order.dataStatus || '',
-      trialOrGift: order.trialOrGift || '',
-    };
-    this.error.set('');
-  }
-
-  cancel() {
-    this.editingId = null;
-    this.form = this.blankForm();
-    this.error.set('');
-  }
-
-  async remove(order: OrderItem) {
-    if (this.isEditing()) return;
-    if (!confirm(`Xóa đơn hàng của học sinh ${order.studentName}?`)) return;
-    const result = await this.orderService.remove(order._id);
-    if (!result.ok) {
-      alert(result.message || 'Không thể xóa đơn hàng');
-      return;
-    }
-    await this.reload();
-  }
-
-  async save() {
-    if (!this.editingId) return;
-    const payload: OrderPayload = {
-      studentName: this.form.studentName.trim(),
-      studentCode: this.form.studentCode.trim(),
-      level: this.form.level.trim() || undefined,
-      parentName: this.form.parentName.trim(),
-      teacherId: this.form.teacherId || undefined,
-      teacherName: this.form.teacherName.trim() || undefined,
-      teacherEmail: this.form.teacherEmail.trim() || undefined,
-      teacherCode: this.form.teacherCode.trim() || undefined,
-      teacherSalary: this.form.teacherSalary ? Number(this.form.teacherSalary) : undefined,
-      saleId: this.form.saleId || undefined,
-      saleName: this.form.saleName.trim() || undefined,
-      saleEmail: this.form.saleEmail.trim() || undefined,
-      classId: this.form.classId || undefined,
-      classCode: this.form.classCode.trim() || undefined,
-      invoiceNumber: this.form.invoiceNumber.trim() || undefined,
-      sessionsByInvoice: this.form.sessionsByInvoice ? Number(this.form.sessionsByInvoice) : undefined,
-      dataStatus: this.form.dataStatus.trim() || undefined,
-      trialOrGift: this.form.trialOrGift.trim() || undefined,
-    };
-
-    if (!payload.studentName || !payload.studentCode || !payload.parentName) {
-      this.error.set('Vui lòng nhập tên học sinh, mã học sinh và tên phụ huynh.');
-      return;
+    // Hiển thị kết quả enrollment
+    if (res.data?.enrollment) {
+      const e = res.data.enrollment;
+      if (e.success) {
+        alert(
+          `✅ Đơn ${o.orderCode} đã duyệt & xử lý thành công!\n\n` +
+          `📋 Mã học viên: ${e.studentCode}\n` +
+          `🧾 Số hóa đơn tạo: ${e.invoiceIds?.length || 0}\n\n` +
+          `Hóa đơn đang chờ duyệt thanh toán trong mục Hóa đơn.`
+        );
+      } else {
+        alert(
+          `⚠️ Đơn ${o.orderCode} đã duyệt nhưng có lỗi khi xử lý tự động:\n\n` +
+          (e.errors || []).join('\n') +
+          `\n\nVui lòng kiểm tra và xử lý thủ công.`
+        );
+      }
     }
 
-    const isCreate = this.isCreating();
-    const result = isCreate
-      ? await this.orderService.create(payload)
-      : await this.orderService.update(this.editingId, payload);
-
-    if (!result.ok) {
-      this.error.set(result.message || 'Không thể lưu đơn hàng');
-      return;
-    }
-
-    await this.reload();
-    this.cancel();
+    this.detailOrder.set(null);
+    this.reload();
   }
 
-  handleTeacherChange(teacherId: string) {
-    if (!teacherId) {
-      this.form.teacherName = '';
-      this.form.teacherEmail = '';
-      this.form.teacherCode = '';
-      return;
-    }
-    
-    if (teacherId === '__new__') {
-      // Enable manual input for new teacher
-      this.form.teacherName = '';
-      this.form.teacherEmail = '';
-      this.form.teacherCode = '';
-      return;
-    }
-    
-    const teacher = this.teachers().find((t) => t._id === teacherId);
-    if (!teacher) return;
-    this.form.teacherName = teacher.fullName;
-    this.form.teacherEmail = teacher.email;
-    this.form.teacherCode = teacher.email.split('@')[0] || '';
+  async rejectOrder(o: OrderData) {
+    const reason = prompt('Lý do từ chối:');
+    if (!reason) return;
+    const res = await this.orderService.reject(o._id, reason);
+    if (!res.ok) { alert(res.message); return; }
+    this.detailOrder.set(null);
+    this.reload();
   }
 
-  handleSaleChange(saleId: string) {
-    if (!saleId) {
-      this.form.saleName = '';
-      this.form.saleEmail = '';
-      return;
-    }
-    const sale = this.sales().find((s) => s._id === saleId);
-    if (!sale) return;
-    this.form.saleName = sale.fullName;
-    this.form.saleEmail = sale.email;
+  async cancelOrder(o: OrderData) {
+    if (!confirm(`Hủy đơn ${o.orderCode}?`)) return;
+    const res = await this.orderService.cancel(o._id);
+    if (!res.ok) { alert(res.message); return; }
+    this.detailOrder.set(null);
+    this.reload();
   }
-
-  handleClassChange(classId: string) {
-    if (!classId) {
-      this.form.classCode = '';
-      return;
-    }
-    
-    if (classId === '__new__') {
-      // Enable manual input for new class
-      this.form.classCode = '';
-      return;
-    }
-    
-    const classroom = this.classes().find((c) => c._id === classId);
-    if (!classroom) return;
-    this.form.classCode = classroom.code;
-  }
-
-  handleClassCodeChange(classCode: string) {
-    // When user types class code, try to find existing class
-    if (!classCode) {
-      this.form.classId = '';
-      return;
-    }
-    
-    const existingClass = this.classes().find(c => 
-      c.code.toLowerCase() === classCode.toLowerCase()
-    );
-    
-    if (existingClass) {
-      this.form.classId = existingClass._id;
-    } else {
-      // Mark as new class
-      this.form.classId = '__new__';
-    }
-  }
-
-  sessionCell(order: OrderItem | null, sessionIndex: number): OrderSessionEntry | null {
-    if (!order) return null;
-    return order.sessions.find((s) => s.sessionIndex === sessionIndex) || null;
-  }
-
-  formatDate(value?: string): string {
-    if (!value) return '';
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return value;
-    return date.toLocaleDateString('vi-VN');
-  }
-
-  formatDateTime(value?: string): string {
-    if (!value) return '';
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return value;
-    return date.toLocaleString('vi-VN');
-  }
-
-  imageUrl(path?: string): string {
-    if (!path) return '';
-    if (path.startsWith('http')) return path;
-    const base = environment.apiBase.replace(/\/$/, '');
-    const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-    return `${base}${normalizedPath}`;
-  }
-
-  isEditing(id?: string): boolean {
-    if (!this.editingId) return false;
-    if (!id) return true;
-    return this.editingId === id;
-  }
-
-  isCreating(): boolean {
-    return this.editingId === this.NEW_ID;
-  }
-
-  private blankForm(): OrderFormState {
-    return {
-      studentName: '',
-      studentCode: '',
-      level: '',
-      parentName: '',
-      teacherId: '',
-      teacherName: '',
-      teacherEmail: '',
-      teacherCode: '',
-      teacherSalary: '',
-      saleId: '',
-      saleName: '',
-      saleEmail: '',
-      classId: '',
-      classCode: '',
-      invoiceNumber: '',
-      sessionsByInvoice: '',
-      dataStatus: '',
-      trialOrGift: '',
-    };
-  }
-}
-
-interface OrderFormState {
-  studentName: string;
-  studentCode: string;
-  level: string;
-  parentName: string;
-  teacherId: string;
-  teacherName: string;
-  teacherEmail: string;
-  teacherCode: string;
-  teacherSalary: string;
-  saleId: string;
-  saleName: string;
-  saleEmail: string;
-  classId: string;
-  classCode: string;
-  invoiceNumber: string;
-  sessionsByInvoice: string;
-  dataStatus: string;
-  trialOrGift: string;
 }

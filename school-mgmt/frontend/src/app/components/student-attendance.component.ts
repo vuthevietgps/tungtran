@@ -1,6 +1,8 @@
 import { Component, OnInit, signal, ViewChild, ElementRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute } from '@angular/router';
+import { HttpClient } from '@angular/common/http';
+import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
 
 interface AttendanceInfo {
@@ -318,7 +320,7 @@ export class StudentAttendanceComponent implements OnInit {
   private token = '';
   private stream: MediaStream | null = null;
 
-  constructor(private route: ActivatedRoute) {}
+  constructor(private route: ActivatedRoute, private http: HttpClient) {}
 
   async ngOnInit() {
     this.token = this.route.snapshot.paramMap.get('token') || '';
@@ -334,18 +336,13 @@ export class StudentAttendanceComponent implements OnInit {
 
   async loadAttendanceInfo() {
     try {
-      const response = await fetch(`${environment.apiBase}/public/attendance/token/${this.token}`);
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Không thể tải thông tin điểm danh');
-      }
-
-      const data = await response.json();
+      const data = await firstValueFrom(
+        this.http.get<AttendanceInfo>(`${environment.apiBase}/public/attendance/token/${this.token}`),
+      );
       this.attendanceInfo.set(data);
       this.loading.set(false);
     } catch (error: any) {
-      this.error.set(error.message || 'Có lỗi xảy ra khi tải thông tin');
+      this.error.set(error?.error?.message || error?.message || 'Có lỗi xảy ra khi tải thông tin');
       this.loading.set(false);
     }
   }
@@ -399,27 +396,16 @@ export class StudentAttendanceComponent implements OnInit {
 
   async submitAttendance(imageBase64: string) {
     try {
-      const response = await fetch(`${environment.apiBase}/public/attendance/submit`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+      await firstValueFrom(
+        this.http.post(`${environment.apiBase}/public/attendance/submit`, {
           token: this.token,
-          imageBase64
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Không thể gửi điểm danh');
-      }
-
-      const data = await response.json();
+          imageBase64,
+        }),
+      );
       this.submitted.set(true);
       this.submittedAt.set(new Date());
     } catch (error: any) {
-      this.error.set(error.message || 'Có lỗi xảy ra khi gửi điểm danh');
+      this.error.set(error?.error?.message || error?.message || 'Có lỗi xảy ra khi gửi điểm danh');
       this.capturedImage.set(''); // Reset to allow retry
       this.cameraStarted.set(false);
     }

@@ -1,130 +1,208 @@
-import { Injectable } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Injectable, inject } from '@angular/core';
+import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
-import { AuthService } from './auth.service';
-
-export interface OrderSessionEntry {
-  sessionIndex: number;
-  date?: string;
-  classCode?: string;
-  studentCode?: string;
-  lookupUrl?: string;
-  attendanceId?: string;
-  attendedAt?: string;
-  imageUrl?: string;
-}
 
 export interface OrderItem {
+  productId: string;
+  productName?: string;
+  sessions: number;
+  sessionDuration: number;
+  pricePerSession: number;
+  amount: number;
+  teachingMode?: string;
+  preferredSchedule?: string;
+  preferredTeacherId?: string;
+  notes?: string;
+}
+
+export interface OrderData {
   _id: string;
-  studentId?: string;
-  studentName: string;
-  studentCode: string;
-  level?: string;
+  orderCode: string;
+  orderType: string;
+  status: string;
   parentName: string;
-  teacherId?: string;
-  teacherName?: string;
-  teacherEmail?: string;
-  teacherCode?: string;
-  teacherSalary?: number;
-  saleId?: string;
+  parentPhone: string;
+  parentEmail?: string;
+  parentUserId?: string;
+  studentName: string;
+  studentDob?: string;
+  studentGrade?: string;
+  existingStudentId?: string;
+  items: OrderItem[];
+  totalAmount: number;
+  discountAmount?: number;
+  discountReason?: string;
+  finalAmount: number;
+  paymentPlan?: string;
+  saleId: string;
   saleName?: string;
-  saleEmail?: string;
-  classId?: string;
-  classCode?: string;
-  invoiceNumber?: string;
-  sessionsByInvoice?: number;
-  dataStatus?: string;
-  trialOrGift?: string;
-  createdAt: string;
-  updatedAt: string;
-  sessions: OrderSessionEntry[];
+  saleCommission?: number;
+  leadSource?: string;
+  leadId?: string;
+  consultationNotes?: string;
+  processedResults?: any;
+  approvedBy?: string;
+  approvedAt?: string;
+  rejectionReason?: string;
+  needsInfoReason?: string;
+  createdAt?: string;
 }
 
-export interface OrderPayload {
+export interface EnrollmentResult {
+  success: boolean;
   studentId?: string;
-  studentName: string;
-  studentCode: string;
-  level?: string;
-  parentName: string;
-  teacherId?: string;
-  teacherName?: string;
-  teacherEmail?: string;
-  teacherCode?: string;
-  teacherSalary?: number;
-  saleId?: string;
-  saleName?: string;
-  saleEmail?: string;
-  classId?: string;
-  classCode?: string;
-  invoiceNumber?: string;
-  sessionsByInvoice?: number;
-  dataStatus?: string;
-  trialOrGift?: string;
+  studentCode?: string;
+  invoiceIds?: string[];
+  classIds?: string[];
+  errors?: string[];
 }
 
-export interface OrderMutationResult {
-  ok: boolean;
-  message?: string;
+export interface ApproveResponse {
+  order: OrderData;
+  enrollment: EnrollmentResult;
+}
+
+export interface OrderPipeline {
+  [status: string]: { count: number; totalValue: number };
+}
+
+export interface OrderStats {
+  total: number;
+  approved: number;
+  conversionRate: number;
+  totalRevenue: number;
+  totalCommission: number;
+  thisMonth: { count: number; revenue: number };
+  bySale: { saleId: string; saleName: string; total: number; approved: number; conversionRate: number; revenue: number }[];
+  byType: { _id: string; count: number }[];
+  bySource: { _id: string; count: number }[];
+  pendingOrders: number;
+  pendingValue: number;
 }
 
 @Injectable({ providedIn: 'root' })
 export class OrderService {
-  constructor(private auth: AuthService) {}
+  private http = inject(HttpClient);
+  private base = `${environment.apiBase}/orders`;
 
-  private authHeaders(json = false): Record<string, string> {
-    const token = this.auth.getToken();
-    const headers: Record<string, string> = {};
-    if (json) headers['Content-Type'] = 'application/json';
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    return headers;
-  }
-
-  async list(): Promise<OrderItem[]> {
-    const res = await fetch(`${environment.apiBase}/orders`, { headers: this.authHeaders() });
-    if (!res.ok) {
-      console.error('Failed to load orders', await res.text());
-      return [];
-    }
-    return res.json();
-  }
-
-  async create(payload: OrderPayload): Promise<OrderMutationResult> {
-    const res = await fetch(`${environment.apiBase}/orders`, {
-      method: 'POST',
-      headers: this.authHeaders(true),
-      body: JSON.stringify(payload),
-    });
-    if (res.ok) return { ok: true };
-    return this.fail(res);
-  }
-
-  async update(id: string, payload: Partial<OrderPayload>): Promise<OrderMutationResult> {
-    const res = await fetch(`${environment.apiBase}/orders/${id}`, {
-      method: 'PATCH',
-      headers: this.authHeaders(true),
-      body: JSON.stringify(payload),
-    });
-    if (res.ok) return { ok: true };
-    return this.fail(res);
-  }
-
-  async remove(id: string): Promise<OrderMutationResult> {
-    const res = await fetch(`${environment.apiBase}/orders/${id}`, {
-      method: 'DELETE',
-      headers: this.authHeaders(),
-    });
-    if (res.ok) return { ok: true };
-    return this.fail(res);
-  }
-
-  private async fail(res: Response, fallback = 'Không thể thực hiện thao tác'): Promise<OrderMutationResult> {
-    let message = fallback;
+  async list(params?: Record<string, string>): Promise<OrderData[]> {
     try {
-      const data = await res.json();
-      message = data?.message ?? message;
-    } catch {
-      const text = await res.text();
-      if (text) message = text;
+      return await firstValueFrom(
+        this.http.get<OrderData[]>(this.base, { withCredentials: true, params }),
+      );
+    } catch { return []; }
+  }
+
+  async getOne(id: string): Promise<OrderData | null> {
+    try {
+      return await firstValueFrom(
+        this.http.get<OrderData>(`${this.base}/${id}`, { withCredentials: true }),
+      );
+    } catch { return null; }
+  }
+
+  async create(payload: any): Promise<{ ok: boolean; message?: string; data?: OrderData }> {
+    try {
+      const data = await firstValueFrom(
+        this.http.post<OrderData>(this.base, payload, { withCredentials: true }),
+      );
+      return { ok: true, data };
+    } catch (e: any) {
+      return { ok: false, message: e?.error?.message || 'Lỗi tạo đơn' };
     }
-    return { ok: false, message };
+  }
+
+  async update(id: string, payload: any): Promise<{ ok: boolean; message?: string }> {
+    try {
+      await firstValueFrom(
+        this.http.patch(`${this.base}/${id}`, payload, { withCredentials: true }),
+      );
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, message: e?.error?.message || 'Lỗi cập nhật' };
+    }
+  }
+
+  async submit(id: string): Promise<{ ok: boolean; message?: string }> {
+    try {
+      await firstValueFrom(
+        this.http.post(`${this.base}/${id}/submit`, {}, { withCredentials: true }),
+      );
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, message: e?.error?.message || 'Lỗi gửi duyệt' };
+    }
+  }
+
+  async approve(id: string): Promise<{ ok: boolean; message?: string; data?: ApproveResponse }> {
+    try {
+      const data = await firstValueFrom(
+        this.http.post<ApproveResponse>(`${this.base}/${id}/approve`, {}, { withCredentials: true }),
+      );
+      return { ok: true, data };
+    } catch (e: any) {
+      return { ok: false, message: e?.error?.message || 'Lỗi duyệt' };
+    }
+  }
+
+  async reject(id: string, reason: string): Promise<{ ok: boolean; message?: string }> {
+    try {
+      await firstValueFrom(
+        this.http.post(`${this.base}/${id}/reject`, { reason }, { withCredentials: true }),
+      );
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, message: e?.error?.message || 'Lỗi từ chối' };
+    }
+  }
+
+  async requestInfo(id: string, reason: string): Promise<{ ok: boolean; message?: string }> {
+    try {
+      await firstValueFrom(
+        this.http.post(`${this.base}/${id}/request-info`, { reason }, { withCredentials: true }),
+      );
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, message: e?.error?.message || 'Lỗi' };
+    }
+  }
+
+  async cancel(id: string): Promise<{ ok: boolean; message?: string }> {
+    try {
+      await firstValueFrom(
+        this.http.post(`${this.base}/${id}/cancel`, {}, { withCredentials: true }),
+      );
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, message: e?.error?.message || 'Lỗi hủy' };
+    }
+  }
+
+  async remove(id: string): Promise<{ ok: boolean; message?: string }> {
+    try {
+      await firstValueFrom(
+        this.http.delete(`${this.base}/${id}`, { withCredentials: true }),
+      );
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, message: e?.error?.message || 'Lỗi xóa' };
+    }
+  }
+
+  async getPipeline(): Promise<OrderPipeline | null> {
+    try {
+      return await firstValueFrom(
+        this.http.get<OrderPipeline>(`${this.base}/pipeline`, { withCredentials: true }),
+      );
+    } catch { return null; }
+  }
+
+  async getStats(): Promise<OrderStats | null> {
+    try {
+      return await firstValueFrom(
+        this.http.get<OrderStats>(`${this.base}/stats`, { withCredentials: true }),
+      );
+    } catch { return null; }
   }
 }

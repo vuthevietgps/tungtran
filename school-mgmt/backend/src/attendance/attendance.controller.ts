@@ -17,7 +17,9 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '../common/interfaces/role.enum';
-import { Request } from 'express';
+import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
+import { ThrottlerGuard, Throttle } from '@nestjs/throttler';
+import { ParseMongoIdPipe } from '../common/pipes/parse-mongo-id.pipe';
 
 @Controller('attendance')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -26,75 +28,84 @@ export class AttendanceController {
 
   // Điểm danh một học sinh
   @Post('mark')
-  markAttendance(@Body() dto: CreateAttendanceDto, @Req() req: Request) {
-    return this.attendanceService.markAttendance(dto, req.user as any);
+  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.SALE)
+  markAttendance(@Body() dto: CreateAttendanceDto, @Req() req: AuthenticatedRequest) {
+    return this.attendanceService.markAttendance(dto, req.user);
   }
 
   // Điểm danh nhiều học sinh cùng lúc
   @Post('bulk-mark')
-  bulkMarkAttendance(@Body() dto: BulkAttendanceDto, @Req() req: Request) {
-    return this.attendanceService.bulkMarkAttendance(dto, req.user as any);
+  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.SALE)
+  bulkMarkAttendance(@Body() dto: BulkAttendanceDto, @Req() req: AuthenticatedRequest) {
+    return this.attendanceService.bulkMarkAttendance(dto, req.user);
   }
 
   // Lấy danh sách điểm danh theo lớp và ngày
   @Get('class/:classId')
+  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.SALE)
   getAttendanceByClass(
-    @Param('classId') classId: string,
+    @Param('classId', ParseMongoIdPipe) classId: string,
     @Query('date') date: string,
-    @Req() req: Request
+    @Req() req: AuthenticatedRequest
   ) {
-    return this.attendanceService.getAttendanceByClass(classId, date, req.user as any);
+    return this.attendanceService.getAttendanceByClass(classId, date, req.user);
   }
 
   // Lấy lịch sử điểm danh của một học sinh
   @Get('student/:studentId')
+  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.SALE)
   getStudentAttendanceHistory(
-    @Param('studentId') studentId: string,
-    @Query('classId') classId?: string
+    @Param('studentId', ParseMongoIdPipe) studentId: string,
+    @Query('classId', ParseMongoIdPipe) classId?: string
   ) {
     return this.attendanceService.getStudentAttendanceHistory(studentId, classId);
   }
 
   // Cập nhật trạng thái điểm danh
   @Patch(':id')
+  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.SALE)
   updateAttendance(
-    @Param('id') id: string,
+    @Param('id', ParseMongoIdPipe) id: string,
     @Body() dto: UpdateAttendanceDto,
-    @Req() req: Request
+    @Req() req: AuthenticatedRequest
   ) {
-    return this.attendanceService.updateAttendance(id, dto, req.user as any);
+    return this.attendanceService.updateAttendance(id, dto, req.user);
   }
 
   // Thống kê điểm danh theo lớp
   @Get('stats/:classId')
+  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.SALE)
   getAttendanceStats(
-    @Param('classId') classId: string,
+    @Param('classId', ParseMongoIdPipe) classId: string,
     @Query('startDate') startDate: string,
     @Query('endDate') endDate: string,
-    @Req() req: Request
+    @Req() req: AuthenticatedRequest
   ) {
-    return this.attendanceService.getAttendanceStats(classId, startDate, endDate, req.user as any);
+    return this.attendanceService.getAttendanceStats(classId, startDate, endDate, req.user);
   }
 
   @Get('teacher/classes')
   @Roles(Role.TEACHER)
-  getTeacherClasses(@Req() req: Request) {
-    return this.attendanceService.getTeacherClassAssignments(req.user as any);
+  getTeacherClasses(@Req() req: AuthenticatedRequest) {
+    return this.attendanceService.getTeacherClassAssignments(req.user);
   }
 
-  @Get('order-classes')
-  getOrderClasses(@Req() req: Request) {
-    return this.attendanceService.getClassesFromOrders(req.user as any);
+  @Get('classes-with-students')
+  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.SALE)
+  getClassesWithStudents(@Req() req: AuthenticatedRequest) {
+    return this.attendanceService.getClassesWithStudents(req.user);
   }
 
   // Tạo link điểm danh cho học sinh
   @Post('generate-link')
-  generateAttendanceLink(@Body() dto: GenerateAttendanceLinkDto, @Req() req: Request) {
-    return this.attendanceService.generateAttendanceLink(dto, req.user as any);
+  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER)
+  generateAttendanceLink(@Body() dto: GenerateAttendanceLinkDto, @Req() req: AuthenticatedRequest) {
+    return this.attendanceService.generateAttendanceLink(dto, req.user);
   }
 
   // Lấy báo cáo điểm danh tổng hợp
   @Get('report')
+  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.SALE)
   getAttendanceReport(
     @Query('startDate') startDate: string,
     @Query('endDate') endDate: string,
@@ -106,17 +117,20 @@ export class AttendanceController {
 
 // Controller riêng cho public endpoints (không cần authentication)
 @Controller('public/attendance')
+@UseGuards(ThrottlerGuard)
 export class PublicAttendanceController {
   constructor(private readonly attendanceService: AttendanceService) {}
 
   // Lấy thông tin điểm danh từ token
   @Get('token/:token')
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   getAttendanceByToken(@Param('token') token: string) {
     return this.attendanceService.getAttendanceByToken(token);
   }
 
   // Học sinh submit điểm danh
   @Post('submit')
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   submitStudentAttendance(@Body() dto: StudentAttendanceDto) {
     return this.attendanceService.submitStudentAttendance(dto);
   }

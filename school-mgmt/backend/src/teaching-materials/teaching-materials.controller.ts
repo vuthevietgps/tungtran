@@ -1,0 +1,173 @@
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Body,
+  Param,
+  Query,
+  Req,
+  UseGuards,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { existsSync, mkdirSync } from 'fs';
+import { extname, join } from 'path';
+import { TeachingMaterialsService } from './teaching-materials.service';
+import { UpdateTeachingMaterialDto } from './dto/teaching-material.dto';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { Role } from '../common/interfaces/role.enum';
+import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
+
+// Setup upload directory
+const uploadPath = join(process.cwd(), 'uploads', 'materials');
+if (!existsSync(uploadPath)) mkdirSync(uploadPath, { recursive: true });
+
+// Multer config cho tài liệu giảng dạy
+const materialsStorage = diskStorage({
+  destination: uploadPath,
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    const ext = extname(file.originalname);
+    cb(null, `material-${uniqueSuffix}${ext}`);
+  },
+});
+
+// Chấp nhận nhiều loại file hơn (doc, pdf, ppt, images, video, zip)
+const materialFileFilter = (req: any, file: Express.Multer.File, cb: any) => {
+  const allowedTypes = [
+    // Documents
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-powerpoint',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    // Images
+    'image/jpeg',
+    'image/png',
+    'image/gif',
+    'image/webp',
+    // Video
+    'video/mp4',
+    'video/webm',
+    // Archives
+    'application/zip',
+    'application/x-rar-compressed',
+    'application/x-7z-compressed',
+    // Text
+    'text/plain',
+    'text/csv',
+  ];
+  if (allowedTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new BadRequestException(`Loại file không được hỗ trợ: ${file.mimetype}`), false);
+  }
+};
+
+@Controller('teaching-materials')
+@UseGuards(JwtAuthGuard, RolesGuard)
+export class TeachingMaterialsController {
+  constructor(private readonly service: TeachingMaterialsService) {}
+
+  /**
+   * Upload tài liệu mới
+   * POST /teaching-materials/upload
+   */
+  @Post('upload')
+  @Roles(Role.TEACHER, Role.OPS, Role.DIRECTOR)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: materialsStorage,
+      fileFilter: materialFileFilter,
+      limits: { fileSize: 50 * 1024 * 1024 }, // 50MB max
+    }),
+  )
+  async upload(
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: any,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    if (!file) throw new BadRequestException('Không có file được tải lên');
+    if (!body.title?.trim()) throw new BadRequestException('Tiêu đề tài liệu là bắt buộc');
+    return this.service.create(body, file, req.user);
+  }
+
+  /**
+   * Lấy danh sách tài liệu
+   * GET /teaching-materials
+   */
+  @Get()
+  @Roles(Role.TEACHER, Role.OPS, Role.DIRECTOR)
+  findAll(
+    @Req() req: AuthenticatedRequest,
+    @Query('subject') subject?: string,
+    @Query('grade') grade?: string,
+    @Query('classId') classId?: string,
+    @Query('search') search?: string,
+  ) {
+    return this.service.findAll(req.user, { subject, grade, classId, search });
+  }
+
+  /**
+   * Thống kê tài liệu
+   * GET /teaching-materials/stats
+   */
+  @Get('stats')
+  @Roles(Role.TEACHER, Role.OPS, Role.DIRECTOR)
+  getStats(@Req() req: AuthenticatedRequest) {
+    return this.service.getStats(req.user.sub);
+  }
+
+  /**
+   * Xem chi tiết tài liệu
+   * GET /teaching-materials/:id
+   */
+  @Get(':id')
+  @Roles(Role.TEACHER, Role.OPS, Role.DIRECTOR)
+  findOne(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.service.findOne(id, req.user);
+  }
+
+  /**
+   * Cập nhật metadata tài liệu
+   * PATCH /teaching-materials/:id
+   */
+  @Patch(':id')
+  @Roles(Role.TEACHER, Role.OPS, Role.DIRECTOR)
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateTeachingMaterialDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.service.update(id, dto, req.user);
+  }
+
+  /**
+   * Xóa tài liệu
+   * DELETE /teaching-materials/:id
+   */
+  @Delete(':id')
+  @Roles(Role.TEACHER, Role.OPS, Role.DIRECTOR)
+  remove(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.service.remove(id, req.user);
+  }
+
+  /**
+   * Ghi nhận download
+   * POST /teaching-materials/:id/download
+   */
+  @Post(':id/download')
+  @Roles(Role.TEACHER, Role.OPS, Role.DIRECTOR)
+  download(@Param('id') id: string) {
+    return this.service.incrementDownload(id);
+  }
+}

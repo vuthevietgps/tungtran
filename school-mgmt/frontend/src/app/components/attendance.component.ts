@@ -265,9 +265,9 @@ export class AttendanceComponent {
 
   async loadClasses() {
     try {
-      const orderClasses = await this.attendanceService.getOrderClasses();
+      const classes = await this.attendanceService.getClassesWithStudents();
 
-      const availableClasses: ClassItem[] = orderClasses.map<ClassItem>((cls) => ({
+      const availableClasses: ClassItem[] = classes.map<ClassItem>((cls) => ({
         _id: cls.classId,
         name: cls.className || cls.classCode,
         code: cls.classCode,
@@ -315,43 +315,33 @@ export class AttendanceComponent {
     this.error.set('');
 
     try {
-      // Find the selected class from our order-classes data
-      const selectedClass = this.classes().find(cls => cls._id === this.selectedClassId);
-      if (!selectedClass) {
-        this.error.set('Không tìm thấy thông tin lớp học');
-        return;
-      }
+      // Load attendance data from backend (includes existing records)
+      const data = await this.attendanceService.getAttendanceByClass(
+        this.selectedClassId,
+        this.selectedDate,
+      );
 
-      // Build attendance data from the class data we already have
-      const attendanceData: AttendanceByClassResponse = {
-        class: {
-          _id: selectedClass._id,
-          name: selectedClass.name,
-          code: selectedClass.code
-        },
-        date: this.selectedDate,
-        attendanceList: (selectedClass.students || []).map(student => ({
-          student: {
-            _id: student._id,
-            fullName: student.fullName,
-            age: (student as any).age || null,
-            parentName: (student as any).parentName || ''
-          },
-          attendance: {
-            _id: undefined,
-            classId: selectedClass._id,
-            studentId: student._id,
-            date: this.selectedDate,
-            status: null,
-            notes: '',
-            attendedAt: null,
-            imageUrl: null
-          }
-        }))
-      };
-      
-      this.attendanceData.set(attendanceData);
-      this.saveOriginalData(attendanceData);
+      if (data) {
+        this.attendanceData.set(data);
+        this.saveOriginalData(data);
+      } else {
+        // Fallback: build from class data if backend returns null
+        const selectedClass = this.classes().find(cls => cls._id === this.selectedClassId);
+        if (!selectedClass) {
+          this.error.set('Không tìm thấy thông tin lớp học');
+          return;
+        }
+        const fallback: AttendanceByClassResponse = {
+          class: { _id: selectedClass._id, name: selectedClass.name, code: selectedClass.code },
+          date: this.selectedDate,
+          attendanceList: (selectedClass.students || []).map(student => ({
+            student: { _id: student._id, fullName: student.fullName, age: (student as any).age || null, parentName: (student as any).parentName || '' },
+            attendance: { classId: selectedClass._id, studentId: student._id, date: this.selectedDate, status: null, notes: '' }
+          }))
+        };
+        this.attendanceData.set(fallback);
+        this.saveOriginalData(fallback);
+      }
     } catch (error) {
       this.error.set('Có lỗi xảy ra khi tải dữ liệu điểm danh');
       console.error('Error loading attendance:', error);

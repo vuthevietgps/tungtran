@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { ParseMongoIdPipe } from '../common/pipes/parse-mongo-id.pipe';
 import { ProductsService } from './products.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
@@ -19,20 +20,20 @@ export class ProductsController {
   }
 
   @Get()
-  @Roles(Role.DIRECTOR)
+  @Roles(Role.DIRECTOR, Role.SALE, Role.OPS)
   findAll() {
     return this.productsService.findAll();
   }
 
   @Patch(':id')
   @Roles(Role.DIRECTOR)
-  update(@Param('id') id: string, @Body() dto: UpdateProductDto) {
+  update(@Param('id', ParseMongoIdPipe) id: string, @Body() dto: UpdateProductDto) {
     return this.productsService.update(id, dto);
   }
 
   @Delete(':id')
   @Roles(Role.DIRECTOR)
-  remove(@Param('id') id: string) {
+  remove(@Param('id', ParseMongoIdPipe) id: string) {
     return this.productsService.remove(id);
   }
 }

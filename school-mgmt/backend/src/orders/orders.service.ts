@@ -1,323 +1,381 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import { Order, OrderDocument } from './schemas/order.schema';
+import { Model, FilterQuery } from 'mongoose';
+import { Order, OrderDocument, OrderStatus } from './schemas/order.schema';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
-import { Student, StudentDocument } from '../students/schemas/student.schema';
-import { Classroom, ClassDocument } from '../classes/schemas/class.schema';
-import { Attendance, AttendanceDocument } from '../attendance/schemas/attendance.schema';
-import { User, UserDocument } from '../users/schemas/user.schema';
-import { ConfigService } from '@nestjs/config';
-
-type StudentLean = (Student & { _id: Types.ObjectId });
-type ClassLean = (Classroom & { _id: Types.ObjectId });
-type UserLean = (User & { _id: Types.ObjectId });
-
-interface OrderSessionView {
-  sessionIndex: number;
-  date?: string;
-  classCode?: string;
-  studentCode?: string;
-  lookupUrl?: string;
-  attendanceId?: string;
-  attendedAt?: string;
-  imageUrl?: string;
-}
-
-export interface OrderView {
-  _id: string;
-  studentId?: string;
-  studentName: string;
-  studentCode: string;
-  level?: string;
-  parentName: string;
-  teacherId?: string;
-  teacherName?: string;
-  teacherEmail?: string;
-  teacherCode?: string;
-  teacherSalary?: number;
-  saleId?: string;
-  saleName?: string;
-  saleEmail?: string;
-  classId?: string;
-  classCode?: string;
-  invoiceNumber?: string;
-  sessionsByInvoice?: number;
-  dataStatus?: string;
-  trialOrGift?: string;
-  createdAt: string;
-  updatedAt: string;
-  sessions: OrderSessionView[];
-}
+import { QueryOrderDto } from './dto/query-order.dto';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { AuditAction } from '../audit-log/schemas/audit-log.schema';
+import { EnrollmentService, EnrollmentResult } from './enrollment.service';
 
 @Injectable()
 export class OrdersService {
-  private readonly frontendBaseUrl: string;
-
   constructor(
-    @InjectModel(Order.name) private readonly orderModel: Model<OrderDocument>,
-    @InjectModel(Student.name) private readonly studentModel: Model<StudentDocument>,
-    @InjectModel(Classroom.name) private readonly classModel: Model<ClassDocument>,
-    @InjectModel(Attendance.name) private readonly attendanceModel: Model<AttendanceDocument>,
-    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
-    private readonly config: ConfigService,
-  ) {
-    this.frontendBaseUrl = this.config.get<string>('FRONTEND_URL', 'http://localhost:4200');
+    @InjectModel(Order.name) private orderModel: Model<OrderDocument>,
+    private auditLogService: AuditLogService,
+    private enrollmentService: EnrollmentService,
+  ) {}
+
+  private async generateOrderCode(): Promise<string> {
+    const year = new Date().getFullYear();
+    const prefix = `ORD-${year}-`;
+    const last = await this.orderModel
+      .findOne({ orderCode: { $regex: `^${prefix}` } })
+      .sort({ orderCode: -1 })
+      .lean();
+    let nextNum = 1;
+    if (last) {
+      const parts = last.orderCode.split('-');
+      nextNum = parseInt(parts[2], 10) + 1;
+    }
+    return `${prefix}${String(nextNum).padStart(4, '0')}`;
   }
 
-  async create(dto: CreateOrderDto): Promise<OrderView> {
-    const payload = await this.resolveReferences(this.preparePayload(dto));
-    if (payload.studentCode) payload.studentCode = payload.studentCode.trim().toUpperCase();
-    if (payload.classCode) payload.classCode = payload.classCode.trim().toUpperCase();
+  async create(dto: CreateOrderDto, user: any): Promise<Order> {
+    const orderCode = await this.generateOrderCode();
+    const order = new this.orderModel({
+      ...dto,
+      orderCode,
+      status: OrderStatus.DRAFT,
+      saleId: user.userId,
+      saleName: user.fullName || user.email,
+    });
+    const saved = await order.save();
 
-    const created = await this.orderModel.create(payload);
-    return this.enrich(created.toObject());
+    await this.auditLogService.log({
+      userId: user.userId,
+      userEmail: user.email,
+      userFullName: user.fullName,
+      userRole: user.role,
+      action: AuditAction.CREATE,
+      module: 'ORDERS' as any,
+      targetId: saved._id?.toString(),
+      targetName: saved.orderCode,
+      description: `Tạo đơn đăng ký: ${saved.orderCode} - ${saved.studentName}`,
+    });
+
+    return saved;
   }
 
-  async findAll(): Promise<OrderView[]> {
-    const orders = await this.orderModel.find().sort({ createdAt: -1 }).lean();
-    return Promise.all(orders.map((order) => this.enrich(order)));
+  async findAll(query: QueryOrderDto, user: any) {
+    const filter: FilterQuery<OrderDocument> = {};
+
+    if (query.status) filter.status = query.status;
+    if (query.orderType) filter.orderType = query.orderType;
+    if (query.saleId) filter.saleId = query.saleId;
+
+    if (query.search) {
+      filter.$or = [
+        { parentName: { $regex: query.search, $options: 'i' } },
+        { parentPhone: { $regex: query.search, $options: 'i' } },
+        { studentName: { $regex: query.search, $options: 'i' } },
+        { orderCode: { $regex: query.search, $options: 'i' } },
+      ];
+    }
+
+    if (query.fromDate || query.toDate) {
+      filter.createdAt = {};
+      if (query.fromDate) filter.createdAt.$gte = new Date(query.fromDate);
+      if (query.toDate) filter.createdAt.$lte = new Date(query.toDate + 'T23:59:59.999Z');
+    }
+
+    // SALE only sees their own orders
+    if (user.role === 'SALE') {
+      filter.saleId = user.userId;
+    }
+
+    return this.orderModel.find(filter).sort({ createdAt: -1 }).lean();
   }
 
-  async findOne(id: string): Promise<OrderView> {
+  async findOne(id: string): Promise<Order> {
     const order = await this.orderModel.findById(id).lean();
-    if (!order) throw new NotFoundException('Không tìm thấy đơn hàng');
-    return this.enrich(order);
+    if (!order) throw new NotFoundException('Đơn hàng không tồn tại');
+    return order as Order;
   }
 
-  async update(id: string, dto: UpdateOrderDto): Promise<OrderView> {
-    const payload = await this.resolveReferences(this.preparePayload(dto));
-    if (payload.studentCode) payload.studentCode = payload.studentCode.trim().toUpperCase();
-    if (payload.classCode) payload.classCode = payload.classCode.trim().toUpperCase();
+  async update(id: string, dto: UpdateOrderDto, user: any): Promise<Order> {
+    const order = await this.orderModel.findById(id).lean();
+    if (!order) throw new NotFoundException('Đơn hàng không tồn tại');
 
-    const updated = await this.orderModel.findByIdAndUpdate(id, payload, { new: true }).lean();
-    if (!updated) throw new NotFoundException('Không tìm thấy đơn hàng');
-    return this.enrich(updated);
+    const o = order as any;
+    if (![OrderStatus.DRAFT, OrderStatus.NEEDS_INFO].includes(o.status)) {
+      throw new BadRequestException('Chỉ có thể sửa đơn ở trạng thái Nháp hoặc Cần bổ sung');
+    }
+
+    const updated = await this.orderModel.findByIdAndUpdate(id, dto, { new: true }).lean();
+
+    await this.auditLogService.log({
+      userId: user.userId, userEmail: user.email, userFullName: user.fullName, userRole: user.role,
+      action: AuditAction.UPDATE, module: 'ORDERS' as any,
+      targetId: id, targetName: o.orderCode,
+      description: `Cập nhật đơn ${o.orderCode}`,
+      newValue: dto as any,
+    });
+
+    return updated as Order;
   }
 
-  async remove(id: string): Promise<{ success: true }> {
-    const deleted = await this.orderModel.findByIdAndDelete(id).lean();
-    if (!deleted) throw new NotFoundException('Không tìm thấy đơn hàng');
-    return { success: true };
+  async submit(id: string, user: any): Promise<Order> {
+    const order = await this.orderModel.findById(id).lean();
+    if (!order) throw new NotFoundException('Đơn hàng không tồn tại');
+
+    const o = order as any;
+    if (![OrderStatus.DRAFT, OrderStatus.NEEDS_INFO].includes(o.status)) {
+      throw new BadRequestException('Chỉ có thể gửi duyệt đơn ở trạng thái Nháp hoặc Cần bổ sung');
+    }
+
+    if (!o.items || o.items.length === 0) {
+      throw new BadRequestException('Đơn hàng phải có ít nhất 1 sản phẩm');
+    }
+
+    const updated = await this.orderModel.findByIdAndUpdate(
+      id, { status: OrderStatus.SUBMITTED }, { new: true },
+    ).lean();
+
+    await this.auditLogService.log({
+      userId: user.userId, userEmail: user.email, userFullName: user.fullName, userRole: user.role,
+      action: AuditAction.STATUS_CHANGE, module: 'ORDERS' as any,
+      targetId: id, targetName: o.orderCode,
+      description: `Gửi duyệt đơn ${o.orderCode}`,
+    });
+
+    return updated as Order;
   }
 
-  private preparePayload(source: Partial<CreateOrderDto> | Partial<UpdateOrderDto>): Partial<Order> {
-    const payload: Partial<Order> = { ...source } as any;
+  async approve(id: string, user: any): Promise<{ order: Order; enrollment: EnrollmentResult }> {
+    const order = await this.orderModel.findById(id).lean();
+    if (!order) throw new NotFoundException('Đơn hàng không tồn tại');
 
-    if (payload.studentId && typeof payload.studentId === 'string') {
-      payload.studentId = new Types.ObjectId(payload.studentId);
-    }
-    if (payload.teacherId && typeof payload.teacherId === 'string') {
-      payload.teacherId = new Types.ObjectId(payload.teacherId);
-    }
-    if (payload.saleId && typeof payload.saleId === 'string') {
-      payload.saleId = new Types.ObjectId(payload.saleId);
-    }
-    if (payload.classId && typeof payload.classId === 'string') {
-      payload.classId = new Types.ObjectId(payload.classId);
+    const o = order as any;
+    if (o.status !== OrderStatus.SUBMITTED) {
+      throw new BadRequestException('Chỉ có thể duyệt đơn đang chờ duyệt');
     }
 
-    if (payload.teacherSalary !== undefined && payload.teacherSalary !== null) {
-      payload.teacherSalary = Number(payload.teacherSalary);
-    }
-    if (payload.sessionsByInvoice !== undefined && payload.sessionsByInvoice !== null) {
-      payload.sessionsByInvoice = Number(payload.sessionsByInvoice);
-    }
+    // Đánh dấu APPROVED trước
+    await this.orderModel.findByIdAndUpdate(
+      id,
+      {
+        status: OrderStatus.APPROVED,
+        approvedBy: user.userId,
+        approvedAt: new Date(),
+      },
+      { new: true },
+    );
 
-    if (payload.teacherEmail) {
-      payload.teacherEmail = payload.teacherEmail.toLowerCase();
-    }
-    if (payload.saleEmail) {
-      payload.saleEmail = payload.saleEmail.toLowerCase();
-    }
+    // Audit log duyệt đơn
+    await this.auditLogService.log({
+      userId: user.userId, userEmail: user.email, userFullName: user.fullName, userRole: user.role,
+      action: AuditAction.APPROVE, module: 'ORDERS' as any,
+      targetId: id, targetName: o.orderCode,
+      description: `Duyệt đơn ${o.orderCode} - ${o.studentName}`,
+    });
 
-    return payload;
-  }
+    // Auto-enrollment: tạo Student, Invoice, ghi log
+    const enrollment = await this.enrollmentService.processApprovedOrder(id, user);
 
-  private async resolveReferences(payload: Partial<Order>): Promise<Partial<Order>> {
-    if (payload.studentCode && !payload.studentId) {
-      const studentCode = payload.studentCode.trim().toUpperCase();
-      const student = await this.studentModel.findOne({ studentCode }).lean();
-      if (student) {
-        payload.studentId = student._id as Types.ObjectId;
-        payload.studentName = payload.studentName || student.fullName;
-        payload.parentName = payload.parentName || student.parentName;
-      }
-    }
-
-    if (payload.classCode && !payload.classId) {
-      const classCode = payload.classCode.trim().toUpperCase();
-      let classroom = await this.classModel.findOne({ code: classCode }).lean();
-      
-      // Auto-create class if not found
-      if (!classroom && classCode) {
-        console.log(`Auto-creating class with code: ${classCode}`);
-        try {
-          // Find a default teacher/sale or use system defaults
-          const defaultTeacher = await this.userModel.findOne({ role: 'TEACHER' }).lean();
-          const defaultSale = await this.userModel.findOne({ role: 'SALE' }).lean();
-          
-          const newClass = await this.classModel.create({
-            name: `Lớp ${classCode}`,
-            code: classCode,
-            students: [],
-            teacher: defaultTeacher?._id || new Types.ObjectId(),
-            sale: defaultSale?._id || new Types.ObjectId(),
-            revenuePerStudent: 0,
-            teacherSalaryCost: 0,
-          });
-          // Re-fetch the created class to get proper lean object
-          classroom = await this.classModel.findById(newClass._id).lean();
-          if (classroom) {
-            console.log(`Created new class: ${classroom.name} (${classroom.code})`);
-          }
-        } catch (error) {
-          console.error(`Failed to create class ${classCode}:`, error);
-        }
-      }
-      
-      if (classroom) {
-        payload.classId = classroom._id as Types.ObjectId;
-      }
-    }
-
-    if (payload.teacherId) {
-      const teacher = await this.userModel.findById(payload.teacherId).lean();
-      if (teacher) {
-        payload.teacherName = payload.teacherName || teacher.fullName;
-        payload.teacherEmail = payload.teacherEmail || teacher.email;
-      }
-    } else if (payload.teacherEmail && !payload.teacherId) {
-      const teacher = await this.userModel.findOne({ email: payload.teacherEmail.toLowerCase() }).lean();
-      if (teacher) payload.teacherId = teacher._id as Types.ObjectId;
-    }
-
-    if (payload.saleId) {
-      const sale = await this.userModel.findById(payload.saleId).lean();
-      if (sale) {
-        payload.saleName = payload.saleName || sale.fullName;
-        payload.saleEmail = payload.saleEmail || sale.email;
-      }
-    } else if (payload.saleEmail && !payload.saleId) {
-      const sale = await this.userModel.findOne({ email: payload.saleEmail.toLowerCase() }).lean();
-      if (sale) payload.saleId = sale._id as Types.ObjectId;
-    }
-
-    return payload;
-  }
-
-  private async enrich(order: Order & { _id: Types.ObjectId }): Promise<OrderView> {
-    const [student, classroom, teacher, sale] = await Promise.all([
-      this.loadStudent(order.studentId, order.studentCode),
-      this.loadClass(order.classId, order.classCode),
-      this.loadUser(order.teacherId, order.teacherEmail),
-      this.loadUser(order.saleId, order.saleEmail),
-    ]);
-
-    const sessions = await this.buildSessions(student, classroom);
+    // Lấy lại order sau khi enrollment cập nhật
+    const updatedOrder = await this.orderModel.findById(id).lean();
 
     return {
-      _id: order._id.toString(),
-      studentId: student?._id?.toString() || order.studentId?.toString(),
-      studentName: order.studentName || student?.fullName || '',
-      studentCode: order.studentCode,
-      level: order.level,
-      parentName: order.parentName || student?.parentName || '',
-      teacherId: teacher?._id?.toString() || order.teacherId?.toString(),
-      teacherName: order.teacherName || teacher?.fullName,
-      teacherEmail: (order.teacherEmail || teacher?.email || undefined)?.toLowerCase(),
-      teacherCode: order.teacherCode,
-      teacherSalary: order.teacherSalary,
-      saleId: sale?._id?.toString() || order.saleId?.toString(),
-      saleName: order.saleName || sale?.fullName,
-      saleEmail: (order.saleEmail || sale?.email || undefined)?.toLowerCase(),
-      classId: classroom?._id?.toString() || order.classId?.toString(),
-      classCode: classroom?.code || order.classCode,
-      invoiceNumber: order.invoiceNumber,
-      sessionsByInvoice: order.sessionsByInvoice,
-      dataStatus: order.dataStatus,
-      trialOrGift: order.trialOrGift,
-      createdAt: this.toIso((order as any).createdAt),
-      updatedAt: this.toIso((order as any).updatedAt),
-      sessions,
+      order: updatedOrder as Order,
+      enrollment,
     };
   }
 
-  private async loadStudent(studentId?: Types.ObjectId, studentCode?: string): Promise<StudentLean | null> {
-    if (studentId) {
-      const student = await this.studentModel.findById(studentId).lean();
-      if (student) return student as StudentLean;
-    }
-    if (studentCode) {
-      const student = await this.studentModel.findOne({ studentCode }).lean();
-      if (student) return student as StudentLean;
-    }
-    return null;
-  }
+  async reject(id: string, reason: string, user: any): Promise<Order> {
+    const order = await this.orderModel.findById(id).lean();
+    if (!order) throw new NotFoundException('Đơn hàng không tồn tại');
 
-  private async loadClass(classId?: Types.ObjectId, classCode?: string): Promise<ClassLean | null> {
-    if (classId) {
-      const classroom = await this.classModel.findById(classId).lean();
-      if (classroom) return classroom as ClassLean;
+    const o = order as any;
+    if (o.status !== OrderStatus.SUBMITTED) {
+      throw new BadRequestException('Chỉ có thể từ chối đơn đang chờ duyệt');
     }
-    if (classCode) {
-      const classroom = await this.classModel.findOne({ code: classCode }).lean();
-      if (classroom) return classroom as ClassLean;
-    }
-    return null;
-  }
 
-  private async loadUser(userId?: Types.ObjectId, email?: string): Promise<UserLean | null> {
-    if (userId) {
-      const user = await this.userModel.findById(userId).lean();
-      if (user) return user as UserLean;
-    }
-    if (email) {
-      const user = await this.userModel.findOne({ email: email.toLowerCase() }).lean();
-      if (user) return user as UserLean;
-    }
-    return null;
-  }
+    const updated = await this.orderModel.findByIdAndUpdate(
+      id,
+      { status: OrderStatus.REJECTED, rejectionReason: reason },
+      { new: true },
+    ).lean();
 
-  private async buildSessions(student: StudentLean | null, classroom: ClassLean | null): Promise<OrderSessionView[]> {
-    if (!student?._id || !classroom?._id) return [];
-
-    const attendances = await this.attendanceModel
-      .find({ studentId: student._id, classId: classroom._id, attendedAt: { $ne: null } })
-      .sort({ date: 1 })
-      .limit(20)
-      .lean();
-
-    return attendances.map((attendance, index) => ({
-      sessionIndex: index + 1,
-      date: attendance.date?.toISOString(),
-      classCode: classroom.code,
-      studentCode: student.studentCode,
-      lookupUrl: this.buildLookupUrl(classroom.code, student.studentCode, attendance._id),
-      attendanceId: attendance._id.toString(),
-      attendedAt: attendance.attendedAt ? attendance.attendedAt.toISOString() : undefined,
-      imageUrl: attendance.imageUrl || undefined,
-    }));
-  }
-
-  private buildLookupUrl(classCode: string, studentCode: string, attendanceId: Types.ObjectId): string {
-    const params = new URLSearchParams({
-      classCode,
-      studentCode,
-      attendanceId: attendanceId.toString(),
+    await this.auditLogService.log({
+      userId: user.userId, userEmail: user.email, userFullName: user.fullName, userRole: user.role,
+      action: AuditAction.REJECT, module: 'ORDERS' as any,
+      targetId: id, targetName: o.orderCode,
+      description: `Từ chối đơn ${o.orderCode}: ${reason}`,
     });
-    return `${this.frontendBaseUrl.replace(/\/$/, '')}/attendance-report?${params.toString()}`;
+
+    return updated as Order;
   }
 
-  private toIso(value: unknown): string {
-    if (value instanceof Date) return value.toISOString();
-    if (typeof value === 'string') return value;
-    if (value && typeof (value as any).toDate === 'function') {
-      const date: Date = (value as any).toDate();
-      if (date instanceof Date && !Number.isNaN(date.getTime())) return date.toISOString();
+  async requestInfo(id: string, reason: string, user: any): Promise<Order> {
+    const order = await this.orderModel.findById(id).lean();
+    if (!order) throw new NotFoundException('Đơn hàng không tồn tại');
+
+    const o = order as any;
+    if (o.status !== OrderStatus.SUBMITTED) {
+      throw new BadRequestException('Chỉ yêu cầu bổ sung cho đơn đang chờ duyệt');
     }
-    const now = new Date();
-    return Number.isNaN(now.getTime()) ? new Date(Date.now()).toISOString() : now.toISOString();
+
+    const updated = await this.orderModel.findByIdAndUpdate(
+      id,
+      { status: OrderStatus.NEEDS_INFO, needsInfoReason: reason },
+      { new: true },
+    ).lean();
+
+    return updated as Order;
+  }
+
+  async cancel(id: string, user: any): Promise<Order> {
+    const order = await this.orderModel.findById(id).lean();
+    if (!order) throw new NotFoundException('Đơn hàng không tồn tại');
+
+    const o = order as any;
+    if ([OrderStatus.COMPLETED, OrderStatus.CANCELLED].includes(o.status)) {
+      throw new BadRequestException('Không thể hủy đơn đã hoàn tất hoặc đã hủy');
+    }
+
+    const updated = await this.orderModel.findByIdAndUpdate(
+      id, { status: OrderStatus.CANCELLED }, { new: true },
+    ).lean();
+
+    await this.auditLogService.log({
+      userId: user.userId, userEmail: user.email, userFullName: user.fullName, userRole: user.role,
+      action: AuditAction.STATUS_CHANGE, module: 'ORDERS' as any,
+      targetId: id, targetName: o.orderCode,
+      description: `Hủy đơn ${o.orderCode}`,
+    });
+
+    return updated as Order;
+  }
+
+  async getPipeline(user: any) {
+    const match: any = {};
+    if (user.role === 'SALE') match.saleId = user.userId;
+
+    const pipeline = await this.orderModel.aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: '$status',
+          count: { $sum: 1 },
+          totalValue: { $sum: '$finalAmount' },
+        },
+      },
+    ]);
+
+    const result: Record<string, { count: number; totalValue: number }> = {};
+    for (const status of Object.values(OrderStatus)) {
+      result[status] = { count: 0, totalValue: 0 };
+    }
+    for (const item of pipeline) {
+      result[item._id] = { count: item.count, totalValue: item.totalValue || 0 };
+    }
+
+    return result;
+  }
+
+  async getStats(user: any) {
+    const thisMonthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+
+    const stats = await this.orderModel.aggregate([
+      {
+        $facet: {
+          overview: [
+            {
+              $group: {
+                _id: null,
+                total: { $sum: 1 },
+                approved: { $sum: { $cond: [{ $in: ['$status', ['APPROVED', 'COMPLETED']] }, 1, 0] } },
+                totalRevenue: {
+                  $sum: { $cond: [{ $in: ['$status', ['APPROVED', 'COMPLETED']] }, '$finalAmount', 0] },
+                },
+                totalCommission: {
+                  $sum: { $cond: [{ $in: ['$status', ['APPROVED', 'COMPLETED']] }, '$saleCommission', 0] },
+                },
+              },
+            },
+          ],
+          thisMonth: [
+            { $match: { createdAt: { $gte: thisMonthStart } } },
+            {
+              $group: {
+                _id: null,
+                count: { $sum: 1 },
+                revenue: {
+                  $sum: { $cond: [{ $in: ['$status', ['APPROVED', 'COMPLETED']] }, '$finalAmount', 0] },
+                },
+              },
+            },
+          ],
+          bySale: [
+            {
+              $group: {
+                _id: { saleId: '$saleId', saleName: '$saleName' },
+                total: { $sum: 1 },
+                approved: { $sum: { $cond: [{ $in: ['$status', ['APPROVED', 'COMPLETED']] }, 1, 0] } },
+                revenue: {
+                  $sum: { $cond: [{ $in: ['$status', ['APPROVED', 'COMPLETED']] }, '$finalAmount', 0] },
+                },
+              },
+            },
+          ],
+          byType: [{ $group: { _id: '$orderType', count: { $sum: 1 } } }],
+          bySource: [
+            { $match: { leadSource: { $ne: null } } },
+            { $group: { _id: '$leadSource', count: { $sum: 1 } } },
+          ],
+          pendingValue: [
+            { $match: { status: 'SUBMITTED' } },
+            { $group: { _id: null, count: { $sum: 1 }, total: { $sum: '$finalAmount' } } },
+          ],
+        },
+      },
+    ]);
+
+    const data = stats[0];
+    const overview = data.overview[0] || { total: 0, approved: 0, totalRevenue: 0, totalCommission: 0 };
+
+    return {
+      total: overview.total,
+      approved: overview.approved,
+      conversionRate: overview.total > 0 ? Math.round((overview.approved / overview.total) * 100) : 0,
+      totalRevenue: overview.totalRevenue,
+      totalCommission: overview.totalCommission,
+      thisMonth: data.thisMonth[0] || { count: 0, revenue: 0 },
+      bySale: data.bySale.map((s: any) => ({
+        saleId: s._id.saleId,
+        saleName: s._id.saleName,
+        total: s.total,
+        approved: s.approved,
+        conversionRate: s.total > 0 ? Math.round((s.approved / s.total) * 100) : 0,
+        revenue: s.revenue,
+      })),
+      byType: data.byType,
+      bySource: data.bySource,
+      pendingOrders: data.pendingValue[0]?.count || 0,
+      pendingValue: data.pendingValue[0]?.total || 0,
+    };
+  }
+
+  async remove(id: string, user: any): Promise<Order> {
+    const order = await this.orderModel.findById(id).lean();
+    if (!order) throw new NotFoundException('Đơn hàng không tồn tại');
+
+    const o = order as any;
+    if (![OrderStatus.DRAFT, OrderStatus.CANCELLED].includes(o.status)) {
+      throw new BadRequestException('Chỉ có thể xóa đơn Nháp hoặc Đã hủy');
+    }
+
+    await this.orderModel.findByIdAndDelete(id);
+
+    await this.auditLogService.log({
+      userId: user.userId, userEmail: user.email, userFullName: user.fullName, userRole: user.role,
+      action: AuditAction.DELETE, module: 'ORDERS' as any,
+      targetId: id, targetName: o.orderCode,
+      description: `Xóa đơn ${o.orderCode}`,
+    });
+
+    return order as Order;
   }
 }

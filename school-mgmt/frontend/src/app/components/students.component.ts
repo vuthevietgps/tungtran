@@ -9,6 +9,8 @@ interface StudentForm {
   studentCode: string;
   fullName: string;
   age: number;
+  studentBirthMonth: number | null;
+  parentBirthMonth: number | null;
   parentName: string;
   parentPhone: string;
   faceImage: string;
@@ -40,7 +42,9 @@ interface StudentForm {
           <th>Mã học sinh</th>
           <th>Họ và tên</th>
           <th>Tuổi</th>
+          <th>Tháng sinh HS</th>
           <th>Tên phụ huynh</th>
+          <th>Tháng sinh PH</th>
           <th>Điện thoại</th>
           <th>Gói sản phẩm</th>
           <th>Hành động</th>
@@ -52,7 +56,9 @@ interface StudentForm {
           <td><strong>{{s.studentCode}}</strong></td>
           <td>{{s.fullName}}</td>
           <td>{{s.age}}</td>
+          <td>{{ s.studentBirthMonth ? 'T' + s.studentBirthMonth : '-' }}</td>
           <td>{{s.parentName}}</td>
+          <td>{{ s.parentBirthMonth ? 'T' + s.parentBirthMonth : '-' }}</td>
           <td>{{s.parentPhone}}</td>
           <td>{{ s.productPackage?.name || '-' }}</td>
           <td class="actions-cell">
@@ -77,8 +83,20 @@ interface StudentForm {
           <label>Tuổi
             <input name="age" type="number" min="3" max="25" [(ngModel)]="form.age" required />
           </label>
+          <label>Tháng sinh học sinh
+            <select name="studentBirthMonth" [(ngModel)]="form.studentBirthMonth">
+              <option [ngValue]="null">-- Chọn tháng --</option>
+              <option *ngFor="let m of monthOptions" [ngValue]="m">Tháng {{ m }}</option>
+            </select>
+          </label>
           <label>Tên phụ huynh
             <input name="parentName" [(ngModel)]="form.parentName" required />
+          </label>
+          <label>Tháng sinh phụ huynh
+            <select name="parentBirthMonth" [(ngModel)]="form.parentBirthMonth">
+              <option [ngValue]="null">-- Chọn tháng --</option>
+              <option *ngFor="let m of monthOptions" [ngValue]="m">Tháng {{ m }}</option>
+            </select>
           </label>
           <label>Điện thoại phụ huynh
             <input name="parentPhone" [(ngModel)]="form.parentPhone" required />
@@ -139,6 +157,7 @@ export class StudentsComponent {
   form: StudentForm = this.blankForm();
   canDeleteStudents = false;
   editingStudent: StudentItem | null = null;
+  monthOptions = [1,2,3,4,5,6,7,8,9,10,11,12];
 
   constructor(
     private studentService: StudentService,
@@ -184,6 +203,8 @@ export class StudentsComponent {
       studentCode: student.studentCode || '',
       fullName: student.fullName,
       age: student.age,
+      studentBirthMonth: student.studentBirthMonth || null,
+      parentBirthMonth: student.parentBirthMonth || null,
       parentName: student.parentName,
       parentPhone: student.parentPhone,
       faceImage: student.faceImage,
@@ -209,27 +230,28 @@ export class StudentsComponent {
       faceImage: this.form.faceImage.trim(),
     };
 
+    if (this.form.studentBirthMonth) {
+      payload.studentBirthMonth = Number(this.form.studentBirthMonth);
+    }
+    if (this.form.parentBirthMonth) {
+      payload.parentBirthMonth = Number(this.form.parentBirthMonth);
+    }
+
     if (this.form.productPackage) {
       payload.productPackage = this.form.productPackage;
     }
 
-    let result;
-    if (this.editingStudent) {
-      result = await this.studentService.update(this.editingStudent._id, payload);
-      if (!result.ok) {
-        this.error.set(result.message || 'Không thể cập nhật học sinh');
-        return;
+    try {
+      if (this.editingStudent) {
+        await this.studentService.update(this.editingStudent._id, payload);
+      } else {
+        await this.studentService.create(payload);
       }
-    } else {
-      result = await this.studentService.create(payload);
-      if (!result.ok) {
-        this.error.set(result.message || 'Không thể tạo học sinh');
-        return;
-      }
+      this.closeModal();
+      this.reload();
+    } catch (e: any) {
+      this.error.set(e?.message || 'Không thể lưu học sinh');
     }
-
-    this.closeModal();
-    this.reload();
   }
 
   async handleFileChange(event: Event) {
@@ -240,25 +262,28 @@ export class StudentsComponent {
 
     this.uploadError.set('');
     this.uploading.set(true);
-    const result = await this.studentService.uploadFace(file);
-    this.uploading.set(false);
-
-    if (!result.ok || !result.url) {
-      this.uploadError.set(result.message || 'Tải ảnh thất bại');
-      return;
+    try {
+      const result = await this.studentService.uploadFace(file);
+      this.uploading.set(false);
+      if (!result.url) {
+        this.uploadError.set('Tải ảnh thất bại');
+        return;
+      }
+      this.form.faceImage = result.url;
+    } catch (e: any) {
+      this.uploading.set(false);
+      this.uploadError.set(e?.message || 'Tải ảnh thất bại');
     }
-
-    this.form.faceImage = result.url;
   }
 
   async remove(student: StudentItem) {
     if (!confirm(`Xóa học sinh ${student.fullName}?`)) return;
-    const result = await this.studentService.remove(student._id);
-    if (!result.ok) {
-      alert(result.message || 'Không thể xóa học sinh');
-      return;
+    try {
+      await this.studentService.remove(student._id);
+      this.reload();
+    } catch (e: any) {
+      alert(e?.message || 'Không thể xóa học sinh');
     }
-    this.reload();
   }
 
   private blankForm(): StudentForm {
@@ -266,6 +291,8 @@ export class StudentsComponent {
       studentCode: '',
       fullName: '',
       age: 6,
+      studentBirthMonth: null,
+      parentBirthMonth: null,
       parentName: '',
       parentPhone: '',
       faceImage: '',

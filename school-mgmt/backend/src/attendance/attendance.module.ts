@@ -1,20 +1,24 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { AttendanceService } from './attendance.service';
 import { AttendanceController, PublicAttendanceController } from './attendance.controller';
 import { Attendance, AttendanceSchema } from './schemas/attendance.schema';
 import { ClassesModule } from '../classes/classes.module';
 import { StudentsModule } from '../students/students.module';
-import { Order, OrderSchema } from '../orders/schemas/order.schema';
+import { Session, SessionSchema } from '../sessions/schemas/session.schema';
+import { Invoice, InvoiceSchema } from '../invoices/schemas/invoice.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: Attendance.name, schema: AttendanceSchema },
-      { name: Order.name, schema: OrderSchema },
+      { name: Session.name, schema: SessionSchema },
+      { name: Invoice.name, schema: InvoiceSchema },
     ]),
     ClassesModule,
     StudentsModule,
+    ThrottlerModule.forRoot([{ ttl: 60000, limit: 20 }]),
   ],
   controllers: [AttendanceController, PublicAttendanceController],
   providers: [AttendanceService],

@@ -1,11 +1,23 @@
-import { Injectable } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Injectable, inject } from '@angular/core';
+import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
-import { AuthService } from './auth.service';
 
 export interface ProductItem {
   _id: string;
   name: string;
   code: string;
+  description?: string;
+  category?: string;
+  teachingMode?: string;
+  defaultSessions?: number;
+  defaultSessionDuration?: number;
+  pricePerSession?: number;
+  suggestedPrice?: number;
+  commissionRate?: number;
+  gradeLevel?: string;
+  highlights?: string[];
+  isActive?: boolean;
 }
 
 export interface ProductCreateResult {
@@ -15,42 +27,59 @@ export interface ProductCreateResult {
 
 @Injectable({ providedIn: 'root' })
 export class ProductService {
-  constructor(private auth: AuthService) {}
-
-  private headers(): HeadersInit {
-    const token = this.auth.getToken();
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    return headers;
-  }
+  private http = inject(HttpClient);
 
   async list(): Promise<ProductItem[]> {
-    const res = await fetch(`${environment.apiBase}/products`, {
-      headers: this.headers(),
-    });
-    if (!res.ok) {
-      console.error('Failed to fetch products', await res.text());
+    try {
+      return await firstValueFrom(
+        this.http.get<ProductItem[]>(`${environment.apiBase}/products`, {
+          withCredentials: true,
+        }),
+      );
+    } catch {
       return [];
     }
-    return res.json();
   }
 
-  async create(payload: { name: string; code: string }): Promise<ProductCreateResult> {
-    const res = await fetch(`${environment.apiBase}/products`, {
-      method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify(payload),
-    });
-    if (res.ok) {
-      return { ok: true };
-    }
-    let message = 'Không thể tạo sản phẩm';
+  async create(payload: Partial<ProductItem>): Promise<ProductCreateResult> {
     try {
-      const data = await res.json();
-      message = data?.message ?? message;
-    } catch {
-      message = await res.text();
+      await firstValueFrom(
+        this.http.post(`${environment.apiBase}/products`, payload, {
+          withCredentials: true,
+        }),
+      );
+      return { ok: true };
+    } catch (error: any) {
+      const message = error?.error?.message || 'Không thể tạo sản phẩm';
+      return { ok: false, message };
     }
-    return { ok: false, message };
+  }
+
+  async update(id: string, payload: Partial<ProductItem>): Promise<ProductCreateResult> {
+    try {
+      await firstValueFrom(
+        this.http.patch(`${environment.apiBase}/products/${id}`, payload, {
+          withCredentials: true,
+        }),
+      );
+      return { ok: true };
+    } catch (error: any) {
+      const message = error?.error?.message || 'Không thể cập nhật sản phẩm';
+      return { ok: false, message };
+    }
+  }
+
+  async remove(id: string): Promise<ProductCreateResult> {
+    try {
+      await firstValueFrom(
+        this.http.delete(`${environment.apiBase}/products/${id}`, {
+          withCredentials: true,
+        }),
+      );
+      return { ok: true };
+    } catch (error: any) {
+      const message = error?.error?.message || 'Không thể xóa sản phẩm';
+      return { ok: false, message };
+    }
   }
 }
