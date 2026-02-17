@@ -28,21 +28,21 @@ export class AttendanceController {
 
   // Điểm danh một học sinh
   @Post('mark')
-  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.SALE)
+  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER)
   markAttendance(@Body() dto: CreateAttendanceDto, @Req() req: AuthenticatedRequest) {
     return this.attendanceService.markAttendance(dto, req.user);
   }
 
   // Điểm danh nhiều học sinh cùng lúc
   @Post('bulk-mark')
-  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.SALE)
+  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER)
   bulkMarkAttendance(@Body() dto: BulkAttendanceDto, @Req() req: AuthenticatedRequest) {
     return this.attendanceService.bulkMarkAttendance(dto, req.user);
   }
 
   // Lấy danh sách điểm danh theo lớp và ngày
   @Get('class/:classId')
-  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.SALE)
+  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER)
   getAttendanceByClass(
     @Param('classId', ParseMongoIdPipe) classId: string,
     @Query('date') date: string,
@@ -53,7 +53,7 @@ export class AttendanceController {
 
   // Lấy lịch sử điểm danh của một học sinh
   @Get('student/:studentId')
-  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.SALE)
+  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER)
   getStudentAttendanceHistory(
     @Param('studentId', ParseMongoIdPipe) studentId: string,
     @Query('classId', ParseMongoIdPipe) classId?: string
@@ -63,7 +63,7 @@ export class AttendanceController {
 
   // Cập nhật trạng thái điểm danh
   @Patch(':id')
-  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.SALE)
+  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER)
   updateAttendance(
     @Param('id', ParseMongoIdPipe) id: string,
     @Body() dto: UpdateAttendanceDto,
@@ -74,7 +74,7 @@ export class AttendanceController {
 
   // Thống kê điểm danh theo lớp
   @Get('stats/:classId')
-  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.SALE)
+  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER)
   getAttendanceStats(
     @Param('classId', ParseMongoIdPipe) classId: string,
     @Query('startDate') startDate: string,
@@ -91,7 +91,7 @@ export class AttendanceController {
   }
 
   @Get('classes-with-students')
-  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.SALE)
+  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER)
   getClassesWithStudents(@Req() req: AuthenticatedRequest) {
     return this.attendanceService.getClassesWithStudents(req.user);
   }
@@ -103,9 +103,29 @@ export class AttendanceController {
     return this.attendanceService.generateAttendanceLink(dto, req.user);
   }
 
+  // ── PARENT ENDPOINTS ─────────────────────────────────────────
+
+  /** PH xem lịch sử điểm danh của tất cả con */
+  @Get('my-children')
+  @Roles(Role.PARENT)
+  getChildrenAttendance(
+    @Req() req: AuthenticatedRequest,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+  ) {
+    return this.attendanceService.getChildrenAttendance(req.user.sub, fromDate, toDate);
+  }
+
+  /** PH xem thống kê điểm danh tổng hợp của tất cả con */
+  @Get('my-children/stats')
+  @Roles(Role.PARENT)
+  getChildrenAttendanceStats(@Req() req: AuthenticatedRequest) {
+    return this.attendanceService.getChildrenAttendanceStats(req.user.sub);
+  }
+
   // Lấy báo cáo điểm danh tổng hợp
   @Get('report')
-  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.SALE)
+  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER)
   getAttendanceReport(
     @Query('startDate') startDate: string,
     @Query('endDate') endDate: string,

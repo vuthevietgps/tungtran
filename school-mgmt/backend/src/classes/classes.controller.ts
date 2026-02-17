@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ClassesService } from './classes.service';
 import { CreateClassDto } from './dto/create-class.dto';
 import { UpdateClassDto } from './dto/update-class.dto';
@@ -26,6 +26,16 @@ export class ClassesController {
   @Roles(Role.DIRECTOR, Role.OPS, Role.SALE, Role.TEACHER)
   findAll(@Req() req: AuthenticatedRequest) {
     return this.classesService.findAll(req.user);
+  }
+
+  @Get('suggest-teachers')
+  @Roles(Role.DIRECTOR, Role.OPS)
+  suggestTeachers(
+    @Query('subject') subject?: string,
+    @Query('grade') grade?: string,
+    @Query('teachingMode') teachingMode?: string,
+  ) {
+    return this.classesService.suggestTeachers({ subject, grade, teachingMode });
   }
 
   @Get(':id')

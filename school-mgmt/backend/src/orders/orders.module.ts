@@ -8,6 +8,7 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
 import { Student, StudentSchema } from '../students/schemas/student.schema';
 import { Invoice, InvoiceSchema } from '../invoices/schemas/invoice.schema';
 import { Classroom, ClassroomSchema } from '../classes/schemas/class.schema';
+import { Lead, LeadSchema } from '../leads/schemas/lead.schema';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { Classroom, ClassroomSchema } from '../classes/schemas/class.schema';
       { name: Student.name, schema: StudentSchema },
       { name: Invoice.name, schema: InvoiceSchema },
       { name: Classroom.name, schema: ClassroomSchema },
+      { name: Lead.name, schema: LeadSchema },
     ]),
     AuditLogModule,
   ],

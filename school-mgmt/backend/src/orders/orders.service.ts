@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, FilterQuery } from 'mongoose';
 import { Order, OrderDocument, OrderStatus } from './schemas/order.schema';
+import { Lead, LeadDocument } from '../leads/schemas/lead.schema';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { QueryOrderDto } from './dto/query-order.dto';
@@ -13,6 +14,7 @@ import { EnrollmentService, EnrollmentResult } from './enrollment.service';
 export class OrdersService {
   constructor(
     @InjectModel(Order.name) private orderModel: Model<OrderDocument>,
+    @InjectModel(Lead.name) private leadModel: Model<LeadDocument>,
     private auditLogService: AuditLogService,
     private enrollmentService: EnrollmentService,
   ) {}
@@ -34,12 +36,26 @@ export class OrdersService {
 
   async create(dto: CreateOrderDto, user: any): Promise<Order> {
     const orderCode = await this.generateOrderCode();
+
+    // Resolve adGroupId: Lead takes priority over direct assignment
+    let adGroupId = dto.adGroupId;
+    let adGroupName = dto.adGroupName;
+    if (dto.leadId) {
+      const lead = await this.leadModel.findById(dto.leadId).lean();
+      if (lead?.adGroupId) {
+        adGroupId = lead.adGroupId.toString();
+        adGroupName = (lead as any).adGroupName || adGroupName;
+      }
+    }
+
     const order = new this.orderModel({
       ...dto,
       orderCode,
       status: OrderStatus.DRAFT,
       saleId: user.userId,
       saleName: user.fullName || user.email,
+      adGroupId,
+      adGroupName,
     });
     const saved = await order.save();
 
@@ -377,5 +393,64 @@ export class OrdersService {
     });
 
     return order as Order;
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // COMMISSION REPORT (Phase 1.3)
+  // ════════════════════════════════════════════════════════════════════
+
+  async getCommissionReport(saleId?: string, fromDate?: string, toDate?: string) {
+    const filter: any = {};
+    if (saleId) filter.saleId = saleId;
+    if (fromDate || toDate) {
+      filter.createdAt = {};
+      if (fromDate) filter.createdAt.$gte = new Date(fromDate);
+      if (toDate) filter.createdAt.$lte = new Date(toDate);
+    }
+
+    const orders = await this.orderModel
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Detail list
+    const details = orders.map((o: any) => ({
+      _id: o._id,
+      orderCode: o.orderCode,
+      parentName: o.parentName,
+      studentName: o.studentName,
+      finalAmount: o.finalAmount || 0,
+      saleCommission: o.saleCommission || 0,
+      status: o.status,
+      saleName: o.saleName,
+      saleId: o.saleId,
+      createdAt: o.createdAt,
+    }));
+
+    // Group by month
+    const byMonth: Record<string, { revenue: number; commission: number; count: number }> = {};
+    for (const o of orders) {
+      if (!['COMPLETED', 'APPROVED'].includes((o as any).status)) continue;
+      const month = new Date((o as any).createdAt).toISOString().slice(0, 7);
+      if (!byMonth[month]) byMonth[month] = { revenue: 0, commission: 0, count: 0 };
+      byMonth[month].revenue += (o as any).finalAmount || 0;
+      byMonth[month].commission += (o as any).saleCommission || 0;
+      byMonth[month].count++;
+    }
+
+    // Summary
+    const completedOrders = orders.filter((o: any) => o.status === 'COMPLETED');
+    const approvedOrders = orders.filter((o: any) => o.status === 'APPROVED');
+
+    return {
+      details,
+      byMonth: Object.entries(byMonth).map(([month, data]) => ({ month, ...data })).sort((a, b) => b.month.localeCompare(a.month)),
+      summary: {
+        totalRevenue: completedOrders.reduce((s, o: any) => s + (o.finalAmount || 0), 0),
+        totalCommission: completedOrders.reduce((s, o: any) => s + (o.saleCommission || 0), 0),
+        pendingCommission: approvedOrders.reduce((s, o: any) => s + (o.saleCommission || 0), 0),
+        totalOrders: orders.length,
+      },
+    };
   }
 }

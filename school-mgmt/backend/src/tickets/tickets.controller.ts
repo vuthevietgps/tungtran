@@ -52,6 +52,15 @@ export class TicketsController {
     return this.ticketsService.getStats();
   }
 
+  @Get('sla-metrics')
+  @Roles(Role.OPS, Role.DIRECTOR)
+  getSlaMetrics(
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+  ) {
+    return this.ticketsService.getSlaMetrics(fromDate, toDate);
+  }
+
   /** PH xem tickets của mình */
   @Get('my-tickets')
   @Roles(Role.PARENT, Role.TEACHER, Role.ACCOUNTING)

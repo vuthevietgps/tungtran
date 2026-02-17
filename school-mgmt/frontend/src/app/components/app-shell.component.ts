@@ -16,108 +16,263 @@ import { Role, ROLE_LABELS } from '../models/role.enum';
       <button type="button" class="toggle" (click)="toggleSidebar()">{{ sidebarCollapsed ? '&#9776;' : '&laquo;' }}</button>
       <h3 *ngIf="!sidebarCollapsed">Chức năng</h3>
       <nav>
-        <!-- Dashboard (all roles) -->
-        <a routerLink="/app/dashboard" routerLinkActive="active" title="Dashboard">
-          <span class="icon">&#9632;</span><span class="label">Dashboard</span>
-        </a>
 
-        <!-- Director: Pending Approvals -->
-        <a routerLink="/app/pending-approvals" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Chờ duyệt">
-          <span class="icon">&#128203;</span><span class="label">Chờ duyệt</span>
-          <span class="nav-badge" *ngIf="pendingCount > 0">{{ pendingCount }}</span>
-        </a>
+        <!-- ═══ TỔNG QUAN ═══ -->
+        <div class="menu-group" [class.open]="menuGroups['overview']">
+          <button class="menu-group-header" (click)="toggleGroup('overview')" *ngIf="!sidebarCollapsed">
+            <span class="group-icon">&#9632;</span>
+            <span class="group-label">Tổng quan</span>
+            <span class="group-arrow">{{ menuGroups['overview'] ? '&#9650;' : '&#9660;' }}</span>
+          </button>
+          <div class="menu-group-items" [class.collapsed-sidebar]="sidebarCollapsed">
+            <a routerLink="/app/dashboard" routerLinkActive="active" title="Dashboard">
+              <span class="icon">&#9632;</span><span class="label">Dashboard</span>
+            </a>
+            <a routerLink="/app/pending-approvals" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Chờ duyệt">
+              <span class="icon">&#128203;</span><span class="label">Chờ duyệt</span>
+              <span class="nav-badge" *ngIf="pendingCount > 0">{{ pendingCount }}</span>
+            </a>
+            <a routerLink="/app/notifications" routerLinkActive="active" title="Thông báo">
+              <span class="icon">&#128276;</span><span class="label">Thông báo</span>
+              <span class="nav-badge" *ngIf="unreadNotifCount > 0">{{ unreadNotifCount }}</span>
+            </a>
+          </div>
+        </div>
 
-        <!-- Notifications -->
-        <a routerLink="/app/notifications" routerLinkActive="active" title="Thông báo">
-          <span class="icon">&#128276;</span><span class="label">Thông báo</span>
-          <span class="nav-badge" *ngIf="unreadNotifCount > 0">{{ unreadNotifCount }}</span>
-        </a>
+        <!-- ═══ QUẢN LÝ ═══ -->
+        <div class="menu-group" [class.open]="menuGroups['management']" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE, Role.TEACHER])">
+          <button class="menu-group-header" (click)="toggleGroup('management')" *ngIf="!sidebarCollapsed">
+            <span class="group-icon">&#128736;</span>
+            <span class="group-label">Quản lý</span>
+            <span class="group-arrow">{{ menuGroups['management'] ? '&#9650;' : '&#9660;' }}</span>
+          </button>
+          <div class="menu-group-items" [class.collapsed-sidebar]="sidebarCollapsed">
+            <a routerLink="/app/users" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Quản lý User">
+              <span class="icon">&#128100;</span><span class="label">Quản lý User</span>
+            </a>
+            <a routerLink="/app/products" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Quản lý Khóa học">
+              <span class="icon">&#128218;</span><span class="label">Quản lý Khóa học</span>
+            </a>
+            <a routerLink="/app/students" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE])" title="Quản lý Học sinh">
+              <span class="icon">&#127891;</span><span class="label">Quản lý Học sinh</span>
+            </a>
+            <a routerLink="/app/classes" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.SALE])" title="Quản lý Lớp học">
+              <span class="icon">&#127979;</span><span class="label">Quản lý Lớp học</span>
+            </a>
+          </div>
+        </div>
 
-        <!-- Director -->
-        <a routerLink="/app/users" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Quản lý User">
-          <span class="icon">&#128100;</span><span class="label">Quản lý User</span>
-        </a>
-        <a routerLink="/app/products" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Quản lý Khóa học">
-          <span class="icon">&#128218;</span><span class="label">Quản lý Khóa học</span>
-        </a>
+        <!-- ═══ KINH DOANH ═══ -->
+        <div class="menu-group" [class.open]="menuGroups['sales']" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.SALE])">
+          <button class="menu-group-header" (click)="toggleGroup('sales')" *ngIf="!sidebarCollapsed">
+            <span class="group-icon">&#128176;</span>
+            <span class="group-label">Kinh doanh</span>
+            <span class="group-arrow">{{ menuGroups['sales'] ? '&#9650;' : '&#9660;' }}</span>
+          </button>
+          <div class="menu-group-items" [class.collapsed-sidebar]="sidebarCollapsed">
+            <a routerLink="/app/leads" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.SALE])" title="KH tiềm năng">
+              <span class="icon">&#128161;</span><span class="label">KH tiềm năng</span>
+            </a>
+            <a routerLink="/app/orders" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.SALE])" title="Đơn đăng ký">
+              <span class="icon">&#128203;</span><span class="label">Đơn đăng ký</span>
+            </a>
+            <a routerLink="/app/commission-report" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.SALE, Role.ACCOUNTING])" title="Hoa hồng">
+              <span class="icon">&#128178;</span><span class="label">BC Hoa hồng</span>
+            </a>
+          </div>
+        </div>
 
-        <!-- Sales / CRM -->
-        <a routerLink="/app/leads" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.SALE])" title="KH tiềm năng">
-          <span class="icon">&#128161;</span><span class="label">KH tiềm năng</span>
-        </a>
-        <a routerLink="/app/orders" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.SALE])" title="Đơn đăng ký">
-          <span class="icon">&#128203;</span><span class="label">Đơn đăng ký</span>
-        </a>
+        <!-- ═══ QUẢNG CÁO ═══ -->
+        <div class="menu-group" [class.open]="menuGroups['ads']" *ngIf="hasRole([Role.DIRECTOR, Role.OPS])">
+          <button class="menu-group-header" (click)="toggleGroup('ads')" *ngIf="!sidebarCollapsed">
+            <span class="group-icon">&#128226;</span>
+            <span class="group-label">Quảng cáo</span>
+            <span class="group-arrow">{{ menuGroups['ads'] ? '&#9650;' : '&#9660;' }}</span>
+          </button>
+          <div class="menu-group-items" [class.collapsed-sidebar]="sidebarCollapsed">
+            <a routerLink="/app/ads-management" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS])" title="Quản lý QC">
+              <span class="icon">&#128227;</span><span class="label">Quản lý QC</span>
+            </a>
+            <a routerLink="/app/ads-analytics" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Phân tích QC">
+              <span class="icon">&#128200;</span><span class="label">Phân tích QC</span>
+            </a>
+          </div>
+        </div>
 
-        <a routerLink="/app/teacher-kpi" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="KPI Giáo viên">
-          <span class="icon">&#127942;</span><span class="label">KPI Giáo viên</span>
-        </a>
-        <a routerLink="/app/calendar-overview" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Lịch tổng quan">
-          <span class="icon">&#128197;</span><span class="label">Lịch tổng quan</span>
-        </a>
-        <a routerLink="/app/teacher-profiles" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Hồ sơ giáo viên">
-          <span class="icon">&#128101;</span><span class="label">Hồ sơ giáo viên</span>
-        </a>
+        <!-- ═══ CHATBOT ═══ -->
+        <div class="menu-group" [class.open]="menuGroups['chatbot']" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.SALE])">
+          <button class="menu-group-header" (click)="toggleGroup('chatbot')" *ngIf="!sidebarCollapsed">
+            <span class="group-icon">&#128172;</span>
+            <span class="group-label">Chatbot</span>
+            <span class="group-arrow">{{ menuGroups['chatbot'] ? '&#9650;' : '&#9660;' }}</span>
+          </button>
+          <div class="menu-group-items" [class.collapsed-sidebar]="sidebarCollapsed">
+            <a routerLink="/app/conversations" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.SALE])" title="Hội thoại">
+              <span class="icon">&#128172;</span><span class="label">Hội thoại</span>
+            </a>
+            <a routerLink="/app/chatbot-settings" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Cài đặt Chatbot">
+              <span class="icon">&#9881;</span><span class="label">Cài đặt Chatbot</span>
+            </a>
+          </div>
+        </div>
 
-        <!-- OPS -->
-        <a routerLink="/app/students" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE])" title="Quản lý Học sinh">
-          <span class="icon">&#127891;</span><span class="label">Quản lý Học sinh</span>
-        </a>
-        <a routerLink="/app/classes" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.SALE])" title="Quản lý Lớp học">
-          <span class="icon">&#127979;</span><span class="label">Quản lý Lớp học</span>
-        </a>
-        <a routerLink="/app/sessions" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.PARENT, Role.ACCOUNTING])" title="Buổi học">
-          <span class="icon">&#128197;</span><span class="label">Buổi học</span>
-        </a>
+        <!-- ═══ HỌC TẬP (PARENT) ═══ -->
+        <div class="menu-group" [class.open]="menuGroups['learning']" *ngIf="hasRole([Role.PARENT])">
+          <button class="menu-group-header" (click)="toggleGroup('learning')" *ngIf="!sidebarCollapsed">
+            <span class="group-icon">&#128218;</span>
+            <span class="group-label">Học tập</span>
+            <span class="group-arrow">{{ menuGroups['learning'] ? '&#9650;' : '&#9660;' }}</span>
+          </button>
+          <div class="menu-group-items" [class.collapsed-sidebar]="sidebarCollapsed">
+            <a routerLink="/app/student-progress" routerLinkActive="active" title="Tiến trình học">
+              <span class="icon">&#128200;</span><span class="label">Tiến trình học</span>
+            </a>
+            <a routerLink="/app/parent-attendance" routerLinkActive="active" title="Lịch sử điểm danh">
+              <span class="icon">&#9745;</span><span class="label">Điểm danh</span>
+            </a>
+            <a routerLink="/app/sessions" routerLinkActive="active" title="Buổi học">
+              <span class="icon">&#128197;</span><span class="label">Buổi học</span>
+            </a>
+            <a routerLink="/app/parent-calendar" routerLinkActive="active" title="Lịch học">
+              <span class="icon">&#128198;</span><span class="label">Lịch học</span>
+            </a>
+          </div>
+        </div>
 
-        <!-- Accounting -->
-        <a routerLink="/app/invoices" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.SALE])" title="Quản lý Hóa đơn">
-          <span class="icon">&#128196;</span><span class="label">Quản lý Hóa đơn</span>
-        </a>
-        <a routerLink="/app/wallets" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.PARENT])" title="Quản lý Ví">
-          <span class="icon">&#128176;</span><span class="label">Quản lý Ví</span>
-        </a>
-        <a routerLink="/app/payroll" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.TEACHER])" title="Thanh toán lương">
-          <span class="icon">&#128181;</span><span class="label">Thanh toán lương</span>
-        </a>
+        <!-- ═══ GIẢNG DẠY ═══ -->
+        <div class="menu-group" [class.open]="menuGroups['teaching']" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.ACCOUNTING])">
+          <button class="menu-group-header" (click)="toggleGroup('teaching')" *ngIf="!sidebarCollapsed">
+            <span class="group-icon">&#127891;</span>
+            <span class="group-label">Giảng dạy</span>
+            <span class="group-arrow">{{ menuGroups['teaching'] ? '&#9650;' : '&#9660;' }}</span>
+          </button>
+          <div class="menu-group-items" [class.collapsed-sidebar]="sidebarCollapsed">
+            <a routerLink="/app/sessions" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.ACCOUNTING])" title="Buổi học">
+              <span class="icon">&#128197;</span><span class="label">Buổi học</span>
+            </a>
+            <a routerLink="/app/attendance" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.TEACHER])" title="Điểm danh">
+              <span class="icon">&#9745;</span><span class="label">Điểm danh</span>
+            </a>
+            <a routerLink="/app/teaching-materials" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.TEACHER])" title="Tài liệu giảng dạy">
+              <span class="icon">&#128194;</span><span class="label">Tài liệu GD</span>
+            </a>
+            <a routerLink="/app/teaching-report" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.TEACHER])" title="BC Giảng dạy">
+              <span class="icon">&#128221;</span><span class="label">BC Giảng dạy</span>
+            </a>
+            <a routerLink="/app/teacher-kpi" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="KPI Giáo viên">
+              <span class="icon">&#127942;</span><span class="label">KPI Giáo viên</span>
+            </a>
+            <a routerLink="/app/calendar-overview" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Lịch tổng quan">
+              <span class="icon">&#128197;</span><span class="label">Lịch tổng quan</span>
+            </a>
+            <a routerLink="/app/teacher-profiles" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Hồ sơ giáo viên">
+              <span class="icon">&#128101;</span><span class="label">Hồ sơ giáo viên</span>
+            </a>
+            <a routerLink="/app/teacher-profile" routerLinkActive="active" *ngIf="hasRole([Role.TEACHER])" title="Hồ sơ giảng dạy">
+              <span class="icon">&#128100;</span><span class="label">Hồ sơ cá nhân</span>
+            </a>
+            <a routerLink="/app/teacher-calendar" routerLinkActive="active" *ngIf="hasRole([Role.TEACHER])" title="Lịch dạy">
+              <span class="icon">&#128198;</span><span class="label">Lịch dạy</span>
+            </a>
+            <a routerLink="/app/teacher-substitute-request" routerLinkActive="active" *ngIf="hasRole([Role.TEACHER])" title="Xin nghỉ / Thay thế">
+              <span class="icon">&#128260;</span><span class="label">Xin nghỉ/Thay thế</span>
+            </a>
+            <a routerLink="/app/employee-performance" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Hiệu suất NV">
+              <span class="icon">&#127942;</span><span class="label">Hiệu suất NV</span>
+            </a>
+          </div>
+        </div>
 
-        <!-- Teaching ops -->
-        <a routerLink="/app/attendance" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.TEACHER])" title="Điểm danh">
-          <span class="icon">&#9745;</span><span class="label">Điểm danh</span>
-        </a>
-        <a routerLink="/app/attendance-report" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.TEACHER])" title="BC Điểm danh">
-          <span class="icon">&#128202;</span><span class="label">BC Điểm danh</span>
-        </a>
-        <a routerLink="/app/student-report" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING])" title="BC Học sinh">
-          <span class="icon">&#128203;</span><span class="label">BC Học sinh</span>
-        </a>
-        <a routerLink="/app/comprehensive-report" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING])" title="BC Tổng hợp">
-          <span class="icon">&#128200;</span><span class="label">BC Tổng hợp</span>
-        </a>
-        <a routerLink="/app/teaching-report" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.TEACHER])" title="BC Giảng dạy">
-          <span class="icon">&#128221;</span><span class="label">BC Giảng dạy</span>
-        </a>
-        <a routerLink="/app/teaching-materials" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.TEACHER])" title="Tài liệu giảng dạy">
-          <span class="icon">&#128194;</span><span class="label">Tài liệu GD</span>
-        </a>
-        <a routerLink="/app/teacher-profile" routerLinkActive="active" *ngIf="hasRole([Role.TEACHER])" title="Hồ sơ giảng dạy">
-          <span class="icon">&#128100;</span><span class="label">Hồ sơ cá nhân</span>
-        </a>
+        <!-- ═══ TÀI CHÍNH ═══ -->
+        <div class="menu-group" [class.open]="menuGroups['finance']" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.SALE, Role.PARENT, Role.TEACHER])">
+          <button class="menu-group-header" (click)="toggleGroup('finance')" *ngIf="!sidebarCollapsed">
+            <span class="group-icon">&#128181;</span>
+            <span class="group-label">Tài chính</span>
+            <span class="group-arrow">{{ menuGroups['finance'] ? '&#9650;' : '&#9660;' }}</span>
+          </button>
+          <div class="menu-group-items" [class.collapsed-sidebar]="sidebarCollapsed">
+            <a routerLink="/app/invoices" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.SALE])" title="Quản lý Hóa đơn">
+              <span class="icon">&#128196;</span><span class="label">Quản lý Hóa đơn</span>
+            </a>
+            <a routerLink="/app/parent-invoices" routerLinkActive="active" *ngIf="hasRole([Role.PARENT])" title="Hóa đơn của tôi">
+              <span class="icon">&#128196;</span><span class="label">Hóa đơn của tôi</span>
+            </a>
+            <a routerLink="/app/wallets" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.PARENT])" title="Quản lý Ví">
+              <span class="icon">&#128176;</span><span class="label">Quản lý Ví</span>
+            </a>
+            <a routerLink="/app/payroll" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.TEACHER])" title="Thanh toán lương GV">
+              <span class="icon">&#128181;</span><span class="label">Lương GV (session)</span>
+            </a>
+            <a routerLink="/app/work-sessions" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.TEACHER, Role.SALE])" title="Chấm công">
+              <span class="icon">&#9201;</span><span class="label">Chấm công</span>
+            </a>
+            <a routerLink="/app/salary-config" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING])" title="Cấu hình lương">
+              <span class="icon">&#9881;</span><span class="label">Cấu hình lương</span>
+            </a>
+            <a routerLink="/app/staff-payroll" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS])" title="Bảng lương NV">
+              <span class="icon">&#128176;</span><span class="label">Bảng lương NV</span>
+            </a>
+            <a routerLink="/app/expenses" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS])" title="Chi phí khác">
+              <span class="icon">&#128184;</span><span class="label">Chi phí khác</span>
+            </a>
+            <a routerLink="/app/loans" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING])" title="Quản lý Vốn vay">
+              <span class="icon">&#128178;</span><span class="label">Vốn vay</span>
+            </a>
+            <a routerLink="/app/financial-control" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING])" title="Kiểm soát Tài chính">
+              <span class="icon">&#127974;</span><span class="label">KS Tài chính</span>
+            </a>
+            <a routerLink="/app/aging-report" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING])" title="Công nợ phải thu">
+              <span class="icon">&#128203;</span><span class="label">Công nợ phải thu</span>
+            </a>
+            <a routerLink="/app/bank-reconciliation" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING])" title="Đối soát ngân hàng">
+              <span class="icon">&#127974;</span><span class="label">Đối soát NH</span>
+            </a>
+          </div>
+        </div>
 
-        <!-- Tickets (all roles) -->
-        <a routerLink="/app/tickets" routerLinkActive="active" title="Hỗ trợ & Ticket">
-          <span class="icon">&#127915;</span><span class="label">Hỗ trợ & Ticket</span>
-        </a>
+        <!-- ═══ BÁO CÁO ═══ -->
+        <div class="menu-group" [class.open]="menuGroups['reports']" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.TEACHER])">
+          <button class="menu-group-header" (click)="toggleGroup('reports')" *ngIf="!sidebarCollapsed">
+            <span class="group-icon">&#128202;</span>
+            <span class="group-label">Báo cáo</span>
+            <span class="group-arrow">{{ menuGroups['reports'] ? '&#9650;' : '&#9660;' }}</span>
+          </button>
+          <div class="menu-group-items" [class.collapsed-sidebar]="sidebarCollapsed">
+            <a routerLink="/app/attendance-report" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.TEACHER])" title="BC Điểm danh">
+              <span class="icon">&#128202;</span><span class="label">BC Điểm danh</span>
+            </a>
+            <a routerLink="/app/student-report" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING])" title="BC Học sinh">
+              <span class="icon">&#128203;</span><span class="label">BC Học sinh</span>
+            </a>
+            <a routerLink="/app/comprehensive-report" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING])" title="BC Tổng hợp">
+              <span class="icon">&#128200;</span><span class="label">BC Tổng hợp</span>
+            </a>
+            <a routerLink="/app/export-reports" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING])" title="Xuất báo cáo">
+              <span class="icon">&#128230;</span><span class="label">Xuất báo cáo</span>
+            </a>
+          </div>
+        </div>
 
-        <!-- Export Reports -->
-        <a routerLink="/app/export-reports" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING])" title="Xuất báo cáo">
-          <span class="icon">&#128230;</span><span class="label">Xuất báo cáo</span>
-        </a>
+        <!-- ═══ HỆ THỐNG ═══ -->
+        <div class="menu-group" [class.open]="menuGroups['system']">
+          <button class="menu-group-header" (click)="toggleGroup('system')" *ngIf="!sidebarCollapsed">
+            <span class="group-icon">&#9881;</span>
+            <span class="group-label">Hệ thống</span>
+            <span class="group-arrow">{{ menuGroups['system'] ? '&#9650;' : '&#9660;' }}</span>
+          </button>
+          <div class="menu-group-items" [class.collapsed-sidebar]="sidebarCollapsed">
+            <a routerLink="/app/tickets" routerLinkActive="active" title="Hỗ trợ & Ticket">
+              <span class="icon">&#127915;</span><span class="label">Hỗ trợ & Ticket</span>
+            </a>
+            <a routerLink="/app/messages" routerLinkActive="active" title="Tin nhắn nội bộ">
+              <span class="icon">&#128172;</span><span class="label">Tin nhắn</span>
+            </a>
+            <a routerLink="/app/audit-log" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Nhật ký">
+              <span class="icon">&#128270;</span><span class="label">Nhật ký HĐ</span>
+            </a>
+          </div>
+        </div>
 
-        <!-- Audit Log -->
-        <a routerLink="/app/audit-log" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Nhật ký">
-          <span class="icon">&#128270;</span><span class="label">Nhật ký HĐ</span>
-        </a>
       </nav>
       <div class="user-info" *ngIf="!sidebarCollapsed">
         <div class="user-name">{{ auth.userSignal()?.fullName }}</div>
@@ -135,7 +290,7 @@ import { Role, ROLE_LABELS } from '../models/role.enum';
   styles: [`
     .layout { display:flex; min-height:100vh; background:#e2e8f0; font-family:'Segoe UI',sans-serif; }
     .sidebar {
-      width:230px; background:#0f172a; color:#e2e8f0; padding:16px;
+      width:250px; background:#0f172a; color:#e2e8f0; padding:16px;
       display:flex; flex-direction:column; position:relative; transition:width 0.2s ease;
       overflow-y:auto;
     }
@@ -148,16 +303,46 @@ import { Role, ROLE_LABELS } from '../models/role.enum';
     .sidebar.collapsed .toggle { position:static; margin-bottom:12px; }
     .sidebar h3 { margin:44px 0 0; font-size:13px; text-transform:uppercase; letter-spacing:1px; color:#94a3b8; }
     nav { margin-top:16px; width:100%; flex:1; }
-    nav a {
-      display:flex; align-items:center; gap:10px; padding:9px 12px; margin-bottom:2px;
-      text-decoration:none; border-radius:6px; color:#cbd5e1; font-size:13px;
-      transition:background 0.15s, color 0.15s;
+
+    /* ═══ MENU GROUP ═══ */
+    .menu-group { margin-bottom:2px; }
+    .menu-group-header {
+      display:flex; align-items:center; gap:8px; width:100%; padding:8px 12px;
+      border:none; background:#1e293b; color:#7dd3fc; cursor:pointer;
+      font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.8px;
+      border-radius:6px; transition:background 0.15s, color 0.15s;
+      border-left:3px solid #38bdf8;
     }
-    nav a:hover { background:#1e293b; color:#f1f5f9; }
-    nav a.active { background:#2563eb; color:#fff; font-weight:600; }
+    .menu-group-header:hover { background:#273548; color:#bae6fd; }
+    .menu-group.open .menu-group-header { background:#1e3a5f; color:#38bdf8; border-left-color:#38bdf8; }
+    .group-icon { font-size:14px; min-width:18px; text-align:center; }
+    .group-label { flex:1; text-align:left; }
+    .group-arrow { font-size:9px; opacity:0.7; transition:transform 0.2s; }
+    .menu-group-items {
+      max-height:0; overflow:hidden; transition:max-height 0.25s ease;
+      background:#0a1628; border-radius:0 0 6px 6px;
+    }
+    .menu-group.open .menu-group-items { max-height:500px; }
+    .menu-group-items.collapsed-sidebar { max-height:none !important; overflow:visible; }
+    .menu-group-items a { padding-left:28px; }
+    .sidebar.collapsed .menu-group-items a { padding-left:0; }
+
+    nav a {
+      display:flex; align-items:center; gap:10px; padding:8px 12px; margin-bottom:1px;
+      text-decoration:none; border-radius:4px; color:#94a3b8; font-size:13px;
+      transition:background 0.15s, color 0.15s;
+      border-left:2px solid transparent;
+    }
+    nav a:hover { background:#1e293b; color:#e2e8f0; border-left-color:#475569; }
+    nav a.active {
+      background:#431407; color:#fb923c; font-weight:600;
+      border-left:2px solid #f97316;
+    }
     .icon { font-size:16px; min-width:20px; text-align:center; }
     .sidebar.collapsed .label { display:none; }
     .sidebar.collapsed nav a { justify-content:center; padding:10px; }
+    .sidebar.collapsed .menu-group-header { display:none; }
+    .sidebar.collapsed .menu-group { margin-bottom:0; }
     .nav-badge {
       margin-left:auto; background:#dc2626; color:#fff; border-radius:999px;
       font-size:10px; padding:1px 6px; font-weight:700; min-width:16px; text-align:center;
@@ -181,6 +366,20 @@ export class AppShellComponent {
   sidebarCollapsed = false;
   unreadNotifCount = 0;
   pendingCount = 0;
+
+  /** Track open/closed state of each menu group */
+  menuGroups: Record<string, boolean> = {
+    overview: true,
+    management: true,
+    sales: true,
+    ads: false,
+    chatbot: false,
+    learning: true,
+    teaching: true,
+    finance: true,
+    reports: false,
+    system: false,
+  };
 
   private notifSvc = inject(NotificationsService);
   private pendingSvc = inject(PendingApprovalsService);
@@ -222,5 +421,9 @@ export class AppShellComponent {
 
   toggleSidebar(): void {
     this.sidebarCollapsed = !this.sidebarCollapsed;
+  }
+
+  toggleGroup(group: string): void {
+    this.menuGroups[group] = !this.menuGroups[group];
   }
 }

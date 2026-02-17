@@ -10,6 +10,8 @@ import { AddContactDto } from './dto/add-contact.dto';
 import { MarkLostDto } from './dto/mark-lost.dto';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { AuditAction } from '../audit-log/schemas/audit-log.schema';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationType } from '../notifications/schemas/notification.schema';
 
 @Injectable()
 export class LeadsService {
@@ -18,6 +20,7 @@ export class LeadsService {
   constructor(
     @InjectModel(Lead.name) private leadModel: Model<LeadDocument>,
     private auditLogService: AuditLogService,
+    private notificationsService: NotificationsService,
   ) {}
 
   private async generateLeadCode(): Promise<string> {
@@ -530,5 +533,49 @@ export class LeadsService {
     });
 
     return lead as Lead;
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // FOLLOW-UP AUTO-REMINDER (Phase 2.4) - Runs at 8am Mon-Sat
+  // ════════════════════════════════════════════════════════════════════
+
+  @Cron('0 8 * * 1-6')
+  async checkFollowUpsDue() {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const leads = await this.leadModel.find({
+      nextFollowUp: { $lte: tomorrow },
+      status: { $in: [LeadStatus.CONTACTED, LeadStatus.CONSULTING, LeadStatus.INTERESTED, LeadStatus.NEW] },
+      saleId: { $exists: true, $ne: null },
+    }).lean();
+
+    let notifCount = 0;
+    for (const lead of leads) {
+      if (!lead.saleId) continue;
+      const isOverdue = new Date(lead.nextFollowUp!) < today;
+      try {
+        await this.notificationsService.create({
+          recipientId: lead.saleId.toString(),
+          recipientRole: 'SALE',
+          type: NotificationType.LEAD_FOLLOW_UP,
+          priority: isOverdue ? 'HIGH' as any : 'MEDIUM' as any,
+          title: isOverdue ? 'Follow-up quá hạn' : 'Follow-up hôm nay',
+          message: `Lead ${lead.leadCode} - ${lead.parentName} (${lead.parentPhone}) cần follow-up${isOverdue ? ' (QUÁ HẠN)' : ''}`,
+          link: '/app/leads',
+          targetId: (lead as any)._id.toString(),
+          targetModule: 'LEADS',
+        });
+        notifCount++;
+      } catch (err) {
+        this.logger.error(`Failed to create follow-up notification for lead ${lead.leadCode}`, err);
+      }
+    }
+
+    if (notifCount > 0) {
+      this.logger.log(`Follow-up reminders: sent ${notifCount} notifications for ${leads.length} leads`);
+    }
   }
 }

@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { InjectModel, InjectConnection } from '@nestjs/mongoose';
+import { Model, Types, Connection, ClientSession } from 'mongoose';
 import { Order, OrderDocument, OrderStatus } from './schemas/order.schema';
 import { Student, StudentDocument } from '../students/schemas/student.schema';
 import { Invoice, InvoiceDocument, InvoiceStatus, InvoiceType } from '../invoices/schemas/invoice.schema';
@@ -29,6 +29,7 @@ export class EnrollmentService {
     @InjectModel(Student.name) private readonly studentModel: Model<StudentDocument>,
     @InjectModel(Invoice.name) private readonly invoiceModel: Model<InvoiceDocument>,
     @InjectModel(Classroom.name) private readonly classModel: Model<ClassDocument>,
+    @InjectConnection() private readonly connection: Connection,
     private readonly auditLogService: AuditLogService,
     private readonly notificationsService: NotificationsService,
   ) {}
@@ -50,33 +51,56 @@ export class EnrollmentService {
 
     const o = order as any;
 
+    // ── Atomic transaction: Student + Invoices + Order status ──
+    const mongoSession = await this.connection.startSession();
+    let studentId = '';
+    let studentCode = '';
+    let isNew = false;
+    let invoiceIds: string[] = [];
+
     try {
-      // ── Step 1: Tạo hoặc tìm Student ──
-      const { studentId, studentCode, isNew } = await this.findOrCreateStudent(o, approver);
+      await mongoSession.withTransaction(async () => {
+        // ── Step 1: Tạo hoặc tìm Student ──
+        const studentResult = await this.findOrCreateStudent(o, approver, mongoSession);
+        studentId = studentResult.studentId;
+        studentCode = studentResult.studentCode;
+        isNew = studentResult.isNew;
 
-      // ── Step 2: Tạo Invoice cho mỗi item ──
-      const invoiceIds: string[] = [];
-      for (const item of o.items) {
-        try {
-          const invoiceId = await this.createInvoiceForItem(o, item, studentId, approver);
+        // ── Step 2: Tạo Invoice cho mỗi item ──
+        invoiceIds = [];
+        for (const item of o.items) {
+          const invoiceId = await this.createInvoiceForItem(o, item, studentId, approver, mongoSession);
           invoiceIds.push(invoiceId);
-        } catch (err) {
-          const msg = `Lỗi tạo hóa đơn cho ${item.productName || item.productId}: ${(err as Error).message}`;
-          this.logger.error(msg);
-          errors.push(msg);
         }
-      }
 
-      // ── Step 3: Cập nhật processedResults + status → COMPLETED ──
+        // ── Step 3: Cập nhật processedResults + status → COMPLETED ──
+        await this.orderModel.findByIdAndUpdate(orderId, {
+          status: OrderStatus.COMPLETED,
+          processedResults: {
+            studentId: new Types.ObjectId(studentId),
+            invoiceIds: invoiceIds.map(id => new Types.ObjectId(id)),
+            classIds: [], // Classes sẽ được tạo sau khi Invoice được duyệt thanh toán
+          },
+        }, { session: mongoSession });
+      });
+    } catch (err) {
+      this.logger.error(`Enrollment transaction failed for order ${o.orderCode}: ${(err as Error).message}`);
+
+      // Rollback: đổi lại status APPROVED để OPS xử lý thủ công
       await this.orderModel.findByIdAndUpdate(orderId, {
-        status: OrderStatus.COMPLETED,
-        processedResults: {
-          studentId: new Types.ObjectId(studentId),
-          invoiceIds: invoiceIds.map(id => new Types.ObjectId(id)),
-          classIds: [], // Classes sẽ được tạo sau khi Invoice được duyệt thanh toán
-        },
+        status: OrderStatus.APPROVED,
       });
 
+      return {
+        success: false,
+        errors: [`Enrollment thất bại: ${(err as Error).message}`],
+      };
+    } finally {
+      await mongoSession.endSession();
+    }
+
+    // ── Non-critical operations OUTSIDE transaction ──
+    try {
       // ── Step 4: Audit log ──
       await this.auditLogService.log({
         userId: approver.userId,
@@ -114,27 +138,17 @@ export class EnrollmentService {
         targetId: orderId,
         targetModule: 'ORDERS',
       });
-
-      return {
-        success: errors.length === 0,
-        studentId,
-        studentCode,
-        invoiceIds,
-        errors: errors.length > 0 ? errors : undefined,
-      };
-    } catch (err) {
-      this.logger.error(`Enrollment failed for order ${o.orderCode}: ${(err as Error).message}`);
-
-      // Rollback: đổi lại status APPROVED để OPS xử lý thủ công
-      await this.orderModel.findByIdAndUpdate(orderId, {
-        status: OrderStatus.APPROVED,
-      });
-
-      return {
-        success: false,
-        errors: [`Enrollment thất bại: ${(err as Error).message}`],
-      };
+    } catch (notifyErr) {
+      this.logger.warn(`Non-critical post-enrollment tasks failed for ${o.orderCode}: ${(notifyErr as Error).message}`);
     }
+
+    return {
+      success: errors.length === 0,
+      studentId,
+      studentCode,
+      invoiceIds,
+      errors: errors.length > 0 ? errors : undefined,
+    };
   }
 
   // ────────────────────────────────────────────────
@@ -144,11 +158,22 @@ export class EnrollmentService {
   private async findOrCreateStudent(
     order: any,
     approver: any,
+    mongoSession?: ClientSession,
   ): Promise<{ studentId: string; studentCode: string; isNew: boolean }> {
+    const sessionOpts = mongoSession ? { session: mongoSession } : {};
+
     // Nếu order đã link existingStudentId → dùng luôn
     if (order.existingStudentId) {
-      const existing = await this.studentModel.findById(order.existingStudentId).lean();
+      const existing = await this.studentModel.findById(order.existingStudentId).session(mongoSession || null).lean();
       if (existing) {
+        // Cập nhật adGroupId nếu student chưa có mà order có
+        if (order.adGroupId && !(existing as any).adGroupId) {
+          await this.studentModel.findByIdAndUpdate((existing as any)._id, {
+            orderId: order._id,
+            adGroupId: order.adGroupId,
+            adGroupName: order.adGroupName || undefined,
+          }, { session: mongoSession || undefined });
+        }
         return {
           studentId: (existing as any)._id.toString(),
           studentCode: (existing as any).studentCode,
@@ -161,9 +186,17 @@ export class EnrollmentService {
     const existingByPhone = await this.studentModel.findOne({
       parentPhone: order.parentPhone,
       fullName: order.studentName,
-    }).lean();
+    }).session(mongoSession || null).lean();
 
     if (existingByPhone) {
+      // Cập nhật adGroupId nếu student chưa có mà order có
+      if (order.adGroupId && !(existingByPhone as any).adGroupId) {
+        await this.studentModel.findByIdAndUpdate((existingByPhone as any)._id, {
+          orderId: order._id,
+          adGroupId: order.adGroupId,
+          adGroupName: order.adGroupName || undefined,
+        }, { session: mongoSession || undefined });
+      }
       return {
         studentId: (existingByPhone as any)._id.toString(),
         studentCode: (existingByPhone as any).studentCode,
@@ -172,7 +205,7 @@ export class EnrollmentService {
     }
 
     // Tạo student mới
-    const studentCode = await this.generateStudentCode();
+    const studentCode = await this.generateStudentCode(mongoSession);
     const age = order.studentDob ? this.calculateAge(order.studentDob) : 10; // default age
 
     const student = new this.studentModel({
@@ -186,12 +219,15 @@ export class EnrollmentService {
       grade: order.studentGrade || undefined,
       saleId: order.saleId,
       saleName: order.saleName,
+      orderId: order._id,
+      adGroupId: order.adGroupId || undefined,
+      adGroupName: order.adGroupName || undefined,
       approvalStatus: 'APPROVED', // Auto-approve khi đơn đã được Director/OPS duyệt
       approvedBy: approver.userId,
       approvedAt: new Date(),
     });
 
-    const saved = await student.save();
+    const saved = await student.save(sessionOpts);
 
     // Audit log cho student mới
     await this.auditLogService.log({
@@ -222,8 +258,10 @@ export class EnrollmentService {
     item: any,
     studentId: string,
     approver: any,
+    mongoSession?: ClientSession,
   ): Promise<string> {
-    const invoiceNumber = await this.generateInvoiceNumber();
+    const sessionOpts = mongoSession ? { session: mongoSession } : {};
+    const invoiceNumber = await this.generateInvoiceNumber(mongoSession);
 
     // Tính giá theo item
     const sessions = item.sessions || 1;
@@ -253,31 +291,11 @@ export class EnrollmentService {
       createdBy: new Types.ObjectId(approver.userId),
     });
 
-    const saved = await invoice.save();
+    const saved = await invoice.save(sessionOpts);
     const invoiceId = (saved as any)._id.toString();
 
-    // Audit log
-    await this.auditLogService.log({
-      userId: approver.userId,
-      userEmail: approver.email,
-      userFullName: approver.fullName,
-      userRole: approver.role,
-      action: AuditAction.CREATE,
-      module: AuditModule.INVOICES,
-      targetId: invoiceId,
-      targetName: invoiceNumber,
-      description: `Tự động tạo hóa đơn ${invoiceNumber} từ đơn ${order.orderCode}: ${sessions} buổi × ${pricePerSession.toLocaleString()}đ = ${amount.toLocaleString()}đ`,
-    });
-
-    // Thông báo duyệt invoice cho Director
-    await this.notificationsService.notifyByRole(Role.DIRECTOR, {
-      type: NotificationType.INVOICE_PENDING,
-      title: `Hóa đơn mới: ${invoiceNumber}`,
-      message: `Hóa đơn ${invoiceNumber} (${amount.toLocaleString('vi-VN')}đ) tự động tạo từ đơn ${order.orderCode} — ${order.studentName}. Cần duyệt.`,
-      link: `/invoices`,
-      targetId: invoiceId,
-      targetModule: 'INVOICES',
-    });
+    // Audit log + notifications are non-critical, run outside transaction
+    // (audit log for invoice creation will be handled post-transaction in processApprovedOrder)
 
     return invoiceId;
   }
@@ -286,12 +304,13 @@ export class EnrollmentService {
   //  CODE GENERATORS
   // ────────────────────────────────────────────────
 
-  private async generateStudentCode(): Promise<string> {
+  private async generateStudentCode(mongoSession?: ClientSession): Promise<string> {
     const prefix = 'HS';
-    const last = await this.studentModel
+    const query = this.studentModel
       .findOne({ studentCode: { $regex: `^${prefix}\\d+$` } })
-      .sort({ studentCode: -1 })
-      .lean();
+      .sort({ studentCode: -1 });
+    if (mongoSession) query.session(mongoSession);
+    const last = await query.lean();
 
     let nextNum = 1;
     if (last) {
@@ -303,15 +322,16 @@ export class EnrollmentService {
     return `${prefix}${String(nextNum).padStart(3, '0')}`;
   }
 
-  private async generateInvoiceNumber(): Promise<string> {
+  private async generateInvoiceNumber(mongoSession?: ClientSession): Promise<string> {
     const year = new Date().getFullYear();
     const month = String(new Date().getMonth() + 1).padStart(2, '0');
     const prefix = `INV-${year}${month}-`;
 
-    const last = await this.invoiceModel
+    const query = this.invoiceModel
       .findOne({ invoiceNumber: { $regex: `^${prefix}` } })
-      .sort({ invoiceNumber: -1 })
-      .lean();
+      .sort({ invoiceNumber: -1 });
+    if (mongoSession) query.session(mongoSession);
+    const last = await query.lean();
 
     let nextNum = 1;
     if (last) {

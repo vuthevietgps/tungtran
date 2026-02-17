@@ -5,6 +5,7 @@ import { ActivatedRoute } from '@angular/router';
 import { OrderService, OrderData, OrderPipeline } from '../services/order.service';
 import { ProductService, ProductItem } from '../services/product.service';
 import { LeadService, LeadItem } from '../services/lead.service';
+import { AdsService, AdGroupItem } from '../services/ads.service';
 import { AuthService } from '../services/auth.service';
 import { Role } from '../models/role.enum';
 
@@ -102,10 +103,18 @@ const SOURCE_LABELS: Record<string, string> = {
             </select>
           </label>
           <label>Nguồn
-            <select name="leadSource" [(ngModel)]="form.leadSource">
+            <select name="leadSource" [(ngModel)]="form.leadSource" (ngModelChange)="onLeadSourceChange()">
               <option value="">--</option>
               <option *ngFor="let s of allSources" [value]="s.value">{{s.label}}</option>
             </select>
+          </label>
+          <label *ngIf="['FACEBOOK','GOOGLE','TIKTOK'].includes(form.leadSource)">Nhóm QC
+            <select name="adGroupId" [(ngModel)]="form.adGroupId" (ngModelChange)="onAdGroupChange()"
+                    [disabled]="form.leadId && form.adGroupFromLead">
+              <option value="">-- Không chọn --</option>
+              <option *ngFor="let g of orderAdGroups()" [value]="g._id">{{g.name}}</option>
+            </select>
+            <small *ngIf="form.adGroupFromLead" style="color:#64748b;">Từ Lead</small>
           </label>
         </div>
 
@@ -331,10 +340,13 @@ export class OrdersComponent implements OnInit {
   allTypes = Object.entries(TYPE_LABELS).map(([value, label]) => ({ value, label }));
   allSources = Object.entries(SOURCE_LABELS).map(([value, label]) => ({ value, label }));
 
+  orderAdGroups = signal<AdGroupItem[]>([]);
+
   constructor(
     private orderService: OrderService,
     private productService: ProductService,
     private leadService: LeadService,
+    private adsService: AdsService,
     private auth: AuthService,
     private route: ActivatedRoute,
   ) {}
@@ -357,6 +369,12 @@ export class OrdersComponent implements OnInit {
           this.form.studentGrade = lead.studentGrade || '';
           this.form.leadId = lead._id;
           this.form.leadSource = lead.source;
+          if ((lead as any).adGroupId) {
+            this.form.adGroupId = (lead as any).adGroupId;
+            this.form.adGroupName = (lead as any).adGroupName || '';
+            this.form.adGroupFromLead = true;
+            this.loadOrderAdGroups(lead.source);
+          }
         }
       }
     });
@@ -379,9 +397,33 @@ export class OrdersComponent implements OnInit {
     return {
       orderType: 'NEW_ENROLLMENT', parentName: '', parentPhone: '', parentEmail: '',
       studentName: '', studentGrade: '', leadSource: '', leadId: '',
+      adGroupId: '', adGroupName: '', adGroupFromLead: false,
       items: [this.emptyItem()],
       discountAmount: 0, discountReason: '', consultationNotes: '',
     };
+  }
+
+  async onLeadSourceChange() {
+    this.form.adGroupId = '';
+    this.form.adGroupName = '';
+    this.form.adGroupFromLead = false;
+    await this.loadOrderAdGroups(this.form.leadSource);
+  }
+
+  async loadOrderAdGroups(platform: string) {
+    if (['FACEBOOK', 'GOOGLE', 'TIKTOK'].includes(platform)) {
+      try {
+        const groups = await this.adsService.getGroupsByPlatform(platform);
+        this.orderAdGroups.set(groups);
+      } catch { this.orderAdGroups.set([]); }
+    } else {
+      this.orderAdGroups.set([]);
+    }
+  }
+
+  onAdGroupChange() {
+    const grp = this.orderAdGroups().find(g => g._id === this.form.adGroupId);
+    this.form.adGroupName = grp?.name || '';
   }
 
   emptyItem() {

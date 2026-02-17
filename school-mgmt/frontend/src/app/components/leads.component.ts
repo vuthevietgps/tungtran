@@ -5,6 +5,7 @@ import { Router } from '@angular/router';
 import { LeadService, LeadItem, LeadPipeline } from '../services/lead.service';
 import { AuthService } from '../services/auth.service';
 import { UserService } from '../services/user.service';
+import { AdsService, AdGroupItem } from '../services/ads.service';
 import { Role } from '../models/role.enum';
 
 const STATUS_LABELS: Record<string, string> = {
@@ -173,12 +174,18 @@ const LOST_LABELS: Record<string, string> = {
             <input name="studentGrade" [(ngModel)]="form.studentGrade" />
           </label>
           <label>Nguồn
-            <select name="source" [(ngModel)]="form.source">
+            <select name="source" [(ngModel)]="form.source" (ngModelChange)="loadAdGroups(form.source)">
               <option *ngFor="let s of allSources" [value]="s">{{sourceLabel(s)}}</option>
             </select>
           </label>
           <label *ngIf="form.source === 'REFERRAL'">Người giới thiệu
             <input name="referredBy" [(ngModel)]="form.referredBy" />
+          </label>
+          <label *ngIf="['FACEBOOK','GOOGLE','TIKTOK'].includes(form.source)">Nhóm quảng cáo
+            <select name="adGroupId" [(ngModel)]="form.adGroupId" (ngModelChange)="onAdGroupChange()">
+              <option value="">-- Không chọn --</option>
+              <option *ngFor="let g of adGroupsByPlatform()" [value]="g._id">{{g.name}}</option>
+            </select>
           </label>
           <label>Giá trị ước tính (đ)
             <input name="estimatedValue" type="number" [(ngModel)]="form.estimatedValue" min="0" />
@@ -439,10 +446,13 @@ export class LeadsComponent implements OnInit {
   contactMethods = Object.keys(CONTACT_LABELS);
   lostReasons = Object.entries(LOST_LABELS).map(([value, label]) => ({ value, label }));
 
+  adGroupsByPlatform = signal<AdGroupItem[]>([]);
+
   constructor(
     private leadService: LeadService,
     private auth: AuthService,
     private userService: UserService,
+    private adsService: AdsService,
     private router: Router,
   ) {}
 
@@ -476,7 +486,23 @@ export class LeadsComponent implements OnInit {
 
   emptyForm() {
     return { parentName: '', parentPhone: '', parentEmail: '', studentName: '', studentGrade: '',
-      source: 'OTHER', referredBy: '', estimatedValue: 0, notes: '' };
+      source: 'OTHER', referredBy: '', estimatedValue: 0, notes: '', adGroupId: '', adGroupName: '' };
+  }
+
+  async onAdGroupChange() {
+    const grp = this.adGroupsByPlatform().find(g => g._id === this.form.adGroupId);
+    this.form.adGroupName = grp?.name || '';
+  }
+
+  async loadAdGroups(platform: string) {
+    if (['FACEBOOK', 'GOOGLE', 'TIKTOK'].includes(platform)) {
+      try {
+        const groups = await this.adsService.getGroupsByPlatform(platform);
+        this.adGroupsByPlatform.set(groups);
+      } catch { this.adGroupsByPlatform.set([]); }
+    } else {
+      this.adGroupsByPlatform.set([]);
+    }
   }
 
   filtered = computed(() => {

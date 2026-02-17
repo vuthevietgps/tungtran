@@ -111,6 +111,16 @@ export class Student {
   @Prop({ type: String, required: false })
   saleName?: string;
 
+  // ── Tracking nguồn quảng cáo (denormalize từ Order) ──
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'Order', required: false })
+  orderId?: Types.ObjectId;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'AdGroup', required: false })
+  adGroupId?: Types.ObjectId;
+
+  @Prop({ type: String, required: false })
+  adGroupName?: string;
+
   @Prop({ type: String, enum: ['PENDING', 'APPROVED', 'REJECTED'], default: 'PENDING' })
   approvalStatus?: 'PENDING' | 'APPROVED' | 'REJECTED';
 
@@ -131,3 +141,4 @@ StudentSchema.index({ approvalStatus: 1 });
 StudentSchema.index({ saleId: 1 });
 StudentSchema.index({ parentUserId: 1 });
 StudentSchema.index({ studentCode: 1 }, { unique: true });
+StudentSchema.index({ adGroupId: 1 });

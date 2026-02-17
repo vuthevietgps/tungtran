@@ -122,5 +122,13 @@ export class CreateOrderDto {
 
   @IsString()
   @IsOptional()
+  adGroupId?: string;
+
+  @IsString()
+  @IsOptional()
+  adGroupName?: string;
+
+  @IsString()
+  @IsOptional()
   consultationNotes?: string;
 }

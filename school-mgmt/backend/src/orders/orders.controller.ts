@@ -39,6 +39,17 @@ export class OrdersController {
     return this.ordersService.getStats(req.user);
   }
 
+  @Get('commission-report')
+  @Roles(Role.DIRECTOR, Role.SALE, Role.ACCOUNTING)
+  getCommissionReport(
+    @Req() req: AuthenticatedRequest,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+  ) {
+    const saleId = req.user.role === Role.SALE ? req.user.sub : undefined;
+    return this.ordersService.getCommissionReport(saleId, fromDate, toDate);
+  }
+
   @Get(':id')
   @Roles(Role.DIRECTOR, Role.SALE, Role.OPS)
   findOne(@Param('id', ParseMongoIdPipe) id: string) {

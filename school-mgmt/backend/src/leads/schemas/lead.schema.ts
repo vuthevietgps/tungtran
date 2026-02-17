@@ -88,6 +88,12 @@ export class Lead {
   @Prop({ type: String, enum: Object.values(LeadSource), default: LeadSource.OTHER })
   source!: string;
 
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'AdGroup' })
+  adGroupId?: Types.ObjectId;
+
+  @Prop({ type: String, trim: true })
+  adGroupName?: string;
+
   @Prop({ type: String, trim: true })
   referredBy?: string;
 
@@ -163,3 +169,4 @@ LeadSchema.index({ parentPhone: 1 });
 LeadSchema.index({ createdAt: -1 });
 LeadSchema.index({ assignedAt: 1 });
 LeadSchema.index({ lastContactAt: 1 });
+LeadSchema.index({ adGroupId: 1 });

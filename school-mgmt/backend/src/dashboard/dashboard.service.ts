@@ -13,6 +13,9 @@ import { Classroom, ClassDocument } from '../classes/schemas/class.schema';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { Invoice, InvoiceDocument } from '../invoices/schemas/invoice.schema';
 import { Attendance, AttendanceDocument } from '../attendance/schemas/attendance.schema';
+import { Expense, ExpenseDocument, PaymentStatus as ExpensePaymentStatus } from '../expenses/schemas/expense.schema';
+import { Order, OrderDocument } from '../orders/schemas/order.schema';
+import { Lead, LeadDocument } from '../leads/schemas/lead.schema';
 
 // ─── Interface definitions for dashboard responses ──────────────────
 
@@ -20,7 +23,9 @@ export interface DirectorDashboard {
   overview: {
     totalRevenue: number;
     totalTeacherCost: number;
+    totalExpenses: number;
     grossProfit: number;
+    netProfit: number;
     profitMargin: number;
   };
   sessions: {
@@ -191,6 +196,9 @@ export class DashboardService {
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(Invoice.name) private invoiceModel: Model<InvoiceDocument>,
     @InjectModel(Attendance.name) private attendanceModel: Model<AttendanceDocument>,
+    @InjectModel(Expense.name) private expenseModel: Model<ExpenseDocument>,
+    @InjectModel(Order.name) private orderModel: Model<OrderDocument>,
+    @InjectModel(Lead.name) private leadModel: Model<LeadDocument>,
   ) {}
 
   // ════════════════════════════════════════════════════════════════════
@@ -199,6 +207,12 @@ export class DashboardService {
 
   async getDirectorDashboard(fromDate?: string, toDate?: string): Promise<DirectorDashboard> {
     const dateFilter = this.buildDateFilter(fromDate, toDate);
+    const expenseDateFilter: any = {};
+    if (fromDate || toDate) {
+      expenseDateFilter.expenseDate = {};
+      if (fromDate) expenseDateFilter.expenseDate.$gte = new Date(fromDate);
+      if (toDate) { const end = new Date(toDate); end.setHours(23, 59, 59, 999); expenseDateFilter.expenseDate.$lte = end; }
+    }
 
     const [
       sessionStats,
@@ -206,6 +220,7 @@ export class DashboardService {
       payrollStats,
       ticketStats,
       walletStats,
+      expenseStats,
       recentSessions,
       recentTickets,
       recentTopUps,
@@ -215,6 +230,7 @@ export class DashboardService {
       this.getPayrollStats(dateFilter),
       this.getTicketStats(),
       this.getWalletAggregates(),
+      this.getExpenseAggregates(expenseDateFilter),
       this.sessionModel
         .find(dateFilter.createdAt ? dateFilter : {})
         .sort({ createdAt: -1 })
@@ -237,14 +253,17 @@ export class DashboardService {
     ]);
 
     const grossProfit = sessionStats.totalRevenue - sessionStats.totalTeacherCost;
+    const netProfit = grossProfit - expenseStats.totalPaid;
 
     return {
       overview: {
         totalRevenue: sessionStats.totalRevenue,
         totalTeacherCost: sessionStats.totalTeacherCost,
+        totalExpenses: expenseStats.totalPaid,
         grossProfit,
+        netProfit,
         profitMargin: sessionStats.totalRevenue > 0
-          ? Math.round((grossProfit / sessionStats.totalRevenue) * 10000) / 100
+          ? Math.round((netProfit / sessionStats.totalRevenue) * 10000) / 100
           : 0,
       },
       sessions: {
@@ -870,6 +889,39 @@ export class DashboardService {
     return agg[0] || { totalBalance: 0, totalTopUp: 0, totalDeducted: 0, totalRefunded: 0 };
   }
 
+  private async getExpenseAggregates(dateFilter: any = {}) {
+    const paidFilter = { paymentStatus: ExpensePaymentStatus.PAID, ...dateFilter };
+    const allFilter = { ...dateFilter };
+
+    const [paidAgg, byStatusAgg, byCategoryAgg] = await Promise.all([
+      this.expenseModel.aggregate([
+        { $match: paidFilter },
+        { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } },
+      ]),
+      this.expenseModel.aggregate([
+        { $match: allFilter },
+        { $group: { _id: '$paymentStatus', total: { $sum: '$amount' }, count: { $sum: 1 } } },
+      ]),
+      this.expenseModel.aggregate([
+        { $match: { ...paidFilter } },
+        { $group: { _id: '$category', total: { $sum: '$amount' }, count: { $sum: 1 } } },
+      ]),
+    ]);
+
+    const byStatus: Record<string, { total: number; count: number }> = {};
+    byStatusAgg.forEach((s: any) => { byStatus[s._id] = { total: s.total, count: s.count }; });
+
+    const byCategory: Record<string, { total: number; count: number }> = {};
+    byCategoryAgg.forEach((c: any) => { byCategory[c._id] = { total: c.total, count: c.count }; });
+
+    return {
+      totalPaid: paidAgg[0]?.total || 0,
+      paidCount: paidAgg[0]?.count || 0,
+      byStatus,
+      byCategory,
+    };
+  }
+
   // ════════════════════════════════════════════════════════════════════
   // DIRECTOR COMPREHENSIVE — All dashboards combined for testing
   // ════════════════════════════════════════════════════════════════════
@@ -1429,6 +1481,387 @@ export class DashboardService {
       sessions,
       payrolls,
       tickets,
+    };
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // SALES DASHBOARD (Phase 1.3)
+  // ════════════════════════════════════════════════════════════════════
+
+  async getSalesDashboard(saleId?: string, fromDate?: string, toDate?: string) {
+    const dateFilter: any = {};
+    if (fromDate) dateFilter.$gte = new Date(fromDate);
+    if (toDate) dateFilter.$lte = new Date(toDate);
+    const hasDateFilter = Object.keys(dateFilter).length > 0;
+
+    // ── Leads ──
+    const leadFilter: any = {};
+    if (saleId) leadFilter.saleId = new Types.ObjectId(saleId);
+    if (hasDateFilter) leadFilter.createdAt = dateFilter;
+
+    const leads = await this.leadModel.find(leadFilter).lean();
+    const totalLeads = leads.length;
+    const convertedLeads = leads.filter((l: any) => l.status === 'CONVERTED').length;
+    const conversionRate = totalLeads > 0 ? Math.round((convertedLeads / totalLeads) * 100) : 0;
+
+    const leadsByStatus: Record<string, number> = {};
+    for (const l of leads) {
+      leadsByStatus[(l as any).status] = (leadsByStatus[(l as any).status] || 0) + 1;
+    }
+
+    // Active leads (not converted, not lost)
+    const activeLeads = leads.filter(
+      (l: any) => !['CONVERTED', 'NOT_INTERESTED', 'NO_RESPONSE'].includes(l.status),
+    ).length;
+
+    // Follow-ups due today/overdue
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const followUpsDueToday = leads.filter(
+      (l: any) => l.nextFollowUp && new Date(l.nextFollowUp) >= today && new Date(l.nextFollowUp) < tomorrow,
+    );
+    const followUpsOverdue = leads.filter(
+      (l: any) => l.nextFollowUp && new Date(l.nextFollowUp) < today &&
+        !['CONVERTED', 'NOT_INTERESTED', 'NO_RESPONSE'].includes(l.status),
+    );
+
+    // ── Orders ──
+    const orderFilter: any = {};
+    if (saleId) orderFilter.saleId = new Types.ObjectId(saleId);
+    if (hasDateFilter) orderFilter.createdAt = dateFilter;
+
+    const orders = await this.orderModel.find(orderFilter).lean();
+
+    const revenueGenerated = orders
+      .filter((o: any) => o.status === 'COMPLETED')
+      .reduce((sum, o: any) => sum + (o.finalAmount || 0), 0);
+
+    const commissionEarned = orders
+      .filter((o: any) => o.status === 'COMPLETED')
+      .reduce((sum, o: any) => sum + (o.saleCommission || 0), 0);
+
+    const commissionPending = orders
+      .filter((o: any) => o.status === 'APPROVED')
+      .reduce((sum, o: any) => sum + (o.saleCommission || 0), 0);
+
+    const ordersByStatus: Record<string, number> = {};
+    for (const o of orders) {
+      ordersByStatus[(o as any).status] = (ordersByStatus[(o as any).status] || 0) + 1;
+    }
+
+    // Recent orders (last 10)
+    const recentOrders = orders
+      .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 10)
+      .map((o: any) => ({
+        _id: o._id,
+        orderCode: o.orderCode,
+        parentName: o.parentName,
+        studentName: o.studentName,
+        finalAmount: o.finalAmount,
+        saleCommission: o.saleCommission,
+        status: o.status,
+        createdAt: o.createdAt,
+      }));
+
+    return {
+      leads: {
+        total: totalLeads,
+        converted: convertedLeads,
+        conversionRate,
+        active: activeLeads,
+        byStatus: leadsByStatus,
+        followUpsDueToday: followUpsDueToday.map((l: any) => ({
+          _id: l._id,
+          leadCode: l.leadCode,
+          parentName: l.parentName,
+          parentPhone: l.parentPhone,
+          status: l.status,
+          nextFollowUp: l.nextFollowUp,
+        })),
+        followUpsOverdue: followUpsOverdue.length,
+      },
+      orders: {
+        total: orders.length,
+        byStatus: ordersByStatus,
+        revenueGenerated,
+        commissionEarned,
+        commissionPending,
+        recentOrders,
+      },
+    };
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // REVENUE & PROFIT REPORTS (Phase 2.1)
+  // ════════════════════════════════════════════════════════════════════
+
+  async getRevenueReport(period: 'monthly' | 'quarterly' | 'yearly' = 'monthly', fromDate?: string, toDate?: string) {
+    const dateFilter: any = {};
+    if (fromDate) dateFilter.$gte = new Date(fromDate);
+    if (toDate) dateFilter.$lte = new Date(toDate);
+    const hasDate = Object.keys(dateFilter).length > 0;
+
+    // Revenue from approved invoices
+    const invoiceFilter: any = { status: 'APPROVED' };
+    if (hasDate) invoiceFilter.approvedAt = dateFilter;
+    const invoices = await this.invoiceModel.find(invoiceFilter).lean();
+
+    // Expenses paid
+    const expenseFilter: any = { paymentStatus: 'PAID' };
+    if (hasDate) expenseFilter.paidAt = dateFilter;
+    const expenses = await this.expenseModel.find(expenseFilter).lean();
+
+    // Payroll paid
+    const payrollFilter: any = { status: 'PAID' };
+    if (hasDate) payrollFilter.paidAt = dateFilter;
+    const payrolls = await this.payrollModel.find(payrollFilter).lean();
+
+    const getKey = (date: Date): string => {
+      const d = new Date(date);
+      if (period === 'yearly') return d.getFullYear().toString();
+      if (period === 'quarterly') return `${d.getFullYear()}-Q${Math.ceil((d.getMonth() + 1) / 3)}`;
+      return d.toISOString().slice(0, 7); // monthly: YYYY-MM
+    };
+
+    const periodData: Record<string, { revenue: number; expenses: number; payroll: number }> = {};
+
+    for (const inv of invoices) {
+      const key = getKey((inv as any).approvedAt || (inv as any).createdAt);
+      if (!periodData[key]) periodData[key] = { revenue: 0, expenses: 0, payroll: 0 };
+      periodData[key].revenue += (inv as any).amount || 0;
+    }
+    for (const exp of expenses) {
+      const key = getKey((exp as any).paidAt || (exp as any).createdAt);
+      if (!periodData[key]) periodData[key] = { revenue: 0, expenses: 0, payroll: 0 };
+      periodData[key].expenses += (exp as any).amount || 0;
+    }
+    for (const p of payrolls) {
+      const key = getKey((p as any).paidAt || (p as any).createdAt);
+      if (!periodData[key]) periodData[key] = { revenue: 0, expenses: 0, payroll: 0 };
+      periodData[key].payroll += (p as any).netAmount || 0;
+    }
+
+    const periods = Object.entries(periodData)
+      .map(([key, data]) => {
+        const profit = data.revenue - data.expenses - data.payroll;
+        const margin = data.revenue > 0 ? Math.round((profit / data.revenue) * 100) : 0;
+        return { period: key, ...data, profit, margin };
+      })
+      .sort((a, b) => a.period.localeCompare(b.period));
+
+    const totalRevenue = periods.reduce((s, p) => s + p.revenue, 0);
+    const totalExpenses = periods.reduce((s, p) => s + p.expenses, 0);
+    const totalPayroll = periods.reduce((s, p) => s + p.payroll, 0);
+    const totalProfit = totalRevenue - totalExpenses - totalPayroll;
+
+    return {
+      periods,
+      summary: {
+        totalRevenue,
+        totalExpenses,
+        totalPayroll,
+        totalProfit,
+        overallMargin: totalRevenue > 0 ? Math.round((totalProfit / totalRevenue) * 100) : 0,
+      },
+    };
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // STUDENT RETENTION (Phase 2.2)
+  // ════════════════════════════════════════════════════════════════════
+
+  async getRetentionMetrics() {
+    const now = new Date();
+
+    // Active students (have at least one non-cancelled session in last 90 days)
+    const d90ago = new Date(now);
+    d90ago.setDate(d90ago.getDate() - 90);
+
+    const activeStudentIds = await this.sessionModel.distinct('studentId', {
+      scheduledDate: { $gte: d90ago },
+      status: { $nin: ['CANCELLED'] },
+    });
+
+    // Renewal orders
+    const renewalOrders = await this.orderModel.countDocuments({
+      orderType: 'RENEWAL',
+      status: { $in: ['APPROVED', 'COMPLETED'] },
+      createdAt: { $gte: d90ago },
+    });
+
+    // Students with expiring invoices (sessionsRemaining < 5)
+    const atRisk = await this.invoiceModel.find({
+      status: 'APPROVED',
+      sessionsRemaining: { $gt: 0, $lt: 5 },
+    })
+      .populate('studentId', 'fullName studentCode parentName parentPhone')
+      .populate('classId', 'name code')
+      .populate('saleId', 'fullName')
+      .lean();
+
+    // Unique students at risk
+    const atRiskMap = new Map();
+    for (const inv of atRisk) {
+      const sid = (inv as any).studentId?._id?.toString();
+      if (!sid) continue;
+      if (!atRiskMap.has(sid)) {
+        atRiskMap.set(sid, {
+          student: (inv as any).studentId,
+          classes: [],
+          totalRemaining: 0,
+          saleInfo: (inv as any).saleId,
+        });
+      }
+      const entry = atRiskMap.get(sid)!;
+      entry.totalRemaining += (inv as any).sessionsRemaining || 0;
+      entry.classes.push({
+        className: (inv as any).classId?.name,
+        sessionsRemaining: (inv as any).sessionsRemaining,
+      });
+    }
+
+    const totalActive = activeStudentIds.length;
+    const retentionRate = totalActive > 0 ? Math.round((renewalOrders / totalActive) * 100) : 0;
+
+    return {
+      totalActiveStudents: totalActive,
+      renewalOrders,
+      retentionRate: Math.min(retentionRate, 100),
+      churnRate: Math.max(0, 100 - retentionRate),
+      studentsAtRisk: Array.from(atRiskMap.values()),
+      atRiskCount: atRiskMap.size,
+    };
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // EMPLOYEE PERFORMANCE (Phase 3.5)
+  // ════════════════════════════════════════════════════════════════════
+
+  async getEmployeePerformance() {
+    // Teachers performance
+    const teachers = await this.userModel.find({ role: 'TEACHER', isLocked: { $ne: true } }).select('fullName email').lean();
+    const teacherPerf: any[] = [];
+    for (const t of teachers) {
+      const sessions = await this.sessionModel.countDocuments({ teacherId: t._id, status: 'FINALIZED' });
+      const sessionsWithReport = await this.sessionModel.countDocuments({
+        teacherId: t._id,
+        status: 'FINALIZED',
+        'teachingReport.submittedAt': { $exists: true },
+      });
+      const reportRate = sessions > 0 ? Math.round((sessionsWithReport / sessions) * 100) : 0;
+
+      // Avg parent rating from evaluations
+      const rated = await this.sessionModel.find({
+        teacherId: t._id,
+        'evaluation.parentFeedback.overallRating': { $exists: true },
+      }).select('evaluation.parentFeedback.overallRating').lean();
+      const avgRating = rated.length > 0
+        ? Math.round(rated.reduce((s, r: any) => s + (r.evaluation?.parentFeedback?.overallRating || 0), 0) / rated.length * 10) / 10
+        : null;
+
+      teacherPerf.push({
+        _id: t._id,
+        name: t.fullName,
+        email: t.email,
+        totalSessions: sessions,
+        reportRate,
+        avgRating,
+      });
+    }
+
+    // Sales performance
+    const sales = await this.userModel.find({ role: 'SALE', isLocked: { $ne: true } }).select('fullName email').lean();
+    const salePerf: any[] = [];
+    for (const s of sales) {
+      const leads = await this.leadModel.countDocuments({ saleId: s._id });
+      const converted = await this.leadModel.countDocuments({ saleId: s._id, status: 'CONVERTED' });
+      const orders = await this.orderModel.find({ saleId: s._id, status: { $in: ['COMPLETED', 'APPROVED'] } }).lean();
+      const revenue = orders.reduce((sum, o: any) => sum + (o.finalAmount || 0), 0);
+      const commission = orders.reduce((sum, o: any) => sum + (o.saleCommission || 0), 0);
+
+      salePerf.push({
+        _id: s._id,
+        name: s.fullName,
+        email: s.email,
+        totalLeads: leads,
+        convertedLeads: converted,
+        conversionRate: leads > 0 ? Math.round((converted / leads) * 100) : 0,
+        revenue,
+        commission,
+      });
+    }
+
+    // OPS performance
+    const ops = await this.userModel.find({ role: 'OPS', isLocked: { $ne: true } }).select('fullName email').lean();
+    const opsPerf: any[] = [];
+    for (const o of ops) {
+      const tickets = await this.ticketModel.countDocuments({ assigneeId: o._id });
+      const resolved = await this.ticketModel.countDocuments({ assigneeId: o._id, status: { $in: ['RESOLVED', 'CLOSED'] } });
+
+      opsPerf.push({
+        _id: o._id,
+        name: o.fullName,
+        email: o.email,
+        totalTickets: tickets,
+        resolvedTickets: resolved,
+        resolutionRate: tickets > 0 ? Math.round((resolved / tickets) * 100) : 0,
+      });
+    }
+
+    return { teachers: teacherPerf, sales: salePerf, ops: opsPerf };
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // REVENUE FORECASTING (Phase 3.6)
+  // ════════════════════════════════════════════════════════════════════
+
+  async getRevenueForecast() {
+    // Confirmed future revenue: active invoices × sessionsRemaining × pricePerSession
+    const activeInvoices = await this.invoiceModel.find({
+      status: 'APPROVED',
+      sessionsRemaining: { $gt: 0 },
+    }).lean();
+
+    const confirmedRevenue = activeInvoices.reduce((sum, inv: any) => {
+      return sum + ((inv.sessionsRemaining || 0) * (inv.pricePerSession || 0));
+    }, 0);
+
+    // Pipeline revenue: orders in SUBMITTED/APPROVED
+    const pipelineOrders = await this.orderModel.find({
+      status: { $in: ['SUBMITTED', 'APPROVED'] },
+    }).lean();
+    const pipelineRevenue = pipelineOrders.reduce((s, o: any) => s + (o.finalAmount || 0), 0);
+
+    // Historical monthly revenue (last 6 months)
+    const months: { month: string; revenue: number }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date();
+      d.setMonth(d.getMonth() - i);
+      const start = new Date(d.getFullYear(), d.getMonth(), 1);
+      const end = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+
+      const monthInvoices = await this.invoiceModel.find({
+        status: 'APPROVED',
+        approvedAt: { $gte: start, $lte: end },
+      }).lean();
+      const rev = monthInvoices.reduce((s, inv: any) => s + (inv.amount || 0), 0);
+      months.push({ month: start.toISOString().slice(0, 7), revenue: rev });
+    }
+
+    // Simple 3-month average growth rate
+    const recentRevenues = months.slice(-3).map((m) => m.revenue);
+    const avgRecent = recentRevenues.reduce((s, v) => s + v, 0) / 3;
+
+    return {
+      confirmedRevenue,
+      pipelineRevenue,
+      historicalMonths: months,
+      monthlyAverage: Math.round(avgRecent),
+      forecast3Month: Math.round(avgRecent * 3),
     };
   }
 }

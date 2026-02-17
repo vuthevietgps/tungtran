@@ -537,4 +537,86 @@ export class TicketsService {
     }
     return result.modifiedCount;
   }
+
+  // ════════════════════════════════════════════════════════════════════
+  // SLA MONITORING (Phase 2.6)
+  // ════════════════════════════════════════════════════════════════════
+
+  async getSlaMetrics(fromDate?: string, toDate?: string) {
+    const dateFilter: any = {};
+    if (fromDate) dateFilter.$gte = new Date(fromDate);
+    if (toDate) dateFilter.$lte = new Date(toDate);
+    const hasDate = Object.keys(dateFilter).length > 0;
+
+    const filter: any = {};
+    if (hasDate) filter.createdAt = dateFilter;
+
+    const tickets = await this.ticketModel.find(filter).lean();
+
+    // Resolution times for resolved/closed tickets
+    const resolvedTickets = tickets.filter(
+      (t: any) => [TicketStatus.RESOLVED, TicketStatus.CLOSED].includes(t.status),
+    );
+
+    const resolutionTimes = resolvedTickets.map((t: any) => {
+      const created = new Date(t.createdAt).getTime();
+      const resolved = new Date(t.resolvedAt || t.updatedAt).getTime();
+      return (resolved - created) / (1000 * 60 * 60); // hours
+    });
+
+    const avgResolutionHours = resolutionTimes.length > 0
+      ? Math.round(resolutionTimes.reduce((s, v) => s + v, 0) / resolutionTimes.length * 10) / 10
+      : null;
+
+    // SLA compliance (resolved before dueDate)
+    const ticketsWithDue = resolvedTickets.filter((t: any) => t.dueDate);
+    const onTimeCount = ticketsWithDue.filter((t: any) => {
+      const resolved = new Date(t.resolvedAt || t.updatedAt);
+      return resolved <= new Date(t.dueDate);
+    }).length;
+    const slaCompliance = ticketsWithDue.length > 0
+      ? Math.round((onTimeCount / ticketsWithDue.length) * 100)
+      : 100;
+
+    // Overdue
+    const overdueCount = tickets.filter((t: any) => t.isOverdue).length;
+    const overdueRate = tickets.length > 0 ? Math.round((overdueCount / tickets.length) * 100) : 0;
+
+    // By priority
+    const byPriority: Record<string, number> = {};
+    for (const t of tickets) {
+      const p = (t as any).priority || 'MEDIUM';
+      byPriority[p] = (byPriority[p] || 0) + 1;
+    }
+
+    // By status
+    const byStatus: Record<string, number> = {};
+    for (const t of tickets) {
+      byStatus[(t as any).status] = (byStatus[(t as any).status] || 0) + 1;
+    }
+
+    // Top assignees
+    const assigneeCounts: Record<string, { name: string; count: number }> = {};
+    for (const t of resolvedTickets) {
+      const aid = (t as any).assigneeId?.toString();
+      if (!aid) continue;
+      if (!assigneeCounts[aid]) assigneeCounts[aid] = { name: (t as any).assigneeName || aid, count: 0 };
+      assigneeCounts[aid].count++;
+    }
+    const topAssignees = Object.values(assigneeCounts)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+
+    return {
+      total: tickets.length,
+      resolved: resolvedTickets.length,
+      avgResolutionHours,
+      slaCompliance,
+      overdueCount,
+      overdueRate,
+      byPriority,
+      byStatus,
+      topAssignees,
+    };
+  }
 }

@@ -7,6 +7,7 @@ import { AccountingDashboardComponent } from './accounting-dashboard.component';
 import { OpsDashboardComponent } from './ops-dashboard.component';
 import { TeacherDashboardComponent } from './teacher-dashboard.component';
 import { ParentDashboardComponent } from './parent-dashboard.component';
+import { SaleDashboardComponent } from '../sale-dashboard.component';
 
 @Component({
   selector: 'app-dashboard',
@@ -18,6 +19,7 @@ import { ParentDashboardComponent } from './parent-dashboard.component';
     OpsDashboardComponent,
     TeacherDashboardComponent,
     ParentDashboardComponent,
+    SaleDashboardComponent,
   ],
   template: `
     <app-director-dashboard *ngIf="role === 'DIRECTOR'" />
@@ -25,6 +27,7 @@ import { ParentDashboardComponent } from './parent-dashboard.component';
     <app-ops-dashboard *ngIf="role === 'OPS'" />
     <app-teacher-dashboard *ngIf="role === 'TEACHER'" />
     <app-parent-dashboard *ngIf="role === 'PARENT'" />
+    <app-sale-dashboard *ngIf="role === 'SALE'" />
     <div *ngIf="!role" class="no-role">
       <p>Không xác định được vai trò. Vui lòng đăng nhập lại.</p>
     </div>

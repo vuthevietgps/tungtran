@@ -1,18 +1,23 @@
 import { Controller, Post, Body, UseGuards, Res, Req } from '@nestjs/common';
 import { Response, Request } from 'express';
-import { ThrottlerGuard } from '@nestjs/throttler';
+import { Throttle } from '@nestjs/throttler';
 import { LocalAuthGuard } from './local-auth.guard';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { AuthService } from './auth.service';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 import { UserDocument } from '../users/schemas/user.schema';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { WorkSessionsService } from '../work-sessions/work-sessions.service';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private authService: AuthService) {}
+  constructor(
+    private authService: AuthService,
+    private workSessionsService: WorkSessionsService,
+  ) {}
 
-  @UseGuards(ThrottlerGuard, LocalAuthGuard)
+  @Throttle({ default: { ttl: 60000, limit: 5 } }) // Strict: 5 lần/phút cho login
+  @UseGuards(LocalAuthGuard)
   @Post('login')
   async login(@Req() req: Request & { user: UserDocument }, @Res({ passthrough: true }) res: Response) {
     const result = await this.authService.login(req.user);
@@ -39,7 +44,17 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Post('logout')
-  async logout(@Res({ passthrough: true }) res: Response) {
+  async logout(
+    @Req() req: AuthenticatedRequest,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    // Ghi nhận chấm công đăng xuất
+    try {
+      await this.workSessionsService.recordLogout(req.user.sub);
+    } catch (err) {
+      // Log but don't block logout
+    }
+
     res.clearCookie('access_token', {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',

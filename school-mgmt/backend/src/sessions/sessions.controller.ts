@@ -91,6 +91,30 @@ export class SessionsController {
     return this.sessionsService.findAll({ ...query, parentUserId: req.user.sub });
   }
 
+  /** PH xem tiến trình học tập tổng hợp của tất cả con */
+  @Get('my-children/progress')
+  @Roles(Role.PARENT)
+  getChildrenProgress(@Req() req: AuthenticatedRequest) {
+    return this.sessionsService.getChildrenProgress(req.user.sub);
+  }
+
+  /** PH gửi feedback tổng quan */
+  @Post('general-feedback')
+  @Roles(Role.PARENT)
+  submitGeneralFeedback(
+    @Body() body: {
+      overallRating: number;
+      teachingQuality?: number;
+      communication?: number;
+      facility?: number;
+      comment?: string;
+      studentId?: string;
+    },
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.sessionsService.submitParentFeedback(req.user.sub, body);
+  }
+
   /** GV lấy danh sách sessions cần nộp báo cáo (chưa có report) */
   @Get('my-sessions/pending-report')
   @Roles(Role.TEACHER)

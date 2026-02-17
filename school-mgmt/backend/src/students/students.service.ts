@@ -1,6 +1,6 @@
-import { Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Injectable, ForbiddenException, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { InjectModel, InjectConnection } from '@nestjs/mongoose';
+import { Model, Types, Connection } from 'mongoose';
 import { Student, StudentDocument } from './schemas/student.schema';
 import { Attendance, AttendanceDocument } from '../attendance/schemas/attendance.schema';
 import { Classroom, ClassroomDocument } from '../classes/schemas/class.schema';
@@ -13,11 +13,14 @@ type StudentLean = Student & { _id: Types.ObjectId };
 
 @Injectable()
 export class StudentsService {
+  private readonly logger = new Logger(StudentsService.name);
+
   constructor(
     @InjectModel(Student.name) private readonly studentModel: Model<StudentDocument>,
     @InjectModel(Attendance.name) private readonly attendanceModel: Model<AttendanceDocument>,
     @InjectModel(Classroom.name) private readonly classroomModel: Model<ClassroomDocument>,
     @InjectModel(Session.name) private readonly sessionModel: Model<SessionDocument>,
+    @InjectConnection() private readonly connection: Connection,
   ) {}
 
   findAll(actor?: JwtPayload) {
@@ -293,7 +296,7 @@ export class StudentsService {
     const existingStudent = await this.studentModel.findById(id);
     if (!existingStudent) return { deletedCount: 0 };
 
-    // Check for active sessions
+    // Pre-check active sessions (fast fail before starting transaction)
     const activeSessions = await this.sessionModel.countDocuments({
       studentId: new Types.ObjectId(id),
       status: { $in: ['SCHEDULED', 'TEACHER_COMPLETED', 'PARENT_CONFIRMED'] },
@@ -304,21 +307,42 @@ export class StudentsService {
       );
     }
 
-    const studentObjectId = new Types.ObjectId(id);
+    // Wrap all delete operations in a transaction for atomicity
+    const session = await this.connection.startSession();
+    try {
+      await session.withTransaction(async () => {
+        const studentObjectId = new Types.ObjectId(id);
 
-    // Remove student from all classes
-    await this.classroomModel.updateMany(
-      { students: studentObjectId },
-      { $pull: { students: studentObjectId } },
-    );
+        // Re-check active sessions inside transaction to prevent race condition
+        const activeSessionsInTx = await this.sessionModel.countDocuments({
+          studentId: studentObjectId,
+          status: { $in: ['SCHEDULED', 'TEACHER_COMPLETED', 'PARENT_CONFIRMED'] },
+        }).session(session);
+        if (activeSessionsInTx > 0) {
+          throw new BadRequestException(
+            `Không thể xóa học sinh đang có ${activeSessionsInTx} buổi học chưa hoàn tất`,
+          );
+        }
 
-    // Delete attendance records
-    await this.attendanceModel.deleteMany({ studentId: studentObjectId });
+        // Remove student from all classes
+        await this.classroomModel.updateMany(
+          { students: studentObjectId },
+          { $pull: { students: studentObjectId } },
+          { session },
+        );
 
-    // Finally delete the student
-    await this.studentModel.findByIdAndDelete(id);
+        // Delete attendance records
+        await this.attendanceModel.deleteMany({ studentId: studentObjectId }, { session });
 
-    return { deletedCount: 1 };
+        // Finally delete the student
+        await this.studentModel.findByIdAndDelete(id, { session });
+      });
+
+      this.logger.log(`Student ${id} deleted successfully (atomic transaction)`);
+      return { deletedCount: 1 };
+    } finally {
+      await session.endSession();
+    }
   }
 
   async findOne(id: string, actor?: JwtPayload) {

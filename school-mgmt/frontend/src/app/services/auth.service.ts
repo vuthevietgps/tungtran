@@ -5,6 +5,7 @@ import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
 
 export interface AuthPayload {
+  _id?: string;
   sub: string;
   email: string;
   role: string;

@@ -15,6 +15,7 @@ import { User, UserDocument } from '../users/schemas/user.schema';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
 import { Student, StudentDocument } from '../students/schemas/student.schema';
 import { Invoice, InvoiceDocument, InvoiceStatus } from '../invoices/schemas/invoice.schema';
+import { TeacherProfile } from '../teachers/schemas/teacher-profile.schema';
 import { Role } from '../common/interfaces/role.enum';
 
 @Injectable()
@@ -24,6 +25,7 @@ export class ClassesService {
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     @InjectModel(Student.name) private readonly studentModel: Model<StudentDocument>,
     @InjectModel(Invoice.name) private readonly invoiceModel: Model<InvoiceDocument>,
+    @InjectModel(TeacherProfile.name) private readonly teacherProfileModel: Model<any>,
   ) {}
 
   async create(dto: CreateClassDto, actor?: JwtPayload) {
@@ -461,5 +463,86 @@ export class ClassesService {
         ? Math.round((completedItems / totalItems) * 100)
         : 0,
     };
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // TEACHER MATCHING (Phase 2.5)
+  // ════════════════════════════════════════════════════════════════════
+
+  async suggestTeachers(params: {
+    subject?: string;
+    grade?: string;
+    teachingMode?: string;
+  }) {
+    const filter: any = { status: 'ACTIVE' };
+    if (params.subject) filter.subjects = params.subject;
+    if (params.grade) filter.grades = params.grade;
+    if (params.teachingMode) filter.teachingMode = params.teachingMode;
+
+    const profiles = await this.teacherProfileModel
+      .find(filter)
+      .populate('userId', 'fullName email')
+      .lean();
+
+    // Score each teacher
+    const scored: any[] = [];
+    for (const profile of profiles) {
+      let score = 50; // base score
+      const reasons: string[] = [];
+
+      // Subject match
+      if (params.subject && (profile as any).subjects?.includes(params.subject)) {
+        score += 20;
+        reasons.push('Đúng môn dạy');
+      }
+      // Grade match
+      if (params.grade && (profile as any).grades?.includes(params.grade)) {
+        score += 15;
+        reasons.push('Đúng khối lớp');
+      }
+      // Teaching mode match
+      if (params.teachingMode && (profile as any).teachingMode === params.teachingMode) {
+        score += 10;
+        reasons.push('Đúng hình thức dạy');
+      }
+
+      // Workload (fewer active classes = higher score)
+      const activeClasses = await this.classModel.countDocuments({
+        teacher: (profile as any).userId?._id,
+        status: 'ACTIVE',
+      });
+      if (activeClasses < 3) {
+        score += 10;
+        reasons.push('Ít lớp đang dạy');
+      } else if (activeClasses < 5) {
+        score += 5;
+      }
+
+      // Rating bonus
+      const rating = (profile as any).averageRating || 0;
+      if (rating >= 4.5) {
+        score += 10;
+        reasons.push(`Rating: ${rating}/5`);
+      } else if (rating >= 4.0) {
+        score += 5;
+      }
+
+      scored.push({
+        teacherId: (profile as any).userId?._id,
+        teacherName: (profile as any).userId?.fullName || '',
+        email: (profile as any).userId?.email || '',
+        subjects: (profile as any).subjects,
+        grades: (profile as any).grades,
+        teachingMode: (profile as any).teachingMode,
+        activeClasses,
+        rating,
+        score: Math.min(score, 100),
+        reasons,
+      });
+    }
+
+    // Sort by score descending, return top 5
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, 5);
   }
 }

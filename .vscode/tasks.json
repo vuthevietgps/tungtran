@@ -4,18 +4,24 @@
 		{
 			"label": "backend:dev",
 			"type": "shell",
-			"command": "Push-Location .\\school-mgmt\\backend; npx nest start --watch; Pop-Location",
+			"command": "npx nest start --watch",
 			"isBackground": true,
 			"problemMatcher": [],
-			"group": "build"
+			"group": "build",
+			"options": {
+				"cwd": "${workspaceFolder}/school-mgmt/backend"
+			}
 		},
 		{
 			"label": "frontend:dev",
 			"type": "shell",
-			"command": "Push-Location .\\school-mgmt\\frontend; npm start; Pop-Location",
+			"command": "npm start",
 			"isBackground": true,
 			"problemMatcher": [],
-			"group": "build"
+			"group": "build",
+			"options": {
+				"cwd": "${workspaceFolder}/school-mgmt/frontend"
+			}
 		}
 	]
 }

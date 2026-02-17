@@ -177,6 +177,12 @@ export class Order {
   @Prop({ type: SchemaTypes.ObjectId, ref: 'Lead' })
   leadId?: Types.ObjectId;
 
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'AdGroup' })
+  adGroupId?: Types.ObjectId;
+
+  @Prop({ type: String, trim: true })
+  adGroupName?: string;
+
   @Prop({ type: String, trim: true })
   consultationNotes?: string;
 
@@ -205,3 +211,4 @@ OrderSchema.index({ status: 1, createdAt: -1 });
 OrderSchema.index({ saleId: 1 });
 OrderSchema.index({ leadId: 1 });
 OrderSchema.index({ parentPhone: 1 });
+OrderSchema.index({ adGroupId: 1 });

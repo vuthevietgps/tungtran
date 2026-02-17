@@ -356,10 +356,8 @@ export class AttendanceService {
     user: JwtPayload;
     classroom: ClassLean;
     substitutePayRate?: number;
-    /** OFFLINE mode: force tạo session cho HS vắng (vẫn trừ ví) */
-    forceSessionForAbsent?: boolean;
   }): Promise<{ attendance: any; sessionCreated: boolean }> {
-    const { classId, studentId, date, status, notes, user, classroom, substitutePayRate, forceSessionForAbsent } = params;
+    const { classId, studentId, date, status, notes, user, classroom, substitutePayRate } = params;
 
     // Check if there's an existing FINALIZED session for this attendance — block changes
     const existingFinalized = await this.sessionModel.findOne({
@@ -404,22 +402,9 @@ export class AttendanceService {
         await attendance.save();
         sessionCreated = true;
       }
-    } else if (forceSessionForAbsent) {
-      // ── OFFLINE mode: HS vắng vẫn tạo session (trừ ví, KHÔNG tính lương GV) ──
-      const sid = await this.syncSessionForAbsentStudent({
-        classId: new Types.ObjectId(classId),
-        studentId: new Types.ObjectId(studentId),
-        teacherId: new Types.ObjectId(user._id),
-        date,
-        classroom,
-      });
-      if (sid) {
-        attendance.sessionId = sid;
-        await attendance.save();
-        sessionCreated = true;
-      }
     } else {
       // ABSENT / EXCUSED → cancel linked session (if not yet finalized)
+      // HS vắng KHÔNG bị trừ tiền dù là lớp ONLINE hay OFFLINE
       if (attendance.sessionId) {
         await this.cancelLinkedSession(attendance.sessionId);
         attendance.sessionId = undefined;
@@ -428,69 +413,6 @@ export class AttendanceService {
     }
 
     return { attendance, sessionCreated };
-  }
-
-  // ═══════════════════════════════════════════════════════════════════
-  // OFFLINE MODE: Session for absent students (vắng vẫn trừ ví)
-  // ═══════════════════════════════════════════════════════════════════
-
-  /**
-   * OFFLINE class: HS vắng mặt vẫn bị trừ ví (vì slot đã giữ).
-   * Tạo session với teacherPayout = 0 (không tính lương GV cho HS vắng).
-   */
-  private async syncSessionForAbsentStudent(params: {
-    classId: Types.ObjectId;
-    studentId: Types.ObjectId;
-    teacherId: Types.ObjectId;
-    date: Date;
-    classroom: ClassLean;
-  }): Promise<Types.ObjectId | null> {
-    const { classId, studentId, teacherId, date, classroom } = params;
-
-    const range = dayRange(date);
-    const existing = await this.sessionModel.findOne({
-      classId, studentId, scheduledDate: range,
-      status: { $nin: ['CANCELLED', 'RESCHEDULED'] },
-    });
-    if (existing) return existing._id as Types.ObjectId;
-
-    const amountCharged = (classroom as any).pricePerSession ?? 0;
-    const duration = (classroom as any).sessionDuration ?? (classroom as any).baseDuration ?? 60;
-    const student = await this.studentModel.findById(studentId).select('parentUserId').lean();
-    const count = await this.sessionModel.countDocuments({
-      classId, studentId, status: { $nin: ['CANCELLED', 'RESCHEDULED'] },
-    });
-
-    try {
-      const created = await this.sessionModel.create({
-        classId, studentId, teacherId,
-        parentUserId: (student as any)?.parentUserId,
-        sessionType: 'REGULAR',
-        scheduledDate: date,
-        durationMinutes: duration,
-        sessionNumber: count + 1,
-        amountCharged,         // Vẫn trừ ví PH
-        teacherPayout: 0,      // KHÔNG tính lương GV cho HS vắng
-        status: 'TEACHER_COMPLETED',
-        confirmation: { teacherCompletedAt: new Date() },
-        autoConfirmAfterHours: 48,
-        createdBy: teacherId,
-      });
-      this.logger.log(
-        `[OFFLINE] Created deduct-only session for absent student ${studentId} in class ${classId}`,
-      );
-      return created._id as Types.ObjectId;
-    } catch (err: any) {
-      if (err.code === 11000) {
-        const found = await this.sessionModel.findOne({
-          classId, studentId, scheduledDate: range,
-          status: { $nin: ['CANCELLED', 'RESCHEDULED'] },
-        });
-        return (found?._id as Types.ObjectId) ?? null;
-      }
-      this.logger.error(`[OFFLINE] Failed to create absent session: ${err.message}`);
-      return null;
-    }
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -583,8 +505,6 @@ export class AttendanceService {
         continue;
       }
 
-      const isPresent = item.status === AttendanceStatus.PRESENT || item.status === AttendanceStatus.LATE;
-
       try {
         const result = await this.processOneStudent({
           classId: dto.classId,
@@ -595,8 +515,6 @@ export class AttendanceService {
           user,
           classroom,
           substitutePayRate: subInfo?.payRate,
-          // OFFLINE + vắng → vẫn tạo session (trừ ví)
-          forceSessionForAbsent: isOffline && !isPresent,
         });
         results.push(result.attendance);
         if (result.sessionCreated) sessionsCreated++;
@@ -608,7 +526,8 @@ export class AttendanceService {
       }
     }
 
-    // ── OFFLINE: tạo session cho HS trong lớp nhưng KHÔNG có trong danh sách điểm danh ──
+    // ── OFFLINE: tạo điểm danh ABSENT cho HS trong lớp nhưng KHÔNG có trong danh sách ──
+    // HS vắng KHÔNG bị trừ tiền — chỉ ghi nhận điểm danh ABSENT
     if (isOffline) {
       for (const student of students) {
         const sid = student._id.toString();
@@ -620,11 +539,11 @@ export class AttendanceService {
             studentId: sid,
             date,
             status: AttendanceStatus.ABSENT,
-            notes: 'Không điểm danh (OFFLINE auto-absent)',
+            notes: 'Không có mặt (OFFLINE auto-absent)',
             user,
             classroom,
             substitutePayRate: subInfo?.payRate,
-            forceSessionForAbsent: true, // Vẫn trừ ví
+            // Không truyền forceSessionForAbsent → HS vắng không tạo session, không trừ tiền
           });
           results.push(result.attendance);
           if (result.sessionCreated) sessionsCreated++;
@@ -636,7 +555,7 @@ export class AttendanceService {
         }
       }
 
-      // ── OFFLINE: cập nhật teacherPayout cho tất cả session vừa tạo ──
+      // ── OFFLINE: cập nhật teacherPayout cho session của HS CÓ MẶT ──
       // Lương GV = teacherPayPerStudent × số HS có mặt (chia đều cho mỗi session HS có mặt)
       if (offlineTeacherPayout !== undefined && attendedCount > 0) {
         const range = dayRange(date);
@@ -1021,6 +940,102 @@ export class AttendanceService {
     })).sort((a: any, b: any) =>
       a.classCode.localeCompare(b.classCode, 'vi', { sensitivity: 'base' }),
     );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // PARENT ENDPOINTS
+  // ═══════════════════════════════════════════════════════════════════
+
+  /** PH xem lịch sử điểm danh của tất cả con */
+  async getChildrenAttendance(parentUserId: string, fromDate?: string, toDate?: string) {
+    const parentObjId = new Types.ObjectId(parentUserId);
+    const children = await this.studentModel
+      .find({ parentUserId: parentObjId })
+      .select('fullName studentCode')
+      .lean();
+
+    if (!children.length) return { children: [] };
+
+    const childIds = children.map((c) => c._id);
+    const filter: any = { student: { $in: childIds } };
+    if (fromDate || toDate) {
+      filter.date = {};
+      if (fromDate) filter.date.$gte = new Date(fromDate);
+      if (toDate) filter.date.$lte = new Date(toDate);
+    }
+
+    const records = await this.attendanceModel
+      .find(filter)
+      .populate('classId', 'name code')
+      .sort({ date: -1 })
+      .lean();
+
+    // Group by student
+    const grouped = children.map((child) => {
+      const studentRecords = records.filter(
+        (r) => (r as any).studentId?.toString() === child._id.toString(),
+      );
+      return {
+        student: child,
+        records: studentRecords.map((r: any) => ({
+          _id: r._id,
+          date: r.date,
+          status: r.status,
+          className: r.classId?.name || '',
+          classCode: r.classId?.code || '',
+          note: r.note || '',
+          parentConfirm: r.parentConfirm,
+        })),
+      };
+    });
+
+    return { children: grouped };
+  }
+
+  /** PH xem thống kê điểm danh tổng hợp */
+  async getChildrenAttendanceStats(parentUserId: string) {
+    const parentObjId = new Types.ObjectId(parentUserId);
+    const children = await this.studentModel
+      .find({ parentUserId: parentObjId })
+      .select('fullName studentCode')
+      .lean();
+
+    if (!children.length) return { children: [] };
+
+    const childIds = children.map((c) => c._id);
+
+    const stats = await this.attendanceModel.aggregate([
+      { $match: { student: { $in: childIds } } },
+      {
+        $group: {
+          _id: { student: '$student', status: '$status' },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const result = children.map((child) => {
+      const childStats = stats.filter(
+        (s) => s._id.student.toString() === child._id.toString(),
+      );
+      const total = childStats.reduce((sum, s) => sum + s.count, 0);
+      const present = childStats.find((s) => s._id.status === 'PRESENT')?.count || 0;
+      const absent = childStats.find((s) => s._id.status === 'ABSENT')?.count || 0;
+      const late = childStats.find((s) => s._id.status === 'LATE')?.count || 0;
+
+      return {
+        student: child,
+        total,
+        present,
+        absent,
+        late,
+        presentRate: total > 0 ? Math.round((present / total) * 100) : 0,
+        absentRate: total > 0 ? Math.round((absent / total) * 100) : 0,
+        lateRate: total > 0 ? Math.round((late / total) * 100) : 0,
+      };
+    });
+
+    return { children: result };
   }
 
   /**

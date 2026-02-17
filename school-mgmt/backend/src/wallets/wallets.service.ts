@@ -8,6 +8,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types, FilterQuery, ClientSession } from 'mongoose';
 import { InjectConnection } from '@nestjs/mongoose';
 import { Connection } from 'mongoose';
+import { Cron, CronExpression } from '@nestjs/schedule';
 
 import { Wallet, WalletDocument, WalletStatus } from './schemas/wallet.schema';
 import {
@@ -317,6 +318,21 @@ export class WalletsService {
         status: TransactionStatus.COMPLETED,
       }).session(mongoSession).lean();
       if (existingDeduct) {
+        // Verify params match để phát hiện retry với amount khác
+        if (
+          existingDeduct.amount !== params.amount ||
+          existingDeduct.studentId?.toString() !== params.studentId
+        ) {
+          await mongoSession.abortTransaction();
+          this.logger.warn(
+            `Idempotency mismatch session ${params.sessionId}: ` +
+            `existing amount=${existingDeduct.amount}, requested=${params.amount}`,
+          );
+          throw new BadRequestException(
+            `Đã tồn tại giao dịch trừ tiền cho buổi học này với số tiền khác ` +
+            `(${existingDeduct.amount}đ vs ${params.amount}đ). Vui lòng kiểm tra lại.`,
+          );
+        }
         await mongoSession.abortTransaction();
         return existingDeduct as any;
       }
@@ -336,30 +352,32 @@ export class WalletsService {
         throw new BadRequestException('Ví đang bị đóng băng, không thể trừ tiền');
       }
 
-      // ── Kiểm tra giới hạn nợ ──
+      // ── Atomic check + deduct: embed debt limit vào query filter ──
       const effectiveDebtLimit = this.calcDebtLimit(wallet, params.pricePerSession);
-      const projectedBalance = wallet.balance - params.amount;
-      if (projectedBalance < -effectiveDebtLimit) {
-        throw new BadRequestException(
-          `Vượt giới hạn nợ. Số dư: ${wallet.balance.toLocaleString('vi-VN')}đ, ` +
-          `giới hạn nợ: -${effectiveDebtLimit.toLocaleString('vi-VN')}đ. ` +
-          `Phụ huynh cần nạp thêm tiền.`,
-        );
-      }
-
+      // balance - amount >= -effectiveDebtLimit  ===  balance >= amount - effectiveDebtLimit
+      const minimumRequiredBalance = params.amount - effectiveDebtLimit;
       const balanceBefore = wallet.balance;
-      
-      // Use atomic $inc to prevent race conditions  
-      await this.walletModel.updateOne(
-        { _id: wallet._id },
+
+      const atomicResult = await this.walletModel.findOneAndUpdate(
+        {
+          _id: wallet._id,
+          balance: { $gte: minimumRequiredBalance },
+        },
         {
           $inc: { balance: -params.amount, totalDeducted: params.amount },
           $set: { lastTransactionAt: new Date() },
         },
-        { session: mongoSession },
+        { session: mongoSession, new: true },
       );
-      
-      const updatedWallet = await this.walletModel.findById(wallet._id).session(mongoSession);
+
+      if (!atomicResult) {
+        const currentWallet = await this.walletModel.findById(wallet._id).session(mongoSession);
+        throw new BadRequestException(
+          `Vượt giới hạn nợ. Số dư: ${(currentWallet?.balance ?? wallet.balance).toLocaleString('vi-VN')}đ, ` +
+          `giới hạn nợ: -${effectiveDebtLimit.toLocaleString('vi-VN')}đ. ` +
+          `Phụ huynh cần nạp thêm tiền.`,
+        );
+      }
 
       const entry = await this.ledgerModel.create(
         [
@@ -370,7 +388,7 @@ export class WalletsService {
             status: TransactionStatus.COMPLETED,
             amount: params.amount,
             balanceBefore,
-            balanceAfter: updatedWallet!.balance,
+            balanceAfter: atomicResult.balance,
             description: `Trừ tiền buổi học`,
             sessionId: new Types.ObjectId(params.sessionId),
             classId: new Types.ObjectId(params.classId),
@@ -426,6 +444,16 @@ export class WalletsService {
         status: TransactionStatus.COMPLETED,
       }).session(mongoSession).lean();
       if (existingRefund) {
+        if (existingRefund.amount !== params.refundAmount) {
+          await mongoSession.abortTransaction();
+          this.logger.warn(
+            `Refund idempotency mismatch session ${params.sessionId}: ` +
+            `existing=${existingRefund.amount}, requested=${params.refundAmount}`,
+          );
+          throw new BadRequestException(
+            `Đã tồn tại giao dịch hoàn tiền cho buổi học này với số tiền khác.`,
+          );
+        }
         await mongoSession.abortTransaction();
         return existingRefund as any;
       }
@@ -939,7 +967,134 @@ export class WalletsService {
     const trialSessions = wallet.trialDebtSessions ?? 2;
     if (trialSessions <= 0) return 0;
 
-    const price = pricePerSession ?? 0;
-    return trialSessions * price;
+    if (!pricePerSession || pricePerSession <= 0) {
+      this.logger.warn(
+        `calcDebtLimit: pricePerSession=${pricePerSession} cho wallet ${wallet._id}. ` +
+        `Debt limit = 0 (không cho nợ). Cần set wallet.debtLimit hoặc đảm bảo class.pricePerSession > 0.`,
+      );
+      return 0;
+    }
+
+    return trialSessions * pricePerSession;
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  //  NIGHTLY LEDGER BALANCE VERIFICATION (Đối soát số dư hàng đêm)
+  // ══════════════════════════════════════════════════════════════════
+
+  /**
+   * Chạy lúc 02:00 sáng hàng ngày.
+   * Đối soát số dư ví với giao dịch cuối cùng trong ledger.
+   *
+   * Nguyên tắc bất biến: wallet.balance === lastCompletedEntry.balanceAfter
+   * Nếu sai lệch → ghi log WARN để kế toán review thủ công.
+   */
+  @Cron('0 2 * * *', { name: 'nightly-ledger-balance-verification' })
+  async verifyWalletBalances(): Promise<void> {
+    this.logger.log('[CRON] Bắt đầu đối soát số dư ví...');
+
+    const wallets = await this.walletModel
+      .find({ status: { $ne: 'CLOSED' } })
+      .select('_id userId balance')
+      .lean();
+
+    let checked = 0;
+    let discrepancies = 0;
+    const issues: Array<{ walletId: string; userId: string; systemBalance: number; ledgerBalance: number; diff: number }> = [];
+
+    for (const wallet of wallets) {
+      checked++;
+
+      // Lấy giao dịch cuối cùng đã hoàn thành của ví này
+      const lastEntry = await this.ledgerModel
+        .findOne({
+          walletId: wallet._id,
+          status: { $in: [TransactionStatus.APPROVED, TransactionStatus.COMPLETED] },
+        })
+        .sort({ createdAt: -1 })
+        .select('balanceAfter amount type')
+        .lean();
+
+      const expectedBalance = lastEntry ? lastEntry.balanceAfter : 0;
+      const actualBalance = wallet.balance;
+
+      if (Math.abs(actualBalance - expectedBalance) > 0) {
+        discrepancies++;
+        const diff = actualBalance - expectedBalance;
+        issues.push({
+          walletId: wallet._id.toString(),
+          userId: wallet.userId.toString(),
+          systemBalance: actualBalance,
+          ledgerBalance: expectedBalance,
+          diff,
+        });
+        this.logger.warn(
+          `[BALANCE MISMATCH] Wallet ${wallet._id} (user: ${wallet.userId}): ` +
+          `system=${actualBalance.toLocaleString('vi-VN')}đ, ` +
+          `ledger=${expectedBalance.toLocaleString('vi-VN')}đ, ` +
+          `diff=${diff.toLocaleString('vi-VN')}đ`,
+        );
+      }
+    }
+
+    if (discrepancies === 0) {
+      this.logger.log(
+        `[CRON] Đối soát hoàn tất: ${checked} ví kiểm tra, KHÔNG có sai lệch ✓`,
+      );
+    } else {
+      this.logger.error(
+        `[CRON] Đối soát hoàn tất: ${checked} ví kiểm tra, ` +
+        `${discrepancies} ví SAI LỆCH — cần kế toán xem xét:\n` +
+        issues.map(i =>
+          `  • Wallet ${i.walletId}: system=${i.systemBalance}đ, ledger=${i.ledgerBalance}đ, diff=${i.diff}đ`
+        ).join('\n'),
+      );
+    }
+  }
+
+  /**
+   * Đối soát thủ công theo yêu cầu (DIRECTOR/ACCOUNTING có thể gọi qua API).
+   * Trả về danh sách ví bị sai lệch để review.
+   */
+  async runManualLedgerVerification(): Promise<{
+    checked: number;
+    discrepancies: number;
+    issues: Array<{ walletId: string; userId: string; systemBalance: number; ledgerBalance: number; diff: number }>;
+  }> {
+    const wallets = await this.walletModel
+      .find({ status: { $ne: 'CLOSED' } })
+      .select('_id userId balance')
+      .lean();
+
+    let checked = 0;
+    const issues: Array<{ walletId: string; userId: string; systemBalance: number; ledgerBalance: number; diff: number }> = [];
+
+    for (const wallet of wallets) {
+      checked++;
+
+      const lastEntry = await this.ledgerModel
+        .findOne({
+          walletId: wallet._id,
+          status: { $in: [TransactionStatus.APPROVED, TransactionStatus.COMPLETED] },
+        })
+        .sort({ createdAt: -1 })
+        .select('balanceAfter')
+        .lean();
+
+      const expectedBalance = lastEntry ? lastEntry.balanceAfter : 0;
+      const actualBalance = wallet.balance;
+
+      if (Math.abs(actualBalance - expectedBalance) > 0) {
+        issues.push({
+          walletId: wallet._id.toString(),
+          userId: wallet.userId.toString(),
+          systemBalance: actualBalance,
+          ledgerBalance: expectedBalance,
+          diff: actualBalance - expectedBalance,
+        });
+      }
+    }
+
+    return { checked, discrepancies: issues.length, issues };
   }
 }

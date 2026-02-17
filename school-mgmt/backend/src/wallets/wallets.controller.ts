@@ -184,4 +184,17 @@ export class WalletsController {
     }
     return this.walletsService.getSessionEquivalence({ studentId, classId });
   }
+
+  // ── LEDGER BALANCE VERIFICATION (Đối soát số dư) ────────────────
+
+  /**
+   * DIRECTOR / ACCOUNTING chạy đối soát thủ công bất kỳ lúc nào.
+   * Tự động chạy hàng đêm lúc 02:00 qua CRON.
+   * Trả về danh sách ví bị sai lệch giữa system balance vs ledger.
+   */
+  @Post('verify-balances')
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING)
+  verifyBalances() {
+    return this.walletsService.runManualLedgerVerification();
+  }
 }

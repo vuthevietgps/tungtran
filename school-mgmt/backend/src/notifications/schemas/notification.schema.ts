@@ -21,6 +21,7 @@ export enum NotificationType {
   WALLET_LOW_BALANCE = 'WALLET_LOW_BALANCE',
   ORDER_APPROVED = 'ORDER_APPROVED',
   ENROLLMENT_COMPLETED = 'ENROLLMENT_COMPLETED',
+  LEAD_FOLLOW_UP = 'LEAD_FOLLOW_UP',
   SYSTEM = 'SYSTEM',
 }
 
@@ -59,6 +60,18 @@ export class Notification {
 
   @Prop({ type: String, trim: true })
   targetModule?: string;
+
+  @Prop({ type: [String], default: ['IN_APP'] })
+  channels?: string[];
+
+  @Prop({ type: Boolean, default: false })
+  emailSent?: boolean;
+
+  @Prop({ type: Boolean, default: false })
+  smsSent?: boolean;
+
+  @Prop({ type: Boolean, default: false })
+  zaloSent?: boolean;
 
   @Prop({ type: Boolean, default: false })
   isRead!: boolean;

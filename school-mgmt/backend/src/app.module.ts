@@ -1,6 +1,9 @@
-import { Module } from '@nestjs/common';
+import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { CsrfMiddleware } from './common/middleware/csrf.middleware';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { AdminSeeder } from './seed/admin.seeder';
@@ -22,10 +25,23 @@ import { PendingApprovalsModule } from './pending-approvals/pending-approvals.mo
 import { ExportModule } from './export/export.module';
 import { LeadsModule } from './leads/leads.module';
 import { OrdersModule } from './orders/orders.module';
+import { ExpensesModule } from './expenses/expenses.module';
+import { FinancialControlModule } from './financial-control/financial-control.module';
+import { LoansModule } from './loans/loans.module';
+import { AdsModule } from './ads/ads.module';
+import { ChatbotModule } from './chatbot/chatbot.module';
+import { WorkSessionsModule } from './work-sessions/work-sessions.module';
+import { SalaryConfigModule } from './salary-config/salary-config.module';
+import { StaffPayrollModule } from './staff-payroll/staff-payroll.module';
+import { MessagesModule } from './messages/messages.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    ThrottlerModule.forRoot([{
+      ttl: 60000,    // 1 phút
+      limit: 100,    // 100 requests/phút/IP (global, generous)
+    }]),
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -53,7 +69,26 @@ import { OrdersModule } from './orders/orders.module';
     ExportModule,
     LeadsModule,
     OrdersModule,
+    ExpensesModule,
+    FinancialControlModule,
+    LoansModule,
+    AdsModule,
+    ChatbotModule,
+    WorkSessionsModule,
+    SalaryConfigModule,
+    StaffPayrollModule,
+    MessagesModule,
   ],
-  providers: [AdminSeeder],
+  providers: [
+    AdminSeeder,
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+  ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer
+      .apply(CsrfMiddleware)
+      .exclude('auth/login', 'auth/register', 'webhooks/(.*)')
+      .forRoutes('*');
+  }
+}

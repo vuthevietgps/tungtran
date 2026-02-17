@@ -14,6 +14,9 @@ import { Classroom, ClassroomSchema } from '../classes/schemas/class.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { Invoice, InvoiceSchema } from '../invoices/schemas/invoice.schema';
 import { Attendance, AttendanceSchema } from '../attendance/schemas/attendance.schema';
+import { Expense, ExpenseSchema } from '../expenses/schemas/expense.schema';
+import { Order, OrderSchema } from '../orders/schemas/order.schema';
+import { Lead, LeadSchema } from '../leads/schemas/lead.schema';
 
 @Module({
   imports: [
@@ -29,6 +32,9 @@ import { Attendance, AttendanceSchema } from '../attendance/schemas/attendance.s
       { name: User.name, schema: UserSchema },
       { name: Invoice.name, schema: InvoiceSchema },
       { name: Attendance.name, schema: AttendanceSchema },
+      { name: Expense.name, schema: ExpenseSchema },
+      { name: Order.name, schema: OrderSchema },
+      { name: Lead.name, schema: LeadSchema },
     ]),
   ],
   controllers: [DashboardController],

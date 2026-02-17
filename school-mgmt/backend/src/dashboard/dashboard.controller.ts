@@ -51,6 +51,14 @@ export class DashboardController {
     return this.dashboardService.getStaffLists();
   }
 
+  // ── Sales Dashboard ──────────────────────────────────────────────
+  @Get('sales')
+  @Roles(Role.DIRECTOR, Role.OPS, Role.SALE)
+  getSalesDashboard(@Req() req: AuthenticatedRequest, @Query() query: QueryDashboardDto) {
+    const saleId = req.user.role === Role.SALE ? req.user.sub : undefined;
+    return this.dashboardService.getSalesDashboard(saleId, query.fromDate, query.toDate);
+  }
+
   @Get('accounting')
   @Roles(Role.DIRECTOR, Role.ACCOUNTING)
   getAccountingDashboard(@Query() query: QueryDashboardDto) {
@@ -106,5 +114,36 @@ export class DashboardController {
     @Query('year') year?: number,
   ) {
     return this.dashboardService.getCalendarOverview(month, year);
+  }
+
+  // ── Revenue & Profit Report ────────────────────────────────────
+  @Get('director/revenue')
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING)
+  getRevenueReport(
+    @Query('period') period?: 'monthly' | 'quarterly' | 'yearly',
+    @Query() query?: QueryDashboardDto,
+  ) {
+    return this.dashboardService.getRevenueReport(period || 'monthly', query?.fromDate, query?.toDate);
+  }
+
+  // ── Student Retention ──────────────────────────────────────────
+  @Get('director/retention')
+  @Roles(Role.DIRECTOR)
+  getRetentionMetrics() {
+    return this.dashboardService.getRetentionMetrics();
+  }
+
+  // ── Employee Performance ──────────────────────────────────────
+  @Get('director/employee-performance')
+  @Roles(Role.DIRECTOR)
+  getEmployeePerformance() {
+    return this.dashboardService.getEmployeePerformance();
+  }
+
+  // ── Revenue Forecasting ──────────────────────────────────────
+  @Get('director/forecast')
+  @Roles(Role.DIRECTOR)
+  getRevenueForecast() {
+    return this.dashboardService.getRevenueForecast();
   }
 }

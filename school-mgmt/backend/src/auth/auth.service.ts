@@ -5,8 +5,11 @@ import { UsersService } from '../users/users.service';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
+import { WorkSessionsService } from '../work-sessions/work-sessions.service';
+import { SalaryConfigService } from '../salary-config/salary-config.service';
 
 const MAX_FAILED_ATTEMPTS = 5;
+const LOCKOUT_DURATION_MS = 30 * 60 * 1000; // 30 phút tự mở khóa
 
 @Injectable()
 export class AuthService {
@@ -14,13 +17,34 @@ export class AuthService {
     private usersService: UsersService,
     private jwtService: JwtService,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
+    private readonly workSessionsService: WorkSessionsService,
+    private readonly salaryConfigService: SalaryConfigService,
   ) {}
 
   async validateUser(email: string, pass: string) {
     const user = await this.usersService.findByEmail(email.toLowerCase());
     if (!user) throw new UnauthorizedException('Thông tin đăng nhập không hợp lệ');
     if (!user.password) throw new UnauthorizedException('Thông tin đăng nhập không hợp lệ');
-    if (user.status === 'LOCKED') throw new UnauthorizedException('Tài khoản đã bị khóa');
+
+    // Auto-unlock sau LOCKOUT_DURATION_MS
+    if (user.status === 'LOCKED') {
+      const lockedAt = user.lastFailedLoginAt;
+      const now = Date.now();
+      if (lockedAt && (now - new Date(lockedAt).getTime()) >= LOCKOUT_DURATION_MS) {
+        await this.userModel.updateOne(
+          { _id: user._id },
+          { $set: { status: 'ACTIVE', failedLoginAttempts: 0 }, $unset: { lastFailedLoginAt: 1 } },
+        );
+      } else {
+        const remainingMs = lockedAt
+          ? LOCKOUT_DURATION_MS - (now - new Date(lockedAt).getTime())
+          : LOCKOUT_DURATION_MS;
+        const remainingMinutes = Math.ceil(remainingMs / 60000);
+        throw new UnauthorizedException(
+          `Tài khoản đã bị khóa. Vui lòng thử lại sau ${remainingMinutes} phút.`,
+        );
+      }
+    }
 
     const match = await bcrypt.compare(pass, user.password);
     if (!match) {
@@ -55,6 +79,18 @@ export class AuthService {
 
   async login(user: any) {
     const payload = { sub: user._id, email: user.email, role: user.role, fullName: user.fullName };
+
+    // Ghi nhận chấm công đăng nhập (không block login nếu lỗi)
+    try {
+      const config = await this.salaryConfigService.findByUserId(user._id.toString()).catch(() => null);
+      await this.workSessionsService.recordLogin(
+        user._id.toString(),
+        config?.scheduledStartTime,
+      );
+    } catch (err) {
+      // Log but don't block login
+    }
+
     return {
       access_token: await this.jwtService.signAsync(payload),
       user: payload,

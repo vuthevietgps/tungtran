@@ -41,6 +41,13 @@ export class InvoicesController {
     return this.invoicesService.findAll(req.user);
   }
 
+  /** PH xem hóa đơn của tất cả con */
+  @Get('my-children')
+  @Roles(Role.PARENT)
+  getParentInvoices(@Req() req: AuthenticatedRequest) {
+    return this.invoicesService.getParentInvoices(req.user.sub);
+  }
+
   /** Danh sách hóa đơn chờ duyệt (DIRECTOR / ACCOUNTING) */
   @Get('pending')
   @Roles(Role.DIRECTOR, Role.ACCOUNTING)
@@ -55,19 +62,19 @@ export class InvoicesController {
   }
 
   @Get('payments/all')
-  @Roles(Role.DIRECTOR, Role.OPS, Role.SALE)
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS)
   getAllPaymentInvoices() {
     return this.invoicesService.getAllPaymentInvoices();
   }
 
   @Get(':id')
-  @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.SALE)
-  findOne(@Param('id', ParseMongoIdPipe) id: string) {
-    return this.invoicesService.findOne(id);
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.SALE, Role.PARENT)
+  findOne(@Param('id', ParseMongoIdPipe) id: string, @Req() req: AuthenticatedRequest) {
+    return this.invoicesService.findOne(id, req.user);
   }
 
   @Post('payments/:studentId/:frameIndex/confirm')
-  @Roles(Role.DIRECTOR, Role.OPS)
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING)
   confirmPayment(
     @Param('studentId', ParseMongoIdPipe) studentId: string,
     @Param('frameIndex') frameIndex: string,

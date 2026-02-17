@@ -69,6 +69,21 @@ export class SessionsService {
       throw new ConflictException('Đã tồn tại buổi học cho học sinh này trong lớp vào ngày này');
     }
 
+    // ── Schedule Conflict Detection ──
+    if (dto.scheduledStartTime && dto.scheduledEndTime) {
+      const conflictResult = await this.checkConflicts({
+        teacherId: dto.teacherId,
+        studentId: dto.studentId,
+        scheduledDate: dto.scheduledDate,
+        scheduledStartTime: dto.scheduledStartTime,
+        scheduledEndTime: dto.scheduledEndTime,
+      });
+      if (conflictResult.hasConflict) {
+        const msgs = conflictResult.conflicts.map((c: any) => c.message).join('; ');
+        throw new ConflictException(`Trùng lịch: ${msgs}`);
+      }
+    }
+
     // Auto-fill financials from class — tỷ lệ theo thời lượng
     const baseDuration = (classroom as any).baseDuration || 60;
     const durationMinutes = dto.durationMinutes ?? classroom.sessionDuration ?? 60;
@@ -91,6 +106,9 @@ export class SessionsService {
       teacherPayout,
       durationMinutes,
       evaluation,
+      orderId: (student as any).orderId || undefined,
+      adGroupId: (student as any).adGroupId || undefined,
+      adGroupName: (student as any).adGroupName || undefined,
       createdBy: new Types.ObjectId(createdBy),
     });
 
@@ -454,15 +472,32 @@ export class SessionsService {
       );
     }
 
-    session.status = SessionStatus.FINALIZED;
-    session.confirmation.finalizedAt = new Date();
-    session.confirmation.finalizedBy = new Types.ObjectId(userId);
-    const saved = await session.save();
+    // Atomic status transition để tránh double finalization
+    const updated = await this.sessionModel.findOneAndUpdate(
+      {
+        _id: sessionId,
+        status: { $in: [SessionStatus.TEACHER_COMPLETED, SessionStatus.PARENT_CONFIRMED] },
+      },
+      {
+        $set: {
+          status: SessionStatus.FINALIZED,
+          'confirmation.finalizedAt': new Date(),
+          'confirmation.finalizedBy': new Types.ObjectId(userId),
+        },
+      },
+      { new: true },
+    );
+
+    if (!updated) {
+      throw new BadRequestException(
+        'Buổi học đã được chốt bởi hệ thống hoặc người dùng khác',
+      );
+    }
 
     // Trừ ví PH
-    await this.deductWalletForSession(saved);
+    await this.deductWalletForSession(updated);
 
-    return saved;
+    return updated;
   }
 
   // ──────────────────────────────────────────────────────────────────
@@ -928,6 +963,277 @@ export class SessionsService {
     return { updated: result.modifiedCount };
   }
 
+  // ──────────────────────────────────────────────────────────────────
+  //  PARENT: Children Progress (P1)
+  // ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Aggregate tiến độ học tập của tất cả con theo parentUserId.
+   * Trả về: evaluation scores, homework pending, curriculum progress, teacher comments.
+   */
+  async getChildrenProgress(parentUserId: string) {
+    const parentObjId = new Types.ObjectId(parentUserId);
+
+    // Tìm tất cả học sinh của phụ huynh
+    const children = await this.studentModel
+      .find({ parentUserId: parentObjId })
+      .select('fullName studentCode grade subjects')
+      .lean();
+
+    if (!children.length) return { children: [] };
+
+    const childIds = children.map((c) => c._id);
+
+    // Lấy tất cả sessions có evaluation hoặc teachingReport
+    const sessions = await this.sessionModel
+      .find({
+        studentId: { $in: childIds },
+        status: { $in: ['TEACHER_COMPLETED', 'PARENT_CONFIRMED', 'FINALIZED'] },
+      })
+      .select(
+        'studentId classId evaluation teachingReport hasTeachingReport scheduledDate status',
+      )
+      .populate('classId', 'name code curriculum')
+      .sort({ scheduledDate: -1 })
+      .lean();
+
+    // Group sessions by student
+    const sessionsByStudent = new Map<string, any[]>();
+    for (const s of sessions) {
+      const sid = s.studentId.toString();
+      if (!sessionsByStudent.has(sid)) sessionsByStudent.set(sid, []);
+      sessionsByStudent.get(sid)!.push(s);
+    }
+
+    const result = children.map((child) => {
+      const studentSessions = sessionsByStudent.get(child._id.toString()) || [];
+
+      // Tính trung bình evaluation scores
+      const withEval = studentSessions.filter(
+        (s) => s.evaluation?.studentPerformance,
+      );
+      const avgPerformance =
+        withEval.length > 0
+          ? Math.round(
+              (withEval.reduce(
+                (sum, s) => sum + (s.evaluation.studentPerformance || 0),
+                0,
+              ) /
+                withEval.length) *
+                10,
+            ) / 10
+          : null;
+      const avgEngagement =
+        withEval.length > 0
+          ? Math.round(
+              (withEval.reduce(
+                (sum, s) => sum + (s.evaluation.studentEngagement || 0),
+                0,
+              ) /
+                withEval.length) *
+                10,
+            ) / 10
+          : null;
+      const avgComprehension =
+        withEval.length > 0
+          ? Math.round(
+              (withEval.reduce(
+                (sum, s) => sum + (s.evaluation.comprehensionLevel || 0),
+                0,
+              ) /
+                withEval.length) *
+                10,
+            ) / 10
+          : null;
+
+      // Homework pending (assigned nhưng chưa graded)
+      const homeworkList = studentSessions
+        .filter(
+          (s) =>
+            s.evaluation?.homeworkAssigned &&
+            s.evaluation.homeworkStatus !== 'GRADED',
+        )
+        .map((s) => ({
+          sessionDate: s.scheduledDate,
+          className: (s.classId as any)?.name || '',
+          homework: s.evaluation.homeworkAssigned,
+          deadline: s.evaluation.homeworkDeadline,
+          status: s.evaluation.homeworkStatus || 'ASSIGNED',
+          score: s.evaluation.homeworkScore,
+        }));
+
+      // Recent teacher comments
+      const recentComments = studentSessions
+        .filter((s) => s.teachingReport?.teacherComment || s.evaluation?.overallComment)
+        .slice(0, 10)
+        .map((s) => ({
+          sessionDate: s.scheduledDate,
+          className: (s.classId as any)?.name || '',
+          teacherComment: s.teachingReport?.teacherComment || '',
+          overallComment: s.evaluation?.overallComment || '',
+          progressPercent: s.evaluation?.progressPercent,
+        }));
+
+      // Curriculum progress per class
+      const classMap = new Map<string, any>();
+      for (const s of studentSessions) {
+        const cid = (s.classId as any)?._id?.toString();
+        if (!cid) continue;
+        if (!classMap.has(cid)) {
+          const curriculum = (s.classId as any)?.curriculum || [];
+          const completed = curriculum.filter((c: any) => c.isCompleted).length;
+          classMap.set(cid, {
+            classId: cid,
+            className: (s.classId as any)?.name || '',
+            classCode: (s.classId as any)?.code || '',
+            totalItems: curriculum.length,
+            completedItems: completed,
+            progressPercent:
+              curriculum.length > 0
+                ? Math.round((completed / curriculum.length) * 100)
+                : 0,
+          });
+        }
+      }
+
+      return {
+        student: {
+          _id: child._id,
+          fullName: child.fullName,
+          studentCode: child.studentCode,
+          grade: child.grade,
+          subjects: child.subjects,
+        },
+        totalSessions: studentSessions.length,
+        evaluation: {
+          avgPerformance,
+          avgEngagement,
+          avgComprehension,
+          totalEvaluated: withEval.length,
+        },
+        homework: {
+          pending: homeworkList.filter((h) => h.status !== 'GRADED').length,
+          list: homeworkList,
+        },
+        recentComments,
+        curriculumProgress: Array.from(classMap.values()),
+      };
+    });
+
+    return { children: result };
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  //  SCHEDULE CONFLICT DETECTION (O1)
+  // ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Check xung đột lịch cho teacher và student.
+   * 2 sessions xung đột nếu cùng ngày VÀ thời gian overlap.
+   */
+  async checkConflicts(params: {
+    teacherId?: string;
+    studentId?: string;
+    scheduledDate: string;
+    scheduledStartTime: string;
+    scheduledEndTime: string;
+    excludeSessionId?: string;
+  }): Promise<{ hasConflict: boolean; conflicts: any[] }> {
+    const date = new Date(params.scheduledDate);
+    const dayStart = new Date(
+      Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+    );
+    const dayEnd = new Date(dayStart);
+    dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+
+    const conflicts: any[] = [];
+
+    const baseFilter: any = {
+      scheduledDate: { $gte: dayStart, $lt: dayEnd },
+      status: { $nin: ['CANCELLED', 'RESCHEDULED'] },
+      scheduledStartTime: { $exists: true },
+      scheduledEndTime: { $exists: true },
+    };
+    if (params.excludeSessionId) {
+      baseFilter._id = { $ne: new Types.ObjectId(params.excludeSessionId) };
+    }
+
+    // Check teacher conflicts
+    if (params.teacherId) {
+      const teacherSessions = await this.sessionModel
+        .find({ ...baseFilter, teacherId: new Types.ObjectId(params.teacherId) })
+        .populate('studentId', 'fullName studentCode')
+        .populate('classId', 'name code')
+        .lean();
+
+      for (const s of teacherSessions) {
+        if (
+          this.isTimeOverlap(
+            params.scheduledStartTime,
+            params.scheduledEndTime,
+            s.scheduledStartTime!,
+            s.scheduledEndTime!,
+          )
+        ) {
+          conflicts.push({
+            type: 'TEACHER',
+            session: s,
+            message: `Giáo viên đã có buổi học ${s.scheduledStartTime}-${s.scheduledEndTime} với ${(s.studentId as any)?.fullName || 'HS'} lớp ${(s.classId as any)?.name || ''}`,
+          });
+        }
+      }
+    }
+
+    // Check student conflicts
+    if (params.studentId) {
+      const studentSessions = await this.sessionModel
+        .find({ ...baseFilter, studentId: new Types.ObjectId(params.studentId) })
+        .populate('teacherId', 'fullName')
+        .populate('classId', 'name code')
+        .lean();
+
+      for (const s of studentSessions) {
+        if (
+          this.isTimeOverlap(
+            params.scheduledStartTime,
+            params.scheduledEndTime,
+            s.scheduledStartTime!,
+            s.scheduledEndTime!,
+          )
+        ) {
+          conflicts.push({
+            type: 'STUDENT',
+            session: s,
+            message: `Học sinh đã có buổi học ${s.scheduledStartTime}-${s.scheduledEndTime} với GV ${(s.teacherId as any)?.fullName || ''} lớp ${(s.classId as any)?.name || ''}`,
+          });
+        }
+      }
+    }
+
+    return { hasConflict: conflicts.length > 0, conflicts };
+  }
+
+  /**
+   * Kiểm tra 2 khoảng thời gian có overlap không.
+   * Format: "HH:mm"
+   */
+  private isTimeOverlap(
+    start1: string,
+    end1: string,
+    start2: string,
+    end2: string,
+  ): boolean {
+    const toMinutes = (t: string) => {
+      const [h, m] = t.split(':').map(Number);
+      return h * 60 + m;
+    };
+    const s1 = toMinutes(start1);
+    const e1 = toMinutes(end1);
+    const s2 = toMinutes(start2);
+    const e2 = toMinutes(end2);
+    return s1 < e2 && s2 < e1;
+  }
+
   /**
    * Đếm sessions FINALIZED cho 1 GV trong khoảng thời gian (dùng cho payroll)
    */
@@ -995,5 +1301,57 @@ export class SessionsService {
       { _id: { $in: sessionIds.map((id) => new Types.ObjectId(id)) } },
       { $set: { isPaid: true } },
     );
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // PARENT FEEDBACK (Phase 3.2)
+  // ════════════════════════════════════════════════════════════════════
+
+  async submitParentFeedback(parentUserId: string, feedback: {
+    overallRating: number;
+    teachingQuality?: number;
+    communication?: number;
+    facility?: number;
+    comment?: string;
+    studentId?: string;
+  }) {
+    const parentObjId = new Types.ObjectId(parentUserId);
+
+    // Find recent finalized sessions for this parent's children
+    const filter: any = {
+      parentUserId: parentObjId,
+      status: 'FINALIZED',
+    };
+    if (feedback.studentId) {
+      filter.studentId = new Types.ObjectId(feedback.studentId);
+    }
+
+    // Store feedback on the most recent session
+    const session = await this.sessionModel
+      .findOne(filter)
+      .sort({ scheduledDate: -1 });
+
+    if (!session) {
+      return { success: true, message: 'Feedback đã được ghi nhận (không có session liên quan)' };
+    }
+
+    // Store in evaluation.parentFeedback
+    await this.sessionModel.updateOne(
+      { _id: session._id },
+      {
+        $set: {
+          'evaluation.parentFeedback': {
+            overallRating: feedback.overallRating,
+            teachingQuality: feedback.teachingQuality,
+            communication: feedback.communication,
+            facility: feedback.facility,
+            comment: feedback.comment,
+            submittedAt: new Date(),
+          },
+        },
+      },
+    );
+
+    return { success: true, message: 'Cảm ơn bạn đã gửi đánh giá!' };
   }
 }

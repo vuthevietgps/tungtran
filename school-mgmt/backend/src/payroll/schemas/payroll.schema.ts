@@ -104,7 +104,7 @@ export class Payroll {
   deductionAmount!: number;
 
   /** Tổng thực nhận = gross + bonus - deduction + adjustment */
-  @Prop({ type: Number, min: 0, default: 0 })
+  @Prop({ type: Number, default: 0 })
   netAmount!: number;
 
   // ── Status & Approval ──

@@ -1,13 +1,19 @@
-import { Controller, Get, Patch, Param, Query, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Patch, Param, Query, Body, UseGuards, Req } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 import { NotificationsService } from './notifications.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 import { ParseMongoIdPipe } from '../common/pipes/parse-mongo-id.pipe';
+import { User, UserDocument } from '../users/schemas/user.schema';
 
 @Controller('notifications')
 @UseGuards(JwtAuthGuard)
 export class NotificationsController {
-  constructor(private readonly notificationsService: NotificationsService) {}
+  constructor(
+    private readonly notificationsService: NotificationsService,
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
+  ) {}
 
   @Get()
   getMyNotifications(
@@ -39,5 +45,31 @@ export class NotificationsController {
   @Patch('mark-all-read')
   markAllAsRead(@Req() req: AuthenticatedRequest) {
     return this.notificationsService.markAllAsRead(req.user.sub);
+  }
+
+  @Get('preferences')
+  async getPreferences(@Req() req: AuthenticatedRequest) {
+    const user = await this.userModel.findById(req.user.sub).select('enableEmailNotif enableZaloNotif enableSmsNotif phone').lean();
+    return {
+      enableEmailNotif: user?.enableEmailNotif || false,
+      enableZaloNotif: user?.enableZaloNotif || false,
+      enableSmsNotif: user?.enableSmsNotif || false,
+      phone: user?.phone || '',
+    };
+  }
+
+  @Patch('preferences')
+  async updatePreferences(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: { enableEmailNotif?: boolean; enableZaloNotif?: boolean; enableSmsNotif?: boolean; phone?: string },
+  ) {
+    const update: any = {};
+    if (body.enableEmailNotif !== undefined) update.enableEmailNotif = body.enableEmailNotif;
+    if (body.enableZaloNotif !== undefined) update.enableZaloNotif = body.enableZaloNotif;
+    if (body.enableSmsNotif !== undefined) update.enableSmsNotif = body.enableSmsNotif;
+    if (body.phone !== undefined) update.phone = body.phone;
+
+    await this.userModel.findByIdAndUpdate(req.user.sub, { $set: update });
+    return { success: true };
   }
 }

@@ -246,6 +246,16 @@ export class Session {
   @Prop({ type: SchemaTypes.ObjectId, ref: 'User' })
   parentUserId?: Types.ObjectId; // PH liên kết (auto-populate từ Student)
 
+  // ── Tracking nguồn quảng cáo (denormalize từ Student/Order) ──
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'Order' })
+  orderId?: Types.ObjectId;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'AdGroup' })
+  adGroupId?: Types.ObjectId;
+
+  @Prop({ type: String })
+  adGroupName?: string;
+
   // ── Session type ──
   @Prop({ type: String, enum: SessionType, default: SessionType.REGULAR, index: true })
   sessionType!: SessionType; // Loại buổi học
@@ -388,3 +398,4 @@ SessionSchema.index({ status: 1, 'confirmation.teacherCompletedAt': 1 }); // For
 SessionSchema.index({ classId: 1, sessionNumber: 1 });
 SessionSchema.index({ sessionType: 1 }); // Lọc theo loại buổi học
 SessionSchema.index({ teacherId: 1, hasTeachingReport: 1, status: 1 }); // Payroll + báo cáo giảng dạy
+SessionSchema.index({ adGroupId: 1, scheduledDate: 1 }); // Analytics lợi nhuận per ad group per ngày

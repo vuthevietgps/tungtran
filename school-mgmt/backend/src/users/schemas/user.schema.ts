@@ -27,6 +27,18 @@ export class User {
 
   @Prop({ type: Date })
   lastFailedLoginAt?: Date;
+
+  @Prop({ type: String, trim: true })
+  phone?: string;
+
+  @Prop({ type: Boolean, default: false })
+  enableEmailNotif?: boolean;
+
+  @Prop({ type: Boolean, default: false })
+  enableZaloNotif?: boolean;
+
+  @Prop({ type: Boolean, default: false })
+  enableSmsNotif?: boolean;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

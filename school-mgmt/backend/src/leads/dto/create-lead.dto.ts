@@ -34,6 +34,14 @@ export class CreateLeadDto {
 
   @IsString()
   @IsOptional()
+  adGroupId?: string;
+
+  @IsString()
+  @IsOptional()
+  adGroupName?: string;
+
+  @IsString()
+  @IsOptional()
   referredBy?: string;
 
   @IsNumber()

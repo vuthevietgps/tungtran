@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, ConflictException, ForbiddenException, BadRequestException, Logger } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { InjectModel, InjectConnection } from '@nestjs/mongoose';
+import { Model, Types, Connection } from 'mongoose';
 import { Invoice, InvoiceDocument, InvoiceStatus, InvoiceType } from './schemas/invoice.schema';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { UpdateInvoiceDto } from './dto/update-invoice.dto';
@@ -21,6 +21,7 @@ export class InvoicesService {
     @InjectModel(Student.name) private readonly studentModel: Model<StudentDocument>,
     @InjectModel(Classroom.name) private readonly classModel: Model<ClassDocument>,
     private readonly walletsService: WalletsService,
+    @InjectConnection() private readonly connection: Connection,
   ) {}
 
   async create(dto: CreateInvoiceDto, actor: JwtPayload) {
@@ -123,15 +124,25 @@ export class InvoicesService {
       .lean();
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, actor?: JwtPayload) {
     const invoice = await this.invoiceModel.findById(id)
-      .populate('studentId', 'fullName parentName parentPhone studentCode')
+      .populate('studentId', 'fullName parentName parentPhone studentCode parentUserId')
       .populate('classId', 'name code pricePerSession teacherPayPerSession')
       .populate('createdBy', 'fullName email')
       .populate('approvedBy', 'fullName email')
       .populate('saleId', 'fullName email')
       .lean();
     if (!invoice) throw new NotFoundException('Hóa đơn không tồn tại');
+
+    // PARENT chỉ được xem hóa đơn của con mình
+    if (actor?.role === Role.PARENT) {
+      const student = invoice.studentId as any;
+      const parentUserId = student?.parentUserId?.toString();
+      if (parentUserId !== actor.sub) {
+        throw new ForbiddenException('Bạn không có quyền xem hóa đơn này');
+      }
+    }
+
     return invoice;
   }
 
@@ -188,37 +199,49 @@ export class InvoicesService {
   /** Duyệt hoặc từ chối hóa đơn (DIRECTOR / ACCOUNTING) */
   async approveInvoice(id: string, dto: ApproveInvoiceDto, actor: JwtPayload) {
     if (dto.action === 'APPROVE') {
-      // Atomic status transition to prevent double-approval race condition
-      const invoice = await this.invoiceModel.findOneAndUpdate(
-        { _id: id, status: InvoiceStatus.PENDING_APPROVAL },
-        {
-          $set: {
-            status: InvoiceStatus.APPROVED,
-            approvedBy: new Types.ObjectId(actor._id),
-            approvedAt: new Date(),
-          },
-        },
-        { new: true },
-      );
-      if (!invoice) {
-        // Either not found or already processed
-        const exists = await this.invoiceModel.findById(id).lean();
-        if (!exists) throw new NotFoundException('Hóa đơn không tồn tại');
-        throw new BadRequestException(
-          `Hóa đơn đang ở trạng thái "${exists.status}", chỉ có thể duyệt khi ở trạng thái "PENDING_APPROVAL"`,
-        );
-      }
+      // Wrap approve + wallet top-up trong transaction để đảm bảo atomic
+      const mongoSession = await this.connection.startSession();
+      mongoSession.startTransaction();
 
-      // Wallet top-up for TUITION invoices
-      if (
-        invoice.invoiceType === InvoiceType.TUITION &&
-        !invoice.walletTopUpDone &&
-        invoice.amount > 0
-      ) {
-        await this.topUpWalletForInvoice(invoice, actor);
+      try {
+        const invoice = await this.invoiceModel.findOneAndUpdate(
+          { _id: id, status: InvoiceStatus.PENDING_APPROVAL },
+          {
+            $set: {
+              status: InvoiceStatus.APPROVED,
+              approvedBy: new Types.ObjectId(actor._id),
+              approvedAt: new Date(),
+            },
+          },
+          { new: true, session: mongoSession },
+        );
+        if (!invoice) {
+          await mongoSession.abortTransaction();
+          const exists = await this.invoiceModel.findById(id).lean();
+          if (!exists) throw new NotFoundException('Hóa đơn không tồn tại');
+          throw new BadRequestException(
+            `Hóa đơn đang ở trạng thái "${exists.status}", chỉ có thể duyệt khi ở trạng thái "PENDING_APPROVAL"`,
+          );
+        }
+
+        // Wallet top-up for TUITION invoices — trong cùng transaction
+        if (
+          invoice.invoiceType === InvoiceType.TUITION &&
+          !invoice.walletTopUpDone &&
+          invoice.amount > 0
+        ) {
+          await this.topUpWalletForInvoice(invoice, actor, mongoSession);
+        }
+
+        await mongoSession.commitTransaction();
+      } catch (err) {
+        await mongoSession.abortTransaction();
+        throw err;
+      } finally {
+        mongoSession.endSession();
       }
     } else {
-      // REJECT - also atomic
+      // REJECT - atomic, không cần transaction
       const invoice = await this.invoiceModel.findOneAndUpdate(
         { _id: id, status: InvoiceStatus.PENDING_APPROVAL },
         {
@@ -262,48 +285,50 @@ export class InvoicesService {
   private async topUpWalletForInvoice(
     invoice: InvoiceDocument,
     approver: JwtPayload,
+    mongoSession?: import('mongoose').ClientSession,
   ): Promise<void> {
-    try {
-      // Tìm parentUserId của student
-      const student = await this.studentModel
-        .findById(invoice.studentId)
-        .select('parentUserId fullName')
-        .lean();
+    // Tìm parentUserId của student
+    const student = await this.studentModel
+      .findById(invoice.studentId)
+      .select('parentUserId fullName')
+      .session(mongoSession || null)
+      .lean();
 
-      if (!student?.parentUserId) {
-        this.logger.warn(
-          `Invoice ${invoice.invoiceNumber}: Student chưa có parentUserId, không thể nạp ví`,
-        );
-        return;
-      }
-
-      const parentUserId = student.parentUserId.toString();
-
-      // Nạp tiền trực tiếp qua walletsService (auto-approved)
-      const ledgerEntry = await this.walletsService.topUpFromInvoice({
-        parentUserId,
-        invoiceId: (invoice._id as Types.ObjectId).toString(),
-        invoiceNumber: invoice.invoiceNumber,
-        amount: invoice.amount,
-        studentId: invoice.studentId.toString(),
-        classId: invoice.classId?.toString(),
-        approvedBy: approver._id,
-      });
-
-      // Ghi nhận đã nạp ví
-      invoice.walletTopUpDone = true;
-      invoice.ledgerEntryId = ledgerEntry._id as Types.ObjectId;
-      await invoice.save();
-
-      this.logger.log(
-        `Invoice ${invoice.invoiceNumber} APPROVED → Wallet topped up ${invoice.amount.toLocaleString('vi-VN')}đ for parent ${parentUserId}`,
+    if (!student?.parentUserId) {
+      throw new BadRequestException(
+        `Invoice ${invoice.invoiceNumber}: Student chưa có parentUserId, không thể nạp ví. ` +
+        `Vui lòng cập nhật parentUserId cho học sinh trước khi duyệt hóa đơn.`,
       );
-    } catch (err) {
-      this.logger.error(
-        `Invoice ${invoice.invoiceNumber}: Wallet top-up failed: ${(err as Error).message}`,
-      );
-      // Không throw — invoice vẫn APPROVED, admin sẽ retry thủ công nếu cần
     }
+
+    const parentUserId = student.parentUserId.toString();
+
+    // Nạp tiền trực tiếp qua walletsService (auto-approved)
+    const ledgerEntry = await this.walletsService.topUpFromInvoice({
+      parentUserId,
+      invoiceId: (invoice._id as Types.ObjectId).toString(),
+      invoiceNumber: invoice.invoiceNumber,
+      amount: invoice.amount,
+      studentId: invoice.studentId.toString(),
+      classId: invoice.classId?.toString(),
+      approvedBy: approver._id,
+    });
+
+    // Ghi nhận đã nạp ví — trong cùng transaction
+    await this.invoiceModel.updateOne(
+      { _id: invoice._id },
+      {
+        $set: {
+          walletTopUpDone: true,
+          ledgerEntryId: ledgerEntry._id as Types.ObjectId,
+        },
+      },
+      mongoSession ? { session: mongoSession } : {},
+    );
+
+    this.logger.log(
+      `Invoice ${invoice.invoiceNumber} APPROVED → Wallet topped up ${invoice.amount.toLocaleString('vi-VN')}đ for parent ${parentUserId}`,
+    );
   }
 
   /** Lấy danh sách hóa đơn chờ duyệt */
@@ -333,6 +358,48 @@ export class InvoicesService {
 
     await this.invoiceModel.findByIdAndDelete(id);
     return invoice.toObject();
+  }
+
+  /** PH xem hóa đơn của tất cả con */
+  async getParentInvoices(parentUserId: string) {
+    const parentObjId = new Types.ObjectId(parentUserId);
+    const children = await this.studentModel
+      .find({ parentUserId: parentObjId })
+      .select('_id fullName studentCode')
+      .lean();
+
+    if (!children.length) return { children: [] };
+
+    const childIds = children.map((c) => c._id);
+    const invoices = await this.invoiceModel
+      .find({ studentId: { $in: childIds } })
+      .populate('classId', 'name code')
+      .populate('createdBy', 'fullName email')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const grouped = children.map((child) => ({
+      student: child,
+      invoices: invoices.filter(
+        (inv) => inv.studentId.toString() === child._id.toString(),
+      ),
+    }));
+
+    // Summary
+    const totalPaid = invoices
+      .filter((i) => i.status === 'APPROVED')
+      .reduce((sum, i) => sum + (i.amount || 0), 0);
+    const totalPending = invoices
+      .filter((i) => i.status === 'PENDING_APPROVAL')
+      .reduce((sum, i) => sum + (i.amount || 0), 0);
+    const totalSessionsRemaining = invoices
+      .filter((i) => i.status === 'APPROVED')
+      .reduce((sum, i) => sum + (i.sessionsRemaining || 0), 0);
+
+    return {
+      children: grouped,
+      summary: { totalPaid, totalPending, totalSessionsRemaining },
+    };
   }
 
   async getInvoicesByStudent(studentId: string) {
