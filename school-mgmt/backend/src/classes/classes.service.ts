@@ -7,7 +7,11 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Classroom, ClassDocument } from './schemas/class.schema';
+import {
+  Classroom,
+  ClassDocument,
+  PricingSnapshotSource,
+} from './schemas/class.schema';
 import { CreateClassDto } from './dto/create-class.dto';
 import { UpdateClassDto } from './dto/update-class.dto';
 import { AssignStudentsDto } from './dto/assign-students.dto';
@@ -28,37 +32,112 @@ export class ClassesService {
     @InjectModel(TeacherProfile.name) private readonly teacherProfileModel: Model<any>,
   ) {}
 
+  private getActorId(actor?: JwtPayload): string | null {
+    return actor?.sub ?? actor?._id ?? (actor as any)?.userId ?? null;
+  }
+
+  private async assertClassAccess(classroom: any, actor?: JwtPayload): Promise<void> {
+    if (!actor) return;
+    const actorId = this.getActorId(actor);
+    if (!actorId) throw new ForbiddenException('Khong xac dinh duoc nguoi dung');
+
+    if ([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING].includes(actor.role)) {
+      return;
+    }
+
+    if (actor.role === Role.SALE) {
+      if (classroom?.sale?.toString() === actorId) return;
+      throw new ForbiddenException('Ban khong co quyen truy cap lop hoc nay');
+    }
+
+    if (actor.role === Role.TEACHER) {
+      if (classroom?.teacher?.toString() === actorId) return;
+      const subs = (classroom?.substituteTeachers || []) as any[];
+      if (subs.some((s) => s?.teacherId?.toString() === actorId)) return;
+      throw new ForbiddenException('Ban khong co quyen truy cap lop hoc nay');
+    }
+
+    if (actor.role === Role.PARENT) {
+      const studentIds = (classroom?.students || []) as any[];
+      if (!studentIds.length) {
+        throw new ForbiddenException('Ban khong co quyen truy cap lop hoc nay');
+      }
+      const count = await this.studentModel.countDocuments({
+        _id: { $in: studentIds },
+        parentUserId: new Types.ObjectId(actorId),
+      });
+      if (count > 0) return;
+      throw new ForbiddenException('Ban khong co quyen truy cap lop hoc nay');
+    }
+
+    throw new ForbiddenException('Ban khong co quyen truy cap lop hoc nay');
+  }
+
+  private async getParentStudentIds(parentUserId: string): Promise<string[]> {
+    const ownedStudents = await this.studentModel
+      .find({ parentUserId: new Types.ObjectId(parentUserId) })
+      .select('_id')
+      .lean();
+    return ownedStudents.map((student: any) => student._id.toString());
+  }
+
+  private filterClassStudentsByIds(classroom: any, allowedStudentIds: Set<string>) {
+    if (!classroom || !Array.isArray(classroom.students)) {
+      return classroom;
+    }
+
+    const filteredStudents = classroom.students.filter((student: any) => {
+      const studentId = student?._id?.toString?.() ?? student?.toString?.();
+      return !!studentId && allowedStudentIds.has(studentId);
+    });
+
+    return {
+      ...classroom,
+      students: filteredStudents,
+    };
+  }
+
   async create(dto: CreateClassDto, actor?: JwtPayload) {
     await this.ensureCodeUnique(dto.code);
 
-    // SALE: phải có invoiceId + invoice phải APPROVED
-    if (actor?.role === Role.SALE) {
-      if (!dto.invoiceId) {
-        throw new BadRequestException('SALE phải chọn hóa đơn đã duyệt để tạo lớp');
-      }
-      const invoice = await this.invoiceModel.findById(dto.invoiceId).lean();
+    let invoice: any = null;
+    if (dto.invoiceId) {
+      invoice = await this.invoiceModel.findById(dto.invoiceId).lean();
       if (!invoice) {
-        throw new NotFoundException('Hóa đơn không tồn tại');
+        throw new NotFoundException('Hoa don khong ton tai');
       }
       if (invoice.status !== InvoiceStatus.APPROVED && invoice.status !== InvoiceStatus.PAID) {
-        throw new ForbiddenException('Hóa đơn chưa được duyệt. Chỉ tạo lớp khi hóa đơn đã APPROVED');
-      }
-      // Auto-set saleId nếu chưa có
-      if (!dto.saleId) {
-        dto.saleId = (actor as any)._id.toString();
+        throw new ForbiddenException('Hoa don chua duoc duyet');
       }
     }
 
-    const payload = await this.buildPayload(dto);
+    // SALE must create class from their own approved invoice
+    if (actor?.role === Role.SALE) {
+      if (!dto.invoiceId) {
+        throw new BadRequestException('SALE phai chon hoa don da duyet de tao lop');
+      }
+      const actorId = this.getActorId(actor)!;
+      if (invoice?.saleId && invoice.saleId.toString() !== actorId) {
+        throw new ForbiddenException('SALE chi duoc tao lop tu hoa don cua minh');
+      }
+      dto.saleId = actorId;
+    }
 
-    // Link invoiceId nếu có
+    // Auto-bind sale from invoice if present
+    if (!dto.saleId && invoice?.saleId) {
+      dto.saleId = invoice.saleId.toString();
+    }
+
+    const payload = await this.buildPayload(dto);
+    this.applyInvoicePricingDefaults(payload, invoice);
+    this.attachPricingSnapshot(payload, invoice);
+
     if (dto.invoiceId) {
       (payload as any).invoiceId = new Types.ObjectId(dto.invoiceId);
     }
 
     const created = await new this.classModel(payload).save();
 
-    // Link class ngược lại vào invoice
     if (dto.invoiceId) {
       await this.invoiceModel.updateOne(
         { _id: dto.invoiceId },
@@ -69,22 +148,58 @@ export class ClassesService {
     return this.findByIdPopulated(created._id);
   }
 
-  async findOne(id: string) {
-    const classroom = await this.findByIdPopulated(id);
-    if (!classroom) throw new NotFoundException('Lớp học không tồn tại');
-    return classroom;
+  async findOne(id: string, actor?: JwtPayload) {
+    const classroom = await this.classModel
+      .findById(id)
+      .select('teacher sale students substituteTeachers')
+      .lean();
+    if (!classroom) throw new NotFoundException('Lop hoc khong ton tai');
+    await this.assertClassAccess(classroom, actor);
+    const detailedClass = await this.findByIdPopulated(id);
+    if (actor?.role !== Role.PARENT) {
+      return detailedClass;
+    }
+
+    const actorId = this.getActorId(actor);
+    if (!actorId) {
+      throw new ForbiddenException('Ban khong co quyen truy cap lop hoc nay');
+    }
+
+    const allowedStudentIds = new Set(await this.getParentStudentIds(actorId));
+    return this.filterClassStudentsByIds(detailedClass, allowedStudentIds);
   }
 
   async findAll(actor: JwtPayload) {
-    let filter = {};
-    
+    let filter: any = {};
+    const actorId = this.getActorId(actor);
+    let parentStudentIdSet: Set<string> | null = null;
+
     if (actor.role === Role.SALE) {
-      filter = { sale: actor._id };
+      filter = { sale: actorId };
     } else if (actor.role === Role.TEACHER) {
-      filter = { teacher: actor._id };
+      filter = {
+        $or: [
+          { teacher: actorId },
+          { 'substituteTeachers.teacherId': actorId },
+        ],
+      };
+    } else if (actor.role === Role.PARENT) {
+      if (!actorId) {
+        throw new ForbiddenException('Ban khong co quyen truy cap danh sach lop hoc');
+      }
+      const parentStudentIds = await this.getParentStudentIds(actorId);
+      if (!parentStudentIds.length) {
+        return [];
+      }
+      parentStudentIdSet = new Set(parentStudentIds);
+      filter = {
+        students: {
+          $in: parentStudentIds.map((id) => new Types.ObjectId(id)),
+        },
+      };
     }
     // DIRECTOR, OPS có thể xem tất cả lớp (filter rỗng)
-    
+
     const classrooms = await this.classModel
       .find(filter)
       .sort({ createdAt: -1 })
@@ -92,34 +207,25 @@ export class ClassesService {
       .populate('sale', 'fullName email role')
       .populate('students', 'fullName age parentName studentCode')
       .lean();
-    
-    return classrooms.map(classroom => {
-      const studentCount = classroom.students?.length || 0;
-      const baseDur = (classroom as any).baseDuration || 60;
-      const sessDur = classroom.sessionDuration || 60;
-      const ratio = sessDur / baseDur;
-      const actualPrice = Math.round((classroom.pricePerSession || classroom.revenuePerStudent || 0) * ratio);
-      const actualTeacherPay = Math.round((classroom.teacherPayPerSession || classroom.teacherSalaryCost || 0) * ratio);
-      const isOffline = (classroom as any).classMode === 'OFFLINE';
-      const totalRevenue = actualPrice * studentCount;
-      const totalCost = isOffline
-        ? Math.round(((classroom as any).teacherPayPerStudent || 0) * ratio * studentCount)
-        : actualTeacherPay;
-      const profit = totalRevenue - totalCost;
-      
-      return {
-        ...classroom,
-        actualPricePerSession: actualPrice,
-        actualTeacherPayPerSession: actualTeacherPay,
-        totalRevenue,
-        totalCost,
-        profit,
-        studentCount,
-      };
-    });
+
+    const mapped = classrooms.map((classroom) => ({
+      ...classroom,
+      ...this.buildClassFinancialSummary(classroom),
+    }));
+
+    if (actor.role !== Role.PARENT || !parentStudentIdSet) {
+      return mapped;
+    }
+
+    return mapped.map((classroom) =>
+      this.filterClassStudentsByIds(classroom, parentStudentIdSet!),
+    );
   }
 
   async update(id: string, dto: UpdateClassDto) {
+    const existing = await this.classModel.findById(id).lean();
+    if (!existing) throw new NotFoundException('Class not found');
+
     const update: Record<string, unknown> = {};
     if (dto.name) update.name = dto.name;
     if (dto.code) {
@@ -129,8 +235,73 @@ export class ClassesService {
     const members = await this.buildPayload(dto, true);
     Object.assign(update, members);
 
-    const updated = await this.classModel.findByIdAndUpdate(id, update, { new: true }).lean();
-    if (!updated) throw new NotFoundException('Class not found');
+    const pricingFields = [
+      'pricePerSession',
+      'teacherPayPerSession',
+      'teacherPayPerStudent',
+      'baseDuration',
+      'sessionDuration',
+    ];
+    const hasPricingUpdate = pricingFields.some((field) =>
+      Object.prototype.hasOwnProperty.call(update, field),
+    );
+
+    if (hasPricingUpdate) {
+      const currentSnapshot = (existing as any).pricingSnapshot || {};
+      const referenceDuration = this.toSafeNumber(
+        update.baseDuration,
+        this.toSafeNumber(
+          currentSnapshot.referenceDuration,
+          this.toSafeNumber((existing as any).baseDuration, 60),
+        ),
+      ) || 60;
+      const sessionDuration = this.toSafeNumber(
+        update.sessionDuration,
+        this.toSafeNumber(
+          currentSnapshot.sessionDuration,
+          this.toSafeNumber((existing as any).sessionDuration, referenceDuration),
+        ),
+      ) || referenceDuration;
+      const pricePerSession = this.toSafeNumber(
+        update.pricePerSession,
+        this.toSafeNumber(
+          currentSnapshot.pricePerSession,
+          this.toSafeNumber((existing as any).pricePerSession, 0),
+        ),
+      );
+      const teacherPayPerSession = this.toSafeNumber(
+        update.teacherPayPerSession,
+        this.toSafeNumber(
+          currentSnapshot.teacherPayPerSession,
+          this.toSafeNumber((existing as any).teacherPayPerSession, 0),
+        ),
+      );
+      const teacherPayPerStudent = this.toSafeNumber(
+        update.teacherPayPerStudent,
+        this.toSafeNumber(
+          currentSnapshot.teacherPayPerStudent,
+          this.toSafeNumber((existing as any).teacherPayPerStudent, 0),
+        ),
+      );
+      const perMinuteRate = referenceDuration > 0
+        ? pricePerSession / referenceDuration
+        : 0;
+
+      update.pricingSnapshot = {
+        source: PricingSnapshotSource.MANUAL,
+        capturedAt: new Date(),
+        sourceInvoiceId: currentSnapshot.sourceInvoiceId,
+        sourceInvoiceNumber: currentSnapshot.sourceInvoiceNumber,
+        referenceDuration,
+        sessionDuration,
+        pricePerSession,
+        perMinuteRate,
+        teacherPayPerSession,
+        teacherPayPerStudent,
+      };
+    }
+
+    await this.classModel.findByIdAndUpdate(id, update, { new: true }).lean();
 
     return this.findByIdPopulated(id);
   }
@@ -161,19 +332,25 @@ export class ClassesService {
   async assignStudentsBySale(id: string, dto: AssignStudentsDto, actor: JwtPayload) {
     const classroom = await this.classModel.findById(id).lean();
     if (!classroom) throw new NotFoundException('Class not found');
+    const actorId = this.getActorId(actor);
 
     // Sale can only assign to their own classes; Director/OPS can assign to any
     if (actor.role === Role.SALE) {
-      if (classroom.sale?.toString() !== actor._id.toString()) {
+      if (!actorId || classroom.sale?.toString() !== actorId) {
         throw new ForbiddenException('Bạn không phụ trách lớp này');
       }
     }
     const studentIds = dto.studentIds || [];
     if (!studentIds.length) throw new BadRequestException('Vui lòng chọn học viên');
     // Only allow APPROVED students to be enrolled
-    const valid = await this.studentModel
-      .find({ _id: { $in: studentIds }, approvalStatus: 'APPROVED' }, '_id')
-      .lean();
+    const studentFilter: any = {
+      _id: { $in: studentIds },
+      approvalStatus: 'APPROVED',
+    };
+    if (actor.role === Role.SALE && actorId) {
+      studentFilter.saleId = new Types.ObjectId(actorId);
+    }
+    const valid = await this.studentModel.find(studentFilter, '_id').lean();
     if (valid.length !== studentIds.length) {
       const invalidCount = studentIds.length - valid.length;
       throw new BadRequestException(`${invalidCount} học viên chưa được duyệt hoặc không hợp lệ`);
@@ -194,6 +371,108 @@ export class ClassesService {
     await this.classModel.findByIdAndUpdate(id, { students: merged });
     
     return this.findByIdPopulated(id);
+  }
+
+  private toSafeNumber(value: unknown, fallback = 0): number {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  private buildClassFinancialSummary(classroom: any): {
+    actualPricePerSession: number;
+    actualTeacherPayPerSession: number;
+    totalRevenue: number;
+    totalCost: number;
+    profit: number;
+    studentCount: number;
+  } {
+    const studentCount = classroom.students?.length || 0;
+    const snapshot = classroom?.pricingSnapshot || {};
+    const baseDur =
+      this.toSafeNumber(snapshot.referenceDuration, this.toSafeNumber(classroom.baseDuration, 60)) || 60;
+    const sessDur =
+      this.toSafeNumber(snapshot.sessionDuration, this.toSafeNumber(classroom.sessionDuration, baseDur)) || baseDur;
+    const ratio = sessDur / baseDur;
+    const snapshotPrice = this.toSafeNumber(
+      snapshot.pricePerSession,
+      this.toSafeNumber(classroom.pricePerSession, this.toSafeNumber(classroom.revenuePerStudent, 0)),
+    );
+    const snapshotTeacherPay = this.toSafeNumber(
+      snapshot.teacherPayPerSession,
+      this.toSafeNumber(classroom.teacherPayPerSession, this.toSafeNumber(classroom.teacherSalaryCost, 0)),
+    );
+    const snapshotTeacherPayPerStudent = this.toSafeNumber(
+      snapshot.teacherPayPerStudent,
+      this.toSafeNumber(classroom.teacherPayPerStudent, 0),
+    );
+
+    const actualPricePerSession = Math.round(snapshotPrice * ratio);
+    const actualTeacherPayPerSession = Math.round(snapshotTeacherPay * ratio);
+    const isOffline = classroom.classMode === 'OFFLINE';
+    const totalRevenue = actualPricePerSession * studentCount;
+    const totalCost = isOffline
+      ? Math.round(snapshotTeacherPayPerStudent * studentCount)
+      : actualTeacherPayPerSession;
+    const profit = totalRevenue - totalCost;
+
+    return {
+      actualPricePerSession,
+      actualTeacherPayPerSession,
+      totalRevenue,
+      totalCost,
+      profit,
+      studentCount,
+    };
+  }
+
+  /**
+   * If class is created from an approved invoice and pricing fields are not provided,
+   * seed class pricing from invoice snapshot to keep sale quote consistent.
+   */
+  private applyInvoicePricingDefaults(payload: Record<string, unknown>, invoice: any | null): void {
+    if (!invoice) return;
+
+    const invoiceReferenceDuration = this.toSafeNumber(invoice.referenceDuration, 60);
+    const invoicePricePerSession = this.toSafeNumber(invoice.pricePerSession, 0);
+
+    if (payload.baseDuration === undefined && invoiceReferenceDuration > 0) {
+      payload.baseDuration = invoiceReferenceDuration;
+    }
+
+    if (payload.pricePerSession === undefined && invoicePricePerSession > 0) {
+      payload.pricePerSession = invoicePricePerSession;
+    }
+  }
+
+  /**
+   * Freeze pricing snapshot at class creation.
+   * This snapshot is later used by session charging to avoid pricing drift.
+   */
+  private attachPricingSnapshot(payload: Record<string, unknown>, invoice: any | null): void {
+    const referenceDuration = this.toSafeNumber(payload.baseDuration, 60) || 60;
+    const sessionDuration =
+      this.toSafeNumber(payload.sessionDuration, referenceDuration) || referenceDuration;
+    const pricePerSession = this.toSafeNumber(payload.pricePerSession, 0);
+    const teacherPayPerSession = this.toSafeNumber(payload.teacherPayPerSession, 0);
+    const teacherPayPerStudent = this.toSafeNumber(payload.teacherPayPerStudent, 0);
+
+    let perMinuteRate = this.toSafeNumber(invoice?.perMinuteRate, 0);
+    if (perMinuteRate <= 0 && pricePerSession > 0 && referenceDuration > 0) {
+      perMinuteRate = pricePerSession / referenceDuration;
+    }
+
+    payload.pricingSnapshot = {
+      source: invoice ? PricingSnapshotSource.INVOICE : PricingSnapshotSource.MANUAL,
+      capturedAt: new Date(),
+      sourceInvoiceId: invoice?._id ? new Types.ObjectId(invoice._id) : undefined,
+      sourceInvoiceNumber: invoice?.invoiceNumber,
+      referenceDuration,
+      sessionDuration,
+      pricePerSession,
+      perMinuteRate,
+      teacherPayPerSession,
+      teacherPayPerStudent,
+    };
   }
 
   private async ensureCodeUnique(code: string, excludeId?: string) {
@@ -274,38 +553,25 @@ export class ClassesService {
       .populate('sale', 'fullName email role')
       .populate('students', 'fullName age parentName')
       .lean();
-    
-    if (classroom) {
-      // Tính toán tổng doanh thu và chi phí
-      const studentCount = classroom.students?.length || 0;
-      const baseDur = (classroom as any).baseDuration || 60;
-      const sessDur = classroom.sessionDuration || 60;
-      const ratio = sessDur / baseDur;
-      const isOffline = (classroom as any).classMode === 'OFFLINE';
-      const totalRevenue = Math.round((classroom.pricePerSession || classroom.revenuePerStudent || 0) * ratio) * studentCount;
-      const totalCost = isOffline
-        ? Math.round(((classroom as any).teacherPayPerStudent || 0) * ratio * studentCount)
-        : Math.round((classroom.teacherPayPerSession || classroom.teacherSalaryCost || 0) * ratio);
-      const profit = totalRevenue - totalCost;
 
-      // Tính tiến độ chương trình học
+    if (classroom) {
+      const financialSummary = this.buildClassFinancialSummary(classroom);
+
+      // Tinh tien do chuong trinh hoc
       const curriculum = (classroom as any).curriculum || [];
       const totalItems = curriculum.length;
       const completedItems = curriculum.filter((item: any) => item.isCompleted).length;
       const curriculumProgress = totalItems > 0
         ? Math.round((completedItems / totalItems) * 100)
         : 0;
-      
+
       return {
         ...classroom,
-        totalRevenue,
-        totalCost,
-        profit,
-        studentCount,
+        ...financialSummary,
         curriculumProgress,
       };
     }
-    
+
     return classroom;
   }
 
@@ -314,10 +580,10 @@ export class ClassesService {
   // ──────────────────────────────────────────────────────────────────
 
   /** Cập nhật toàn bộ chương trình học */
-  async updateCurriculum(classId: string, curriculum: any[]) {
+  async updateCurriculum(classId: string, curriculum: any[], actor?: JwtPayload) {
     const classroom = await this.classModel.findById(classId);
     if (!classroom) throw new NotFoundException('Lớp học không tồn tại');
-
+    await this.assertClassAccess(classroom, actor);
     (classroom as any).curriculum = curriculum;
     await classroom.save();
     return this.findByIdPopulated(classId);
@@ -328,9 +594,11 @@ export class ClassesService {
     classId: string,
     itemId: string,
     sessionId?: string,
+    actor?: JwtPayload,
   ) {
     const classroom = await this.classModel.findById(classId);
     if (!classroom) throw new NotFoundException('Lớp học không tồn tại');
+    await this.assertClassAccess(classroom, actor);
 
     const curriculum = (classroom as any).curriculum || [];
     const item = curriculum.find((ci: any) => ci._id?.toString() === itemId);
@@ -441,9 +709,10 @@ export class ClassesService {
   }
 
   /** Lấy tiến độ chương trình học */
-  async getCurriculumProgress(classId: string) {
+  async getCurriculumProgress(classId: string, actor?: JwtPayload) {
     const classroom = await this.classModel.findById(classId).lean();
     if (!classroom) throw new NotFoundException('Lớp học không tồn tại');
+    await this.assertClassAccess(classroom, actor);
 
     const curriculum = (classroom as any).curriculum || [];
     const totalItems = curriculum.length;
@@ -519,7 +788,7 @@ export class ClassesService {
       }
 
       // Rating bonus
-      const rating = (profile as any).averageRating || 0;
+      const rating = (profile as any).rating || 0;
       if (rating >= 4.5) {
         score += 10;
         reasons.push(`Rating: ${rating}/5`);

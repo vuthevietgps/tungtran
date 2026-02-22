@@ -73,7 +73,14 @@ export class WalletService {
     }
   }
 
-  async requestTopUp(payload: { userId: string; amount: number; paymentMethod: string; description?: string }): Promise<boolean> {
+  async requestTopUp(payload: {
+    userId: string;
+    amount: number;
+    paymentMethod: string;
+    transactionRef?: string;
+    receiptImageUrl?: string;
+    description?: string;
+  }): Promise<boolean> {
     await firstValueFrom(
       this.http.post(`${environment.apiBase}/wallets/top-up`, payload, { withCredentials: true }),
     );
@@ -91,9 +98,17 @@ export class WalletService {
     }
   }
 
-  async approveTopUp(id: string, notes?: string): Promise<boolean> {
+  async approveTopUp(
+    id: string,
+    payload?: {
+      accountingNotes?: string;
+      bankMatched?: boolean;
+      bankStatementRef?: string;
+      bankAccountId?: string;
+    },
+  ): Promise<boolean> {
     await firstValueFrom(
-      this.http.post(`${environment.apiBase}/wallets/top-up/${id}/approve`, { accountingNotes: notes || '' }, {
+      this.http.post(`${environment.apiBase}/wallets/top-up/${id}/approve`, payload || {}, {
         withCredentials: true,
       }),
     );

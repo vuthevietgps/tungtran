@@ -10,6 +10,7 @@ import { FundTransaction, FundTransactionSchema } from './schemas/fund-transacti
 // Related schemas for cross-module aggregation
 import { Session, SessionSchema } from '../sessions/schemas/session.schema';
 import { Payroll, PayrollSchema } from '../payroll/schemas/payroll.schema';
+import { StaffPayroll, StaffPayrollSchema } from '../staff-payroll/schemas/staff-payroll.schema';
 import { Expense, ExpenseSchema } from '../expenses/schemas/expense.schema';
 import { Invoice, InvoiceSchema } from '../invoices/schemas/invoice.schema';
 import { LedgerEntry, LedgerEntrySchema } from '../wallets/schemas/ledger-entry.schema';
@@ -21,9 +22,15 @@ import { Lead, LeadSchema } from '../leads/schemas/lead.schema';
 import { Loan, LoanSchema } from '../loans/schemas/loan.schema';
 import { LoanPayment, LoanPaymentSchema } from '../loans/schemas/loan-payment.schema';
 import { Student, StudentSchema } from '../students/schemas/student.schema';
+import { PayrollFinancialAggregateService } from './aggregates/payroll-financial.aggregate';
+import { ExpenseFinancialAggregateService } from './aggregates/expense-financial.aggregate';
+import { LoanFinancialAggregateService } from './aggregates/loan-financial.aggregate';
+import { FinancialControlBankFundService } from './financial-control-bank-fund.service';
+import { AdsModule } from '../ads/ads.module';
 
 @Module({
   imports: [
+    AdsModule,
     MongooseModule.forFeature([
       { name: BankAccount.name, schema: BankAccountSchema },
       { name: BankTransaction.name, schema: BankTransactionSchema },
@@ -31,6 +38,7 @@ import { Student, StudentSchema } from '../students/schemas/student.schema';
       { name: FundTransaction.name, schema: FundTransactionSchema },
       { name: Session.name, schema: SessionSchema },
       { name: Payroll.name, schema: PayrollSchema },
+      { name: StaffPayroll.name, schema: StaffPayrollSchema },
       { name: Expense.name, schema: ExpenseSchema },
       { name: Invoice.name, schema: InvoiceSchema },
       { name: LedgerEntry.name, schema: LedgerEntrySchema },
@@ -45,7 +53,13 @@ import { Student, StudentSchema } from '../students/schemas/student.schema';
     ]),
   ],
   controllers: [FinancialControlController],
-  providers: [FinancialControlService],
-  exports: [FinancialControlService],
+  providers: [
+    FinancialControlService,
+    FinancialControlBankFundService,
+    PayrollFinancialAggregateService,
+    ExpenseFinancialAggregateService,
+    LoanFinancialAggregateService,
+  ],
+  exports: [FinancialControlService, FinancialControlBankFundService],
 })
 export class FinancialControlModule {}

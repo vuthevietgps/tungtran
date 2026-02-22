@@ -1,6 +1,6 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+﻿import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, FilterQuery } from 'mongoose';
+import { Model, FilterQuery, Types } from 'mongoose';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Lead, LeadDocument, LeadStatus } from './schemas/lead.schema';
 import { CreateLeadDto } from './dto/create-lead.dto';
@@ -12,6 +12,7 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { AuditAction } from '../audit-log/schemas/audit-log.schema';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/schemas/notification.schema';
+import { Role } from '../common/interfaces/role.enum';
 
 @Injectable()
 export class LeadsService {
@@ -22,6 +23,19 @@ export class LeadsService {
     private auditLogService: AuditLogService,
     private notificationsService: NotificationsService,
   ) {}
+
+  private getActorId(user: any): string {
+    return String(user?.sub ?? user?._id ?? user?.userId ?? '');
+  }
+
+  private assertSaleLeadAccess(lead: any, user?: any): void {
+    if (user?.role !== Role.SALE) return;
+    const actorId = this.getActorId(user);
+    const leadSaleId = lead?.saleId?.toString?.();
+    if (!actorId || !leadSaleId || actorId !== leadSaleId) {
+      throw new NotFoundException('Lead khong ton tai');
+    }
+  }
 
   private async generateLeadCode(): Promise<string> {
     const year = new Date().getFullYear();
@@ -41,19 +55,20 @@ export class LeadsService {
   async create(dto: CreateLeadDto, user: any): Promise<Lead> {
     const leadCode = await this.generateLeadCode();
     const now = new Date();
+    const actorId = this.getActorId(user);
     const lead = new this.leadModel({
       ...dto,
       leadCode,
-      saleId: user.role === 'SALE' ? user.userId : undefined,
-      saleName: user.role === 'SALE' ? (user.fullName || user.email) : undefined,
-      assignedAt: user.role === 'SALE' ? now : undefined,
+      saleId: user.role === Role.SALE ? actorId : undefined,
+      saleName: user.role === Role.SALE ? (user.fullName || user.email) : undefined,
+      assignedAt: user.role === Role.SALE ? now : undefined,
       status: LeadStatus.NEW,
     });
 
     // If created by SALE, record assignment history
-    if (user.role === 'SALE') {
+    if (user.role === Role.SALE) {
       lead.assignmentHistory = [{
-        saleId: user.userId,
+        saleId: new Types.ObjectId(actorId),
         saleName: user.fullName || user.email,
         assignedAt: now,
       }];
@@ -62,7 +77,7 @@ export class LeadsService {
     const saved = await lead.save();
 
     await this.auditLogService.log({
-      userId: user.userId,
+      userId: actorId,
       userEmail: user.email,
       userFullName: user.fullName,
       userRole: user.role,
@@ -70,7 +85,7 @@ export class LeadsService {
       module: 'LEADS' as any,
       targetId: saved._id?.toString(),
       targetName: saved.leadCode,
-      description: `Tạo lead mới: ${saved.parentName} - ${saved.parentPhone}`,
+      description: `T?o lead m?i: ${saved.parentName} - ${saved.parentPhone}`,
     });
 
     return saved;
@@ -118,38 +133,42 @@ export class LeadsService {
     }
 
     // SALE can only see their own leads
-    if (user.role === 'SALE') {
-      filter.saleId = user.userId;
+    if (user.role === Role.SALE) {
+      filter.saleId = this.getActorId(user);
     }
 
     const leads = await this.leadModel.find(filter).sort({ createdAt: -1 }).lean();
     return leads;
   }
 
-  async findOne(id: string): Promise<Lead> {
+  async findOne(id: string, user?: any): Promise<Lead> {
     const lead = await this.leadModel.findById(id).lean();
-    if (!lead) throw new NotFoundException('Lead không tồn tại');
+    if (!lead) throw new NotFoundException('Lead khong ton tai');
+    this.assertSaleLeadAccess(lead, user);
     return lead as Lead;
   }
 
   async update(id: string, dto: UpdateLeadDto, user: any): Promise<Lead> {
-    const lead = await this.leadModel.findByIdAndUpdate(id, dto, { new: true }).lean();
-    if (!lead) throw new NotFoundException('Lead không tồn tại');
+    const lead = await this.leadModel.findById(id);
+    if (!lead) throw new NotFoundException('Lead khong ton tai');
+    this.assertSaleLeadAccess(lead, user);
+    lead.set(dto as any);
+    await lead.save();
 
     await this.auditLogService.log({
-      userId: user.userId,
+      userId: this.getActorId(user),
       userEmail: user.email,
       userFullName: user.fullName,
       userRole: user.role,
       action: AuditAction.UPDATE,
       module: 'LEADS' as any,
       targetId: id,
-      targetName: (lead as any).leadCode,
-      description: `Cập nhật lead ${(lead as any).leadCode}`,
+      targetName: lead.leadCode,
+      description: `C?p nh?t lead ${lead.leadCode}`,
       newValue: dto as any,
     });
 
-    return lead as Lead;
+    return lead.toObject() as Lead;
   }
 
   async addContact(id: string, dto: AddContactDto, user: any): Promise<Lead> {
@@ -167,7 +186,8 @@ export class LeadsService {
 
     // If status is NEW, auto-advance to CONTACTED
     const lead = await this.leadModel.findById(id).lean();
-    if (!lead) throw new NotFoundException('Lead không tồn tại');
+    if (!lead) throw new NotFoundException('Lead khong ton tai');
+    this.assertSaleLeadAccess(lead, user);
 
     if ((lead as any).status === LeadStatus.NEW) {
       updateData.$set = { ...updateData.$set, status: LeadStatus.CONTACTED };
@@ -178,15 +198,17 @@ export class LeadsService {
     }
 
     const updated = await this.leadModel.findByIdAndUpdate(id, updateData, { new: true }).lean();
+    if (!updated) throw new NotFoundException('Lead khong ton tai');
     return updated as Lead;
   }
 
   async markLost(id: string, dto: MarkLostDto, user: any): Promise<Lead> {
     const lead = await this.leadModel.findById(id).lean();
-    if (!lead) throw new NotFoundException('Lead không tồn tại');
+    if (!lead) throw new NotFoundException('Lead khong ton tai');
+    this.assertSaleLeadAccess(lead, user);
 
     if ((lead as any).status === LeadStatus.CONVERTED) {
-      throw new BadRequestException('Lead đã chuyển đổi, không thể đánh dấu mất');
+      throw new BadRequestException('Lead dã chuy?n d?i, không th? dánh d?u m?t');
     }
 
     const updated = await this.leadModel.findByIdAndUpdate(
@@ -200,7 +222,7 @@ export class LeadsService {
     ).lean();
 
     await this.auditLogService.log({
-      userId: user.userId,
+      userId: this.getActorId(user),
       userEmail: user.email,
       userFullName: user.fullName,
       userRole: user.role,
@@ -208,7 +230,7 @@ export class LeadsService {
       module: 'LEADS' as any,
       targetId: id,
       targetName: (lead as any).leadCode,
-      description: `Đánh dấu lead mất: ${dto.reason}`,
+      description: `Ðánh d?u lead m?t: ${dto.reason}`,
     });
 
     return updated as Lead;
@@ -216,24 +238,19 @@ export class LeadsService {
 
   async convert(id: string, user: any): Promise<{ lead: Lead; message: string }> {
     const lead = await this.leadModel.findById(id).lean();
-    if (!lead) throw new NotFoundException('Lead không tồn tại');
+    if (!lead) throw new NotFoundException('Lead khong ton tai');
+    this.assertSaleLeadAccess(lead, user);
 
     const ls = lead as any;
-    if (ls.status === LeadStatus.CONVERTED) {
-      throw new BadRequestException('Lead đã được chuyển đổi trước đó');
+    if (ls.convertedOrderId) {
+      throw new BadRequestException('Lead da co don dang ky lien ket');
     }
     if (ls.status === LeadStatus.NOT_INTERESTED || ls.status === LeadStatus.NO_RESPONSE) {
-      throw new BadRequestException('Không thể chuyển đổi lead đã mất hoặc không phản hồi');
+      throw new BadRequestException('Khong the chuyen doi lead da mat hoac khong phan hoi');
     }
 
-    const updated = await this.leadModel.findByIdAndUpdate(
-      id,
-      { status: LeadStatus.CONVERTED },
-      { new: true },
-    ).lean();
-
     await this.auditLogService.log({
-      userId: user.userId,
+      userId: this.getActorId(user),
       userEmail: user.email,
       userFullName: user.fullName,
       userRole: user.role,
@@ -241,12 +258,12 @@ export class LeadsService {
       module: 'LEADS' as any,
       targetId: id,
       targetName: ls.leadCode,
-      description: `Chuyển đổi lead ${ls.leadCode} → tạo đơn đăng ký`,
+      description: `Lead ${ls.leadCode} san sang tao don dang ky`,
     });
 
     return {
-      lead: updated as Lead,
-      message: 'Lead đã chuyển đổi. Hãy tạo đơn đăng ký học.',
+      lead: lead as Lead,
+      message: 'Lead hop le. Hay tao don dang ky hoc.',
     };
   }
 
@@ -270,10 +287,10 @@ export class LeadsService {
       },
       { new: true },
     ).lean();
-    if (!lead) throw new NotFoundException('Lead không tồn tại');
+    if (!lead) throw new NotFoundException('Lead không t?n t?i');
 
     await this.auditLogService.log({
-      userId: user.userId,
+      userId: this.getActorId(user),
       userEmail: user.email,
       userFullName: user.fullName,
       userRole: user.role,
@@ -281,19 +298,19 @@ export class LeadsService {
       module: 'LEADS' as any,
       targetId: id,
       targetName: (lead as any).leadCode,
-      description: `Phân bổ lead cho ${saleName}`,
+      description: `Phân b? lead cho ${saleName}`,
     });
 
     return lead as Lead;
   }
 
-  /** Thu hồi lead về kho (unassign) */
+  /** Thu h?i lead v? kho (unassign) */
   async returnToPool(id: string, reason: string, user: any): Promise<Lead> {
     const existing = await this.leadModel.findById(id).lean() as any;
-    if (!existing) throw new NotFoundException('Lead không tồn tại');
+    if (!existing) throw new NotFoundException('Lead không t?n t?i');
 
     if (!existing.saleId) {
-      throw new BadRequestException('Lead hiện chưa được phân bổ cho sale nào');
+      throw new BadRequestException('Lead hi?n chua du?c phân b? cho sale nào');
     }
 
     const now = new Date();
@@ -322,7 +339,7 @@ export class LeadsService {
     ).lean();
 
     await this.auditLogService.log({
-      userId: user.userId,
+      userId: this.getActorId(user),
       userEmail: user.email,
       userFullName: user.fullName,
       userRole: user.role,
@@ -330,13 +347,13 @@ export class LeadsService {
       module: 'LEADS' as any,
       targetId: id,
       targetName: existing.leadCode,
-      description: `Thu hồi lead về kho: ${reason} (trước đó: ${existing.saleName})`,
+      description: `Thu h?i lead v? kho: ${reason} (tru?c dó: ${existing.saleName})`,
     });
 
     return updated as Lead;
   }
 
-  /** Lấy danh sách lead chưa phân bổ (trong kho) */
+  /** L?y danh sách lead chua phân b? (trong kho) */
   async getPool() {
     return this.leadModel.find({
       saleId: { $in: [null, undefined] },
@@ -344,7 +361,7 @@ export class LeadsService {
     }).sort({ returnedToPoolAt: -1, createdAt: -1 }).lean();
   }
 
-  /** CRON: Tự động thu hồi lead không chăm sóc sau 7 ngày */
+  /** CRON: T? d?ng thu h?i lead không cham sóc sau 7 ngày */
   @Cron(CronExpression.EVERY_DAY_AT_1AM)
   async autoReturnStaleLeads() {
     const sevenDaysAgo = new Date();
@@ -374,7 +391,7 @@ export class LeadsService {
       const history = ls.assignmentHistory || [];
       if (history.length > 0 && !history[history.length - 1].returnedAt) {
         history[history.length - 1].returnedAt = now;
-        history[history.length - 1].returnReason = 'Tự động thu hồi — không chăm sóc sau 7 ngày';
+        history[history.length - 1].returnReason = 'T? d?ng thu h?i — không cham sóc sau 7 ngày';
       }
 
       await this.leadModel.findByIdAndUpdate(ls._id, {
@@ -402,8 +419,8 @@ export class LeadsService {
       status: { $nin: [LeadStatus.CONVERTED, LeadStatus.NOT_INTERESTED] },
     };
 
-    if (user.role === 'SALE') {
-      filter.saleId = user.userId;
+    if (user.role === Role.SALE) {
+      filter.saleId = this.getActorId(user);
     }
 
     return this.leadModel.find(filter).sort({ nextFollowUp: 1 }).lean();
@@ -411,7 +428,7 @@ export class LeadsService {
 
   async getPipeline(user: any) {
     const match: any = {};
-    if (user.role === 'SALE') match.saleId = user.userId;
+    if (user.role === Role.SALE) match.saleId = this.getActorId(user);
 
     const pipeline = await this.leadModel.aggregate([
       { $match: match },
@@ -463,22 +480,22 @@ export class LeadsService {
             { $match: { status: { $in: ['NEW', 'CONTACTED', 'CONSULTING', 'INTERESTED'] } } },
             { $group: { _id: null, total: { $sum: '$estimatedValue' } } },
           ],
-          // Đã phân bổ (có saleId, chưa hoàn tất/mất)
+          // Ðã phân b? (có saleId, chua hoàn t?t/m?t)
           assigned: [
             { $match: { saleId: { $ne: null }, status: { $in: ['NEW', 'CONTACTED', 'CONSULTING', 'INTERESTED'] } } },
             { $count: 'count' },
           ],
-          // Chưa phân bổ (không có saleId, chưa hoàn tất/mất)
+          // Chua phân b? (không có saleId, chua hoàn t?t/m?t)
           unassigned: [
             { $match: { $or: [{ saleId: null }, { saleId: { $exists: false } }], status: { $in: ['NEW', 'CONTACTED', 'CONSULTING', 'INTERESTED'] } } },
             { $count: 'count' },
           ],
-          // Đã thu hồi (returnCount > 0)
+          // Ðã thu h?i (returnCount > 0)
           returned: [
             { $match: { returnCount: { $gt: 0 } } },
             { $count: 'count' },
           ],
-          // Quá 7 ngày không chăm
+          // Quá 7 ngày không cham
           stale: [
             {
               $match: {
@@ -518,10 +535,10 @@ export class LeadsService {
 
   async remove(id: string, user: any): Promise<Lead> {
     const lead = await this.leadModel.findByIdAndDelete(id).lean();
-    if (!lead) throw new NotFoundException('Lead không tồn tại');
+    if (!lead) throw new NotFoundException('Lead không t?n t?i');
 
     await this.auditLogService.log({
-      userId: user.userId,
+      userId: this.getActorId(user),
       userEmail: user.email,
       userFullName: user.fullName,
       userRole: user.role,
@@ -535,9 +552,9 @@ export class LeadsService {
     return lead as Lead;
   }
 
-  // ════════════════════════════════════════════════════════════════════
+  // --------------------------------------------------------------------
   // FOLLOW-UP AUTO-REMINDER (Phase 2.4) - Runs at 8am Mon-Sat
-  // ════════════════════════════════════════════════════════════════════
+  // --------------------------------------------------------------------
 
   @Cron('0 8 * * 1-6')
   async checkFollowUpsDue() {
@@ -562,8 +579,8 @@ export class LeadsService {
           recipientRole: 'SALE',
           type: NotificationType.LEAD_FOLLOW_UP,
           priority: isOverdue ? 'HIGH' as any : 'MEDIUM' as any,
-          title: isOverdue ? 'Follow-up quá hạn' : 'Follow-up hôm nay',
-          message: `Lead ${lead.leadCode} - ${lead.parentName} (${lead.parentPhone}) cần follow-up${isOverdue ? ' (QUÁ HẠN)' : ''}`,
+          title: isOverdue ? 'Follow-up quá h?n' : 'Follow-up hôm nay',
+          message: `Lead ${lead.leadCode} - ${lead.parentName} (${lead.parentPhone}) c?n follow-up${isOverdue ? ' (QUÁ H?N)' : ''}`,
           link: '/app/leads',
           targetId: (lead as any)._id.toString(),
           targetModule: 'LEADS',
@@ -579,3 +596,4 @@ export class LeadsService {
     }
   }
 }
+

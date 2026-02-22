@@ -81,10 +81,9 @@ export class BankTransaction {
 }
 
 export const BankTransactionSchema = SchemaFactory.createForClass(BankTransaction);
-
-BankTransactionSchema.index({ transactionCode: 1 }, { unique: true });
 BankTransactionSchema.index({ bankAccountId: 1, transactionDate: -1 });
 BankTransactionSchema.index({ type: 1 });
 BankTransactionSchema.index({ category: 1 });
 BankTransactionSchema.index({ referenceId: 1 });
 BankTransactionSchema.index({ isReconciled: 1 });
+

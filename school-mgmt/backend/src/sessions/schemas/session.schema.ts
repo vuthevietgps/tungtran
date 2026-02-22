@@ -350,8 +350,25 @@ export class Session {
   @Prop({ type: Boolean, default: false })
   isPaid!: boolean; // Đã trừ ví PH chưa
 
+  @Prop({ type: Boolean, default: false, index: true })
+  invoiceConsumptionApplied!: boolean; // Đã trừ sessionsRemaining trên invoice chưa
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'Invoice' })
+  consumedInvoiceId?: Types.ObjectId; // Invoice đầu tiên được consume (trace)
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  consumedInvoiceUnits!: number; // Tổng số buổi quy đổi đã trừ (có thể là số thập phân)
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  consumedInvoiceAmount!: number; // Giá trị tiền tương ứng đã trừ trên invoice(s)
+
   @Prop({ type: Boolean, default: false })
   isTeacherPaid!: boolean; // Đã tính vào payroll GV chưa
+  @Prop({ type: String, trim: true })
+  walletDeductError?: string;
+
+  @Prop({ type: Date })
+  walletDeductAlertSentAt?: Date;
 
   // ── Trial session tracking ──
 
@@ -396,6 +413,6 @@ SessionSchema.index({ teacherId: 1, scheduledDate: 1 });
 SessionSchema.index({ parentUserId: 1, status: 1 });
 SessionSchema.index({ status: 1, 'confirmation.teacherCompletedAt': 1 }); // For auto-confirm cron
 SessionSchema.index({ classId: 1, sessionNumber: 1 });
-SessionSchema.index({ sessionType: 1 }); // Lọc theo loại buổi học
 SessionSchema.index({ teacherId: 1, hasTeachingReport: 1, status: 1 }); // Payroll + báo cáo giảng dạy
 SessionSchema.index({ adGroupId: 1, scheduledDate: 1 }); // Analytics lợi nhuận per ad group per ngày
+

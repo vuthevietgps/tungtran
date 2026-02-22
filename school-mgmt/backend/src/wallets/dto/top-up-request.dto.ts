@@ -5,7 +5,9 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Matches,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import { PaymentMethod } from '../schemas/ledger-entry.schema';
 
@@ -30,8 +32,11 @@ export class TopUpRequestDto {
   @IsOptional()
   transactionRef?: string; // Mã giao dịch ngân hàng
 
+  @ValidateIf((o: TopUpRequestDto) => o.paymentMethod === PaymentMethod.BANK_TRANSFER)
   @IsString()
-  @IsOptional()
+  @Matches(/^(https?:\/\/|\/uploads\/|data:image\/)/, {
+    message: 'receiptImageUrl must be URL, /uploads path, or base64 image',
+  })
   receiptImageUrl?: string; // Ảnh biên lai
 
   @IsString()

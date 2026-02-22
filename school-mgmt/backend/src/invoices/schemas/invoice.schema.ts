@@ -117,6 +117,19 @@ export class Invoice {
   /** Lý do từ chối (nếu REJECTED) */
   @Prop({ type: String, trim: true, required: false })
   rejectedReason?: string;
+
+  // ── Cancellation tracking ──
+
+  /** Người hủy hóa đơn (nếu CANCELLED) */
+  @Prop({ type: SchemaTypes.ObjectId, ref: User.name, required: false })
+  cancelledBy?: Types.ObjectId;
+
+  @Prop({ type: Date, required: false })
+  cancelledAt?: Date;
+
+  /** Lý do hủy */
+  @Prop({ type: String, trim: true, required: false })
+  cancellationReason?: string;
 }
 
 export const InvoiceSchema = SchemaFactory.createForClass(Invoice);

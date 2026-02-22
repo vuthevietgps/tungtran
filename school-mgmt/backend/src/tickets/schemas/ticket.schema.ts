@@ -205,11 +205,10 @@ export class Ticket {
 export const TicketSchema = SchemaFactory.createForClass(Ticket);
 
 // ─── Indexes ────────────────────────────────────────────────────────
-
-TicketSchema.index({ ticketCode: 1 }, { unique: true });
 TicketSchema.index({ status: 1, priority: -1 });
 TicketSchema.index({ createdBy: 1 });
 TicketSchema.index({ assignedTo: 1, status: 1 });
 TicketSchema.index({ sessionId: 1 });
 TicketSchema.index({ type: 1, status: 1 });
 TicketSchema.index({ createdAt: -1 });
+

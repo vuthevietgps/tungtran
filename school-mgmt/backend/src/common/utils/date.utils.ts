@@ -1,3 +1,5 @@
+import { BadRequestException } from '@nestjs/common';
+
 /**
  * Shared date utilities for consistent date handling across the application.
  * All dates are normalized to UTC midnight to prevent timezone drift issues.
@@ -9,9 +11,28 @@
  * @returns Date object set to UTC midnight
  */
 export function normalizeDate(dateStr: string): Date {
-  const d = dateStr.split('T')[0];
+  if (typeof dateStr !== 'string' || !dateStr.trim()) {
+    throw new BadRequestException('Ngay khong hop le');
+  }
+
+  const d = dateStr.trim().split('T')[0];
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+    throw new BadRequestException('Ngay phai dung dinh dang YYYY-MM-DD');
+  }
+
   const [y, m, day] = d.split('-').map(Number);
-  return new Date(Date.UTC(y, m - 1, day, 0, 0, 0, 0));
+  const normalized = new Date(Date.UTC(y, m - 1, day, 0, 0, 0, 0));
+
+  if (
+    Number.isNaN(normalized.getTime()) ||
+    normalized.getUTCFullYear() !== y ||
+    normalized.getUTCMonth() !== m - 1 ||
+    normalized.getUTCDate() !== day
+  ) {
+    throw new BadRequestException('Gia tri ngay khong hop le');
+  }
+
+  return normalized;
 }
 
 /**

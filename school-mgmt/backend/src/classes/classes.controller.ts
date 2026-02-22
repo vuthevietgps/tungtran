@@ -40,8 +40,8 @@ export class ClassesController {
 
   @Get(':id')
   @Roles(Role.DIRECTOR, Role.OPS, Role.SALE, Role.TEACHER, Role.PARENT)
-  findOne(@Param('id', ParseMongoIdPipe) id: string) {
-    return this.classesService.findOne(id);
+  findOne(@Param('id', ParseMongoIdPipe) id: string, @Req() req: AuthenticatedRequest) {
+    return this.classesService.findOne(id, req.user);
   }
 
   @Patch(':id')
@@ -71,8 +71,8 @@ export class ClassesController {
   /** Xem tiến độ chương trình học */
   @Get(':id/curriculum')
   @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.PARENT)
-  getCurriculumProgress(@Param('id', ParseMongoIdPipe) id: string) {
-    return this.classesService.getCurriculumProgress(id);
+  getCurriculumProgress(@Param('id', ParseMongoIdPipe) id: string, @Req() req: AuthenticatedRequest) {
+    return this.classesService.getCurriculumProgress(id, req.user);
   }
 
   /** Cập nhật toàn bộ chương trình học */
@@ -81,8 +81,9 @@ export class ClassesController {
   updateCurriculum(
     @Param('id', ParseMongoIdPipe) id: string,
     @Body() dto: UpdateCurriculumDto,
+    @Req() req: AuthenticatedRequest,
   ) {
-    return this.classesService.updateCurriculum(id, dto.curriculum);
+    return this.classesService.updateCurriculum(id, dto.curriculum, req.user);
   }
 
   /** Đánh dấu một mục chương trình đã hoàn thành */
@@ -92,7 +93,13 @@ export class ClassesController {
     @Param('id', ParseMongoIdPipe) id: string,
     @Param('itemId', ParseMongoIdPipe) itemId: string,
     @Body() body: { sessionId?: string },
+    @Req() req: AuthenticatedRequest,
   ) {
-    return this.classesService.markCurriculumItemCompleted(id, itemId, body.sessionId);
+    return this.classesService.markCurriculumItemCompleted(
+      id,
+      itemId,
+      body.sessionId,
+      req.user,
+    );
   }
 }

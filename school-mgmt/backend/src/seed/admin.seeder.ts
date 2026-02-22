@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { User, UserDocument } from '../users/schemas/user.schema';
@@ -31,6 +31,8 @@ export class AdminSeeder implements OnModuleInit {
       this.logger.error('❌ DEMO_PASSWORD not set or using default! Skipping demo accounts.');
       return;
     }
+    const syncExisting = (this.config.get<string>('DEMO_SYNC_EXISTING', 'true') || 'true')
+      .toLowerCase() !== 'false';
 
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(demoPassword, salt);
@@ -46,7 +48,41 @@ export class AdminSeeder implements OnModuleInit {
     for (const demo of demoUsers) {
       const existing = await this.userModel.findOne({ email: demo.email }).exec();
       if (existing) {
-        this.logger.log(`Demo account already exists: ${demo.email}`);
+        if (!syncExisting) {
+          this.logger.log(`Demo account already exists: ${demo.email}`);
+          continue;
+        }
+
+        const passwordMatches = existing.password
+          ? await bcrypt.compare(demoPassword, existing.password)
+          : false;
+        const needsProfileSync =
+          existing.fullName !== demo.fullName ||
+          existing.role !== demo.role ||
+          existing.status !== 'ACTIVE' ||
+          (existing.failedLoginAttempts || 0) !== 0 ||
+          !!existing.lastFailedLoginAt;
+        const needsPasswordSync = !passwordMatches;
+
+        if (!needsProfileSync && !needsPasswordSync) {
+          this.logger.log(`Demo account already up-to-date: ${demo.email}`);
+          continue;
+        }
+
+        await this.userModel.updateOne(
+          { _id: existing._id },
+          {
+            $set: {
+              fullName: demo.fullName,
+              role: demo.role,
+              status: 'ACTIVE',
+              failedLoginAttempts: 0,
+              ...(needsPasswordSync ? { password: hashedPassword } : {}),
+            },
+            $unset: { lastFailedLoginAt: 1 },
+          },
+        );
+        this.logger.log(`Synced demo account: ${demo.email}${needsPasswordSync ? ' (password reset)' : ''}`);
         continue;
       }
       await this.userModel.create({ ...demo, password: hashedPassword });

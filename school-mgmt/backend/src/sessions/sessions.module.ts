@@ -1,21 +1,25 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { ScheduleModule } from '@nestjs/schedule';
 
 import { SessionsService } from './sessions.service';
 import { SessionsController } from './sessions.controller';
 import { Session, SessionSchema } from './schemas/session.schema';
 import { Classroom, ClassroomSchema } from '../classes/schemas/class.schema';
 import { Student, StudentSchema } from '../students/schemas/student.schema';
+import { Invoice, InvoiceSchema } from '../invoices/schemas/invoice.schema';
 import { WalletsModule } from '../wallets/wallets.module';
+import { TeacherProfile, TeacherProfileSchema } from '../teachers/schemas/teacher-profile.schema';
+import { Attendance, AttendanceSchema } from '../attendance/schemas/attendance.schema';
 
 @Module({
   imports: [
-    ScheduleModule.forRoot(),
     MongooseModule.forFeature([
       { name: Session.name, schema: SessionSchema },
       { name: Classroom.name, schema: ClassroomSchema },
       { name: Student.name, schema: StudentSchema },
+      { name: Invoice.name, schema: InvoiceSchema },
+      { name: TeacherProfile.name, schema: TeacherProfileSchema },
+      { name: Attendance.name, schema: AttendanceSchema },
     ]),
     forwardRef(() => WalletsModule),
   ],

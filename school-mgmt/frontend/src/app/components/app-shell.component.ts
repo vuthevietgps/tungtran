@@ -93,7 +93,7 @@ import { Role, ROLE_LABELS } from '../models/role.enum';
             <a routerLink="/app/ads-management" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS])" title="Quản lý QC">
               <span class="icon">&#128227;</span><span class="label">Quản lý QC</span>
             </a>
-            <a routerLink="/app/ads-analytics" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Phân tích QC">
+            <a routerLink="/app/ads-analytics" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS])" title="Phân tích QC">
               <span class="icon">&#128200;</span><span class="label">Phân tích QC</span>
             </a>
           </div>

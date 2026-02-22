@@ -96,6 +96,5 @@ export const AttendanceSchema = SchemaFactory.createForClass(Attendance);
 
 // Unique: 1 học sinh / 1 lớp / 1 ngày
 AttendanceSchema.index({ classId: 1, studentId: 1, date: 1 }, { unique: true });
-AttendanceSchema.index({ attendanceToken: 1 }, { sparse: true });
 AttendanceSchema.index({ sessionId: 1 }, { sparse: true });
 AttendanceSchema.index({ date: 1, status: 1 });

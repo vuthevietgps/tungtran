@@ -432,7 +432,10 @@ export class DashboardService {
         this.ticketModel.aggregate([
           { $group: { _id: '$priority', count: { $sum: 1 } } },
         ]),
-        this.ticketModel.countDocuments({ isOverdue: true }),
+        this.ticketModel.countDocuments({
+          status: { $nin: [TicketStatus.RESOLVED, TicketStatus.CLOSED, TicketStatus.CANCELLED] },
+          dueDate: { $lt: new Date() },
+        }),
       ]),
       // Sessions happening today
       this.sessionModel.countDocuments({
@@ -531,6 +534,7 @@ export class DashboardService {
 
   async getTeacherDashboard(teacherUserId: string): Promise<TeacherDashboard> {
     const now = new Date();
+    const teacherObjId = new Types.ObjectId(teacherUserId);
 
     const [
       profile,
@@ -544,12 +548,12 @@ export class DashboardService {
       this.teacherModel.findOne({ userId: teacherUserId }).lean(),
       // Sessions aggregated
       this.sessionModel.aggregate([
-        { $match: { teacherId: new Types.ObjectId(teacherUserId) } },
+        { $match: { teacherId: teacherObjId } },
         { $group: { _id: '$status', count: { $sum: 1 }, totalPayout: { $sum: '$teacherPayout' } } },
       ]),
       // Upcoming sessions
       this.sessionModel
-        .find({ teacherId: new Types.ObjectId(teacherUserId), status: 'SCHEDULED', scheduledDate: { $gte: now } })
+        .find({ teacherId: teacherObjId, status: 'SCHEDULED', scheduledDate: { $gte: now } })
         .sort({ scheduledDate: 1 })
         .limit(10)
         .populate('studentId', 'fullName')
@@ -557,20 +561,34 @@ export class DashboardService {
         .lean(),
       // Latest payroll
       this.payrollModel
-        .find({ teacherId: new Types.ObjectId(teacherUserId) })
+        .find({ teacherId: teacherObjId })
         .sort({ createdAt: -1 })
         .limit(1)
         .lean(),
       // Active classes
       this.classModel
-        .find({ teacher: new Types.ObjectId(teacherUserId), status: 'ACTIVE' })
-        .select('name subject grade studentIds schedule')
+        .find({
+          status: 'ACTIVE',
+          $or: [
+            { teacher: teacherObjId },
+            {
+              substituteTeachers: {
+                $elemMatch: {
+                  teacherId: teacherObjId,
+                  fromDate: { $lte: now },
+                  toDate: { $gte: now },
+                },
+              },
+            },
+          ],
+        })
+        .select('name subject grade students schedule')
         .lean(),
       // Tickets created by or related to this teacher
       Promise.all([
-        this.ticketModel.countDocuments({ createdBy: new Types.ObjectId(teacherUserId) }),
+        this.ticketModel.countDocuments({ createdBy: teacherObjId }),
         this.ticketModel.countDocuments({
-          createdBy: new Types.ObjectId(teacherUserId),
+          createdBy: teacherObjId,
           status: { $in: [TicketStatus.OPEN, TicketStatus.IN_PROGRESS, TicketStatus.WAITING_INFO] },
         }),
       ]),
@@ -593,7 +611,7 @@ export class DashboardService {
 
     // Pending payout = FINALIZED sessions not yet paid
     const pendingPayout = await this.sessionModel.aggregate([
-      { $match: { teacherId: new Types.ObjectId(teacherUserId), status: 'FINALIZED', isTeacherPaid: false } },
+      { $match: { teacherId: teacherObjId, status: 'FINALIZED', isTeacherPaid: false } },
       { $group: { _id: null, total: { $sum: '$teacherPayout' } } },
     ]);
 
@@ -602,7 +620,7 @@ export class DashboardService {
       sessions: {
         total: totalSessions,
         byStatus,
-        upcomingCount: byStatus['SCHEDULED'] || 0,
+        upcomingCount: upcomingSessions.length,
         completedCount,
         cancelledCount,
         noShowCount,
@@ -635,7 +653,7 @@ export class DashboardService {
     // Find children of this parent
     const children = await this.studentModel
       .find({ parentUserId: parentObjId })
-      .select('name grade subjects')
+      .select('fullName grade subjects')
       .lean();
     const childIds = children.map((c) => c._id);
 
@@ -647,6 +665,7 @@ export class DashboardService {
       recentTransactions,
       ticketData,
       invoicesList,
+      invoiceTotalsAgg,
       attendanceAgg,
       recentAttendance,
     ] = await Promise.all([
@@ -689,9 +708,27 @@ export class DashboardService {
         .find({ studentId: { $in: childIds } })
         .sort({ paymentDate: -1 })
         .limit(20)
-        .populate('studentId', 'name studentCode')
+        .populate('studentId', 'fullName studentCode')
         .populate('classId', 'name code')
         .lean(),
+      this.invoiceModel.aggregate([
+        { $match: { studentId: { $in: childIds } } },
+        {
+          $group: {
+            _id: null,
+            totalCount: { $sum: 1 },
+            totalPaid: {
+              $sum: {
+                $cond: [
+                  { $in: ['$status', ['APPROVED', 'PAID']] },
+                  '$amount',
+                  0,
+                ],
+              },
+            },
+          },
+        },
+      ]),
       // Attendance aggregation by status
       this.attendanceModel.aggregate([
         { $match: { studentId: { $in: childIds } } },
@@ -702,7 +739,7 @@ export class DashboardService {
         .find({ studentId: { $in: childIds } })
         .sort({ date: -1 })
         .limit(20)
-        .populate('studentId', 'name studentCode')
+        .populate('studentId', 'fullName studentCode')
         .populate('classId', 'name code')
         .populate('teacherId', 'fullName')
         .lean(),
@@ -715,11 +752,10 @@ export class DashboardService {
       totalSessions += s.count;
     });
 
-    // Invoice stats
-    let invoiceTotalPaid = 0;
-    (invoicesList as any[]).forEach((inv: any) => {
-      if (inv.status === 'PAID') invoiceTotalPaid += inv.amount || 0;
-    });
+    // Invoice stats (count/paid must include all invoices, not only recent list)
+    const invoiceSummary = (invoiceTotalsAgg as any[])[0] || { totalCount: 0, totalPaid: 0 };
+    const invoiceTotalPaid = invoiceSummary.totalPaid || 0;
+    const invoiceTotalCount = invoiceSummary.totalCount || 0;
 
     // Attendance stats
     const attendByStatus: Record<string, number> = {};
@@ -752,7 +788,7 @@ export class DashboardService {
       recentSessions: upcomingSessions,
       recentTransactions,
       invoices: {
-        total: (invoicesList as any[]).length,
+        total: invoiceTotalCount,
         totalPaid: invoiceTotalPaid,
         list: invoicesList,
       },
@@ -857,7 +893,10 @@ export class DashboardService {
         },
         { $group: { _id: null, avgMs: { $avg: '$resolutionMs' } } },
       ]),
-      this.ticketModel.countDocuments({ isOverdue: true }),
+      this.ticketModel.countDocuments({
+        status: { $nin: [TicketStatus.RESOLVED, TicketStatus.CLOSED, TicketStatus.CANCELLED] },
+        dueDate: { $lt: new Date() },
+      }),
     ]);
 
     let total = 0, openCount = 0;
@@ -1757,10 +1796,10 @@ export class DashboardService {
       // Avg parent rating from evaluations
       const rated = await this.sessionModel.find({
         teacherId: t._id,
-        'evaluation.parentFeedback.overallRating': { $exists: true },
-      }).select('evaluation.parentFeedback.overallRating').lean();
+        'parentFeedback.overallRating': { $exists: true },
+      }).select('parentFeedback.overallRating').lean();
       const avgRating = rated.length > 0
-        ? Math.round(rated.reduce((s, r: any) => s + (r.evaluation?.parentFeedback?.overallRating || 0), 0) / rated.length * 10) / 10
+        ? Math.round(rated.reduce((s, r: any) => s + (r.parentFeedback?.overallRating || 0), 0) / rated.length * 10) / 10
         : null;
 
       teacherPerf.push({
@@ -1799,8 +1838,11 @@ export class DashboardService {
     const ops = await this.userModel.find({ role: 'OPS', isLocked: { $ne: true } }).select('fullName email').lean();
     const opsPerf: any[] = [];
     for (const o of ops) {
-      const tickets = await this.ticketModel.countDocuments({ assigneeId: o._id });
-      const resolved = await this.ticketModel.countDocuments({ assigneeId: o._id, status: { $in: ['RESOLVED', 'CLOSED'] } });
+      const tickets = await this.ticketModel.countDocuments({ assignedTo: o._id });
+      const resolved = await this.ticketModel.countDocuments({
+        assignedTo: o._id,
+        status: { $in: [TicketStatus.RESOLVED, TicketStatus.CLOSED] },
+      });
 
       opsPerf.push({
         _id: o._id,

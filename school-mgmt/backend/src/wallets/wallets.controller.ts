@@ -178,11 +178,16 @@ export class WalletsController {
   getSessionEquivalence(
     @Query('studentId') studentId: string,
     @Query('classId') classId: string,
+    @Req() req: AuthenticatedRequest,
   ) {
     if (!studentId || !classId) {
       throw new ForbiddenException('studentId và classId là bắt buộc');
     }
-    return this.walletsService.getSessionEquivalence({ studentId, classId });
+    return this.walletsService.getSessionEquivalence({
+      studentId,
+      classId,
+      requesterParentUserId: req.user.role === Role.PARENT ? req.user.sub : undefined,
+    });
   }
 
   // ── LEDGER BALANCE VERIFICATION (Đối soát số dư) ────────────────

@@ -62,8 +62,7 @@ export class Fanpage {
 }
 
 export const FanpageSchema = SchemaFactory.createForClass(Fanpage);
-
-FanpageSchema.index({ fanpageCode: 1 }, { unique: true });
 FanpageSchema.index({ platform: 1, pageId: 1 }, { unique: true });
 FanpageSchema.index({ status: 1 });
 FanpageSchema.index({ createdAt: -1 });
+

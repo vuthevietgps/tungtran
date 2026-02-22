@@ -1,13 +1,15 @@
-import { IsString, IsEnum, IsOptional, IsDateString } from 'class-validator';
+import { IsString, IsEnum, IsOptional, IsDateString, IsMongoId } from 'class-validator';
 import { AdPlatform } from '../schemas/ad-account.schema';
 
 export class QueryAdCostDto {
   @IsString()
   @IsOptional()
+  @IsMongoId()
   adGroupId?: string;
 
   @IsString()
   @IsOptional()
+  @IsMongoId()
   adAccountId?: string;
 
   @IsEnum(AdPlatform)

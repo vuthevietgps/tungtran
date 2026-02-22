@@ -143,15 +143,21 @@ export class StaffPayrollController {
     return this.staffPayrollService.reopen(id);
   }
 
-  /** Xác nhận đã chi lương */
+  /** Xác nhận đã chi lương. Truyền bankAccountId để ghi BankTransaction (BUG #3 fix) */
   @Post(':id/mark-paid')
   @Roles(Role.DIRECTOR, Role.ACCOUNTING)
   markPaid(
     @Param('id', ParseMongoIdPipe) id: string,
-    @Body() dto: { paymentRef?: string },
+    @Body() dto: { paymentRef?: string; bankAccountId?: string },
     @Req() req: AuthenticatedRequest,
   ) {
-    return this.staffPayrollService.markPaid(id, req.user.sub, dto.paymentRef);
+    return this.staffPayrollService.markPaid(
+      id,
+      req.user.sub,
+      dto.paymentRef,
+      dto.bankAccountId,
+      req.user.fullName,
+    );
   }
 
   // ── DELETE ──

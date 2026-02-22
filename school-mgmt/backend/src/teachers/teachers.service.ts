@@ -322,7 +322,8 @@ export class TeachersService {
           $group: {
             _id: '$status',
             count: { $sum: 1 },
-            totalAmount: { $sum: '$totalAmount' },
+            // Keep API field name `totalAmount` for compatibility, but sum the real payroll field.
+            totalAmount: { $sum: '$netAmount' },
           },
         },
       ]),

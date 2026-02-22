@@ -1,10 +1,10 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { BadRequestException, Injectable, Optional } from '@nestjs/common';
 import { InjectModel, InjectConnection } from '@nestjs/mongoose';
-import { Model, Types, Connection } from 'mongoose';
+import { Model, Types, Connection, ClientSession } from 'mongoose';
 import { BankAccount, BankAccountDocument } from './schemas/bank-account.schema';
-import { BankTransaction, BankTransactionDocument, BankTransactionType } from './schemas/bank-transaction.schema';
-import { Fund, FundDocument, FundStatus } from './schemas/fund.schema';
-import { FundTransaction, FundTransactionDocument, FundTransactionType } from './schemas/fund-transaction.schema';
+import { BankTransaction, BankTransactionDocument } from './schemas/bank-transaction.schema';
+import { Fund, FundDocument } from './schemas/fund.schema';
+import { FundTransaction, FundTransactionDocument } from './schemas/fund-transaction.schema';
 import {
   CreateBankAccountDto, UpdateBankAccountDto,
   RecordBankTransactionDto, QueryBankTransactionDto,
@@ -15,21 +15,25 @@ import {
   QueryCashFlowDto,
 } from './dto/fund.dto';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
+import { PayrollFinancialAggregateService } from './aggregates/payroll-financial.aggregate';
+import { ExpenseFinancialAggregateService } from './aggregates/expense-financial.aggregate';
+import { LoanFinancialAggregateService } from './aggregates/loan-financial.aggregate';
+import { FinancialControlBankFundService } from './financial-control-bank-fund.service';
 
 // Import related schemas for cash flow aggregation
 import { Session, SessionDocument } from '../sessions/schemas/session.schema';
-import { Payroll, PayrollDocument } from '../payroll/schemas/payroll.schema';
 import { Expense, ExpenseDocument } from '../expenses/schemas/expense.schema';
 import { Invoice, InvoiceDocument } from '../invoices/schemas/invoice.schema';
 import { LedgerEntry, LedgerEntryDocument } from '../wallets/schemas/ledger-entry.schema';
 import { Wallet, WalletDocument } from '../wallets/schemas/wallet.schema';
 import { AdCost, AdCostDocument } from '../ads/schemas/ad-cost.schema';
 import { AdGroup, AdGroupDocument } from '../ads/schemas/ad-group.schema';
+import { AdsService } from '../ads/ads.service';
 import { Order, OrderDocument } from '../orders/schemas/order.schema';
 import { Lead, LeadDocument } from '../leads/schemas/lead.schema';
 import { Student, StudentDocument } from '../students/schemas/student.schema';
-import { Loan, LoanDocument } from '../loans/schemas/loan.schema';
-import { LoanPayment, LoanPaymentDocument } from '../loans/schemas/loan-payment.schema';
+
+type FinancialReportBasis = 'cash' | 'accrual';
 
 @Injectable()
 export class FinancialControlService {
@@ -39,7 +43,6 @@ export class FinancialControlService {
     @InjectModel(Fund.name) private fundModel: Model<FundDocument>,
     @InjectModel(FundTransaction.name) private fundTransactionModel: Model<FundTransactionDocument>,
     @InjectModel(Session.name) private sessionModel: Model<SessionDocument>,
-    @InjectModel(Payroll.name) private payrollModel: Model<PayrollDocument>,
     @InjectModel(Expense.name) private expenseModel: Model<ExpenseDocument>,
     @InjectModel(Invoice.name) private invoiceModel: Model<InvoiceDocument>,
     @InjectModel(LedgerEntry.name) private ledgerModel: Model<LedgerEntryDocument>,
@@ -49,332 +52,85 @@ export class FinancialControlService {
     @InjectModel(Order.name) private orderModel: Model<OrderDocument>,
     @InjectModel(Lead.name) private leadModel: Model<LeadDocument>,
     @InjectModel(Student.name) private studentModel: Model<StudentDocument>,
-    @InjectModel(Loan.name) private loanModel2: Model<LoanDocument>,
-    @InjectModel(LoanPayment.name) private loanPaymentModel: Model<LoanPaymentDocument>,
     @InjectConnection() private connection: Connection,
+    private readonly payrollAggregate: PayrollFinancialAggregateService,
+    private readonly expenseAggregate: ExpenseFinancialAggregateService,
+    private readonly loanAggregate: LoanFinancialAggregateService,
+    private readonly bankFundService: FinancialControlBankFundService,
+    @Optional() private readonly adsService?: AdsService,
   ) {}
 
-  // ─── Safe code generation with collision retry ────────────────────
-  private async generateCode(model: Model<any>, prefix: string, pad: number): Promise<string> {
-    const codeField = prefix.startsWith('BA-') ? 'accountCode' : prefix.startsWith('FUND-') ? 'fundCode' : 'transactionCode';
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const count = await model.countDocuments();
-      const code = `${prefix}${String(count + 1 + attempt).padStart(pad, '0')}`;
-      const exists = await model.findOne({ [codeField]: code }).lean();
-      if (!exists) return code;
-    }
-    return `${prefix}${Date.now()}`;
-  }
-
-  // ════════════════════════════════════════════════════════════════════
-  // BANK ACCOUNTS — Số dư ngân hàng
-  // ════════════════════════════════════════════════════════════════════
-
+  // Delegate bank/fund operations to dedicated service to keep this class focused on reporting.
   async createBankAccount(dto: CreateBankAccountDto, user: JwtPayload): Promise<BankAccount> {
-    const accountCode = await this.generateCode(this.bankAccountModel, 'BA-', 3);
-
-    if (dto.isPrimary) {
-      await this.bankAccountModel.updateMany({}, { isPrimary: false });
-    }
-
-    const account = new this.bankAccountModel({
-      ...dto,
-      accountCode,
-      currentBalance: dto.openingBalance || 0,
-      openingBalance: dto.openingBalance || 0,
-      createdById: user._id,
-      createdByName: user.fullName,
-    });
-
-    return account.save();
+    return this.bankFundService.createBankAccount(dto, user);
   }
 
   async findAllBankAccounts(): Promise<BankAccount[]> {
-    return this.bankAccountModel.find().sort({ isPrimary: -1, createdAt: -1 }).exec();
+    return this.bankFundService.findAllBankAccounts();
   }
 
   async findBankAccount(id: string): Promise<BankAccountDocument> {
-    const account = await this.bankAccountModel.findById(id).exec();
-    if (!account) throw new NotFoundException('Bank account not found');
-    return account;
+    return this.bankFundService.findBankAccount(id);
   }
 
-  async updateBankAccount(id: string, dto: UpdateBankAccountDto, user: JwtPayload): Promise<BankAccount> {
-    const account = await this.findBankAccount(id);
-    if (dto.isPrimary) {
-      await this.bankAccountModel.updateMany({ _id: { $ne: id } }, { isPrimary: false });
-    }
-    Object.assign(account, dto);
-    return account.save();
+  async updateBankAccount(id: string, dto: UpdateBankAccountDto, _user: JwtPayload): Promise<BankAccount> {
+    return this.bankFundService.updateBankAccount(id, dto);
   }
 
   async getBankAccountSummary(): Promise<any> {
-    const accounts = await this.bankAccountModel.find({ status: 'ACTIVE' }).lean();
-    const totalBalance = accounts.reduce((sum, a) => sum + a.currentBalance, 0);
-    const primaryAccount = accounts.find(a => a.isPrimary);
-
-    return {
-      totalBalance,
-      accountCount: accounts.length,
-      primaryAccount: primaryAccount || null,
-      accounts: accounts.map(a => ({
-        _id: a._id,
-        accountCode: a.accountCode,
-        bankName: a.bankName,
-        accountNumber: a.accountNumber,
-        currentBalance: a.currentBalance,
-        isPrimary: a.isPrimary,
-      })),
-    };
+    return this.bankFundService.getBankAccountSummary();
   }
 
-  // ════════════════════════════════════════════════════════════════════
-  // BANK TRANSACTIONS — Giao dịch ngân hàng
-  // ════════════════════════════════════════════════════════════════════
-
-  async recordBankTransaction(dto: RecordBankTransactionDto, user: JwtPayload): Promise<BankTransaction> {
-    const session = await this.connection.startSession();
-    try {
-      session.startTransaction();
-
-      // Atomic read-lock via findOneAndUpdate to prevent race conditions
-      const isInflow = [BankTransactionType.DEPOSIT, BankTransactionType.TRANSFER_IN, BankTransactionType.INTEREST].includes(dto.type as BankTransactionType);
-      const isOutflow = [BankTransactionType.WITHDRAWAL, BankTransactionType.TRANSFER_OUT, BankTransactionType.FEE].includes(dto.type as BankTransactionType);
-
-      let delta = dto.amount;
-      if (isOutflow) delta = -dto.amount;
-      // ADJUSTMENT keeps original sign
-
-      const account = await this.bankAccountModel.findOneAndUpdate(
-        { _id: new Types.ObjectId(dto.bankAccountId) },
-        { $inc: { currentBalance: delta } },
-        { new: false, session }, // returns the doc BEFORE update
-      ).exec();
-
-      if (!account) throw new NotFoundException('Bank account not found');
-
-      const balanceBefore = account.currentBalance;
-      const balanceAfter = balanceBefore + delta;
-
-      const transactionCode = await this.generateCode(this.bankTransactionModel, 'BT-', 5);
-
-      const [transaction] = await this.bankTransactionModel.create([{
-        transactionCode,
-        bankAccountId: new Types.ObjectId(dto.bankAccountId),
-        type: dto.type,
-        category: dto.category || 'OTHER',
-        amount: Math.abs(dto.amount),
-        balanceBefore,
-        balanceAfter,
-        transactionDate: new Date(dto.transactionDate),
-        description: dto.description,
-        reference: dto.reference,
-        referenceId: dto.referenceId ? new Types.ObjectId(dto.referenceId) : undefined,
-        referenceType: dto.referenceType,
-        recordedById: user._id,
-        recordedByName: user.fullName,
-      }], { session });
-
-      await session.commitTransaction();
-      return transaction;
-    } catch (err) {
-      await session.abortTransaction();
-      throw err;
-    } finally {
-      session.endSession();
-    }
+  async recordBankTransaction(
+    dto: RecordBankTransactionDto,
+    user: JwtPayload,
+    options?: { session?: ClientSession },
+  ): Promise<BankTransaction> {
+    return this.bankFundService.recordBankTransaction(dto, user, options);
   }
 
   async findBankTransactions(query: QueryBankTransactionDto): Promise<BankTransaction[]> {
-    const filter: any = {};
-    if (query.bankAccountId) filter.bankAccountId = new Types.ObjectId(query.bankAccountId);
-    if (query.type) filter.type = query.type;
-    if (query.category) filter.category = query.category;
-    if (query.keyword) {
-      filter.$or = [
-        { transactionCode: new RegExp(query.keyword, 'i') },
-        { description: new RegExp(query.keyword, 'i') },
-        { reference: new RegExp(query.keyword, 'i') },
-      ];
-    }
-    if (query.startDate || query.endDate) {
-      filter.transactionDate = {};
-      if (query.startDate) filter.transactionDate.$gte = new Date(query.startDate);
-      if (query.endDate) {
-        const end = new Date(query.endDate);
-        end.setHours(23, 59, 59, 999);
-        filter.transactionDate.$lte = end;
-      }
-    }
-    return this.bankTransactionModel.find(filter).sort({ transactionDate: -1, createdAt: -1 }).limit(500).exec();
+    return this.bankFundService.findBankTransactions(query);
   }
 
   async reconcileTransaction(id: string, user: JwtPayload): Promise<BankTransaction> {
-    const tx = await this.bankTransactionModel.findById(id).exec();
-    if (!tx) throw new NotFoundException('Transaction not found');
-    tx.isReconciled = true;
-    tx.reconciledAt = new Date();
-    tx.reconciledByName = user.fullName;
-    return tx.save();
+    return this.bankFundService.reconcileTransaction(id, user);
   }
 
-  // ════════════════════════════════════════════════════════════════════
-  // FUNDS — Quỹ đặt chỗ / Dự phòng / Tiền mặt
-  // ════════════════════════════════════════════════════════════════════
-
   async createFund(dto: CreateFundDto, user: JwtPayload): Promise<Fund> {
-    const fundCode = await this.generateCode(this.fundModel, 'FUND-', 3);
-
-    const fund = new this.fundModel({
-      ...dto,
-      fundCode,
-      currentBalance: dto.currentBalance || 0,
-      totalDeposited: dto.currentBalance || 0,
-      createdById: user._id,
-      createdByName: user.fullName,
-    });
-
-    return fund.save();
+    return this.bankFundService.createFund(dto, user);
   }
 
   async findAllFunds(): Promise<Fund[]> {
-    return this.fundModel.find().sort({ fundType: 1, createdAt: -1 }).exec();
+    return this.bankFundService.findAllFunds();
   }
 
   async findFund(id: string): Promise<FundDocument> {
-    const fund = await this.fundModel.findById(id).exec();
-    if (!fund) throw new NotFoundException('Fund not found');
-    return fund;
+    return this.bankFundService.findFund(id);
   }
 
   async updateFund(id: string, dto: UpdateFundDto): Promise<Fund> {
-    const fund = await this.findFund(id);
-    Object.assign(fund, dto);
-    return fund.save();
+    return this.bankFundService.updateFund(id, dto);
   }
 
   async recordFundTransaction(dto: FundTransactionDto, user: JwtPayload): Promise<FundTransaction> {
-    const fund = await this.findFund(dto.fundId);
-
-    if (fund.status !== FundStatus.ACTIVE) {
-      throw new BadRequestException('Quỹ không ở trạng thái hoạt động');
-    }
-
-    // Validate withdrawal balance before starting transaction
-    if (dto.type === FundTransactionType.WITHDRAW && dto.amount > fund.currentBalance) {
-      throw new BadRequestException(`Số dư quỹ không đủ. Hiện có: ${fund.currentBalance.toLocaleString()}đ`);
-    }
-
-    const session = await this.connection.startSession();
-    try {
-      session.startTransaction();
-
-      let delta = dto.amount;
-      const incUpdate: any = { currentBalance: delta };
-
-      switch (dto.type) {
-        case FundTransactionType.DEPOSIT:
-          incUpdate.totalDeposited = dto.amount;
-          break;
-        case FundTransactionType.WITHDRAW:
-          delta = -dto.amount;
-          incUpdate.currentBalance = delta;
-          incUpdate.totalWithdrawn = dto.amount;
-          break;
-        case FundTransactionType.ADJUSTMENT:
-          // delta keeps original sign
-          break;
-        default:
-          throw new BadRequestException('Invalid transaction type');
-      }
-
-      const updatedFund = await this.fundModel.findOneAndUpdate(
-        { _id: new Types.ObjectId(dto.fundId) },
-        { $inc: incUpdate },
-        { new: false, session },
-      ).exec();
-
-      if (!updatedFund) throw new NotFoundException('Fund not found');
-
-      const balanceBefore = updatedFund.currentBalance;
-      const balanceAfter = balanceBefore + delta;
-
-      const transactionCode = await this.generateCode(this.fundTransactionModel, 'FT-', 5);
-
-      const [transaction] = await this.fundTransactionModel.create([{
-        transactionCode,
-        fundId: new Types.ObjectId(dto.fundId),
-        type: dto.type,
-        amount: dto.amount,
-        balanceBefore,
-        balanceAfter,
-        transactionDate: new Date(dto.transactionDate),
-        description: dto.description,
-        reference: dto.reference,
-        performedById: user._id,
-        performedByName: user.fullName,
-      }], { session });
-
-      await session.commitTransaction();
-      return transaction;
-    } catch (err) {
-      await session.abortTransaction();
-      throw err;
-    } finally {
-      session.endSession();
-    }
+    return this.bankFundService.recordFundTransaction(dto, user);
   }
 
   async findFundTransactions(query: QueryFundTransactionDto): Promise<FundTransaction[]> {
-    const filter: any = {};
-    if (query.fundId) filter.fundId = new Types.ObjectId(query.fundId);
-    if (query.type) filter.type = query.type;
-    if (query.startDate || query.endDate) {
-      filter.transactionDate = {};
-      if (query.startDate) filter.transactionDate.$gte = new Date(query.startDate);
-      if (query.endDate) {
-        const end = new Date(query.endDate);
-        end.setHours(23, 59, 59, 999);
-        filter.transactionDate.$lte = end;
-      }
-    }
-    return this.fundTransactionModel.find(filter).sort({ transactionDate: -1 }).limit(500).exec();
+    return this.bankFundService.findFundTransactions(query);
   }
 
   async getFundsSummary(): Promise<any> {
-    const funds = await this.fundModel.find({ status: FundStatus.ACTIVE }).lean();
-    const totalBalance = funds.reduce((sum, f) => sum + f.currentBalance, 0);
-    const warnings = funds.filter(f => f.currentBalance < f.minimumBalance);
-
-    return {
-      totalBalance,
-      fundCount: funds.length,
-      warningCount: warnings.length,
-      warnings: warnings.map(f => ({
-        fundCode: f.fundCode,
-        name: f.name,
-        currentBalance: f.currentBalance,
-        minimumBalance: f.minimumBalance,
-        deficit: f.minimumBalance - f.currentBalance,
-      })),
-      funds: funds.map(f => ({
-        _id: f._id,
-        fundCode: f.fundCode,
-        name: f.name,
-        fundType: f.fundType,
-        currentBalance: f.currentBalance,
-        minimumBalance: f.minimumBalance,
-        targetBalance: f.targetBalance,
-        progress: f.targetBalance > 0 ? Math.round((f.currentBalance / f.targetBalance) * 100) : 100,
-      })),
-    };
+    return this.bankFundService.getFundsSummary();
   }
 
-  // ════════════════════════════════════════════════════════════════════
-  // CASH FLOW — Dòng tiền tổng hợp
-  // ════════════════════════════════════════════════════════════════════
+  private resolveFinancialBasis(basis?: string): FinancialReportBasis {
+    return basis === 'accrual' ? 'accrual' : 'cash';
+  }
 
   async getCashFlow(query: QueryCashFlowDto): Promise<any> {
+    const requestedBasis = this.resolveFinancialBasis(query.basis);
     const dateFilter: any = {};
     if (query.startDate) dateFilter.$gte = new Date(query.startDate);
     if (query.endDate) {
@@ -386,7 +142,16 @@ export class FinancialControlService {
     const hasDateFilter = Object.keys(dateFilter).length > 0;
 
     // Aggregate data from all financial sources
-    const [invoiceIncome, payrollOut, expenseOut, sessionRevenue, adCostOut, walletTopUps, loanDisbursements, loanRepayments] = await Promise.all([
+    const [
+      invoiceIncome,
+      payrollOut,
+      expenseOut,
+      sessionRevenue,
+      adCostOut,
+      walletTopUps,
+      loanDisbursements,
+      loanRepayments,
+    ] = await Promise.all([
       // Income from invoices (approved)
       this.invoiceModel.aggregate([
         {
@@ -410,52 +175,15 @@ export class FinancialControlService {
         { $sort: { _id: 1 } },
       ]),
 
-      // Payroll outflow
-      this.payrollModel.aggregate([
-        {
-          $match: {
-            status: 'PAID',
-            ...(hasDateFilter ? { paidAt: dateFilter } : {}),
-          },
-        },
-        {
-          $group: {
-            _id: {
-              $dateToString: {
-                format: query.groupBy === 'month' ? '%Y-%m' : '%Y-%m-%d',
-                date: { $ifNull: ['$paidAt', '$createdAt'] },
-              },
-            },
-            totalAmount: { $sum: '$netAmount' },
-            count: { $sum: 1 },
-          },
-        },
-        { $sort: { _id: 1 } },
-      ]),
+      this.payrollAggregate.getPaidOutflowTimeline(
+        query.groupBy === 'month' ? 'month' : 'day',
+        hasDateFilter ? dateFilter : undefined,
+      ),
 
-      // Expense outflow (paid)
-      this.expenseModel.aggregate([
-        {
-          $match: {
-            paymentStatus: 'PAID',
-            ...(hasDateFilter ? { expenseDate: dateFilter } : {}),
-          },
-        },
-        {
-          $group: {
-            _id: {
-              $dateToString: {
-                format: query.groupBy === 'month' ? '%Y-%m' : '%Y-%m-%d',
-                date: '$expenseDate',
-              },
-            },
-            totalAmount: { $sum: '$amount' },
-            count: { $sum: 1 },
-            byCategory: { $push: { category: '$category', amount: '$amount' } },
-          },
-        },
-        { $sort: { _id: 1 } },
-      ]),
+      this.expenseAggregate.getPaidOutflowTimeline(
+        query.groupBy === 'month' ? 'month' : 'day',
+        hasDateFilter ? dateFilter : undefined,
+      ),
 
       // Session revenue (finalized)
       this.sessionModel.aggregate([
@@ -481,10 +209,11 @@ export class FinancialControlService {
         { $sort: { _id: 1 } },
       ]),
 
-      // Ad costs outflow (marketing spend)
+      // Ad costs outflow (marketing spend) — exclude ESTIMATED to avoid double-counting with SYNCED
       this.adCostModel.aggregate([
         {
           $match: {
+            source: { $ne: 'ESTIMATED' }, // BUG #5 fix: ESTIMATED are projections, not real cash outflow
             ...(hasDateFilter ? { date: dateFilter } : {}),
           },
         },
@@ -509,7 +238,14 @@ export class FinancialControlService {
           $match: {
             type: 'TOP_UP',
             status: 'APPROVED',
-            ...(hasDateFilter ? { createdAt: dateFilter } : {}),
+            // Invoice approval also creates TOP_UP entries (paymentMethod=SYSTEM).
+            // Exclude them to avoid double-counting against invoice inflow.
+            paymentMethod: { $ne: 'SYSTEM' },
+            // BUG #6 fix: filter by approvedAt (when money actually received), fallback to createdAt
+            ...(hasDateFilter ? { $or: [
+              { approvedAt: dateFilter },
+              { approvedAt: { $exists: false }, createdAt: dateFilter },
+            ] } : {}),
           },
         },
         {
@@ -517,7 +253,7 @@ export class FinancialControlService {
             _id: {
               $dateToString: {
                 format: query.groupBy === 'month' ? '%Y-%m' : '%Y-%m-%d',
-                date: '$createdAt',
+                date: { $ifNull: ['$approvedAt', '$createdAt'] }, // BUG #6 fix: use approvedAt
               },
             },
             totalAmount: { $sum: '$amount' },
@@ -527,53 +263,17 @@ export class FinancialControlService {
         { $sort: { _id: 1 } },
       ]),
 
-      // Loan disbursements (inflow — money received from lenders)
-      this.loanModel2.aggregate([
-        {
-          $match: {
-            status: { $in: ['ACTIVE', 'COMPLETED'] },
-            ...(hasDateFilter ? { startDate: dateFilter } : {}),
-          },
-        },
-        {
-          $group: {
-            _id: {
-              $dateToString: {
-                format: query.groupBy === 'month' ? '%Y-%m' : '%Y-%m-%d',
-                date: '$startDate',
-              },
-            },
-            totalAmount: { $sum: '$principal' },
-            count: { $sum: 1 },
-          },
-        },
-        { $sort: { _id: 1 } },
-      ]),
+      // Loan disbursements (inflow â€” money received from lenders)
+      this.loanAggregate.getDisbursementTimeline(
+        query.groupBy === 'month' ? 'month' : 'day',
+        hasDateFilter ? dateFilter : undefined,
+      ),
 
-      // Loan repayments (outflow — money paid to lenders)
-      this.loanPaymentModel.aggregate([
-        {
-          $match: {
-            status: 'PAID',
-            ...(hasDateFilter ? { paidDate: dateFilter } : {}),
-          },
-        },
-        {
-          $group: {
-            _id: {
-              $dateToString: {
-                format: query.groupBy === 'month' ? '%Y-%m' : '%Y-%m-%d',
-                date: '$paidDate',
-              },
-            },
-            totalAmount: { $sum: '$totalAmount' },
-            totalPrincipal: { $sum: '$principalAmount' },
-            totalInterest: { $sum: '$interestAmount' },
-            count: { $sum: 1 },
-          },
-        },
-        { $sort: { _id: 1 } },
-      ]),
+      // Loan repayments (outflow â€” money paid to lenders)
+      this.loanAggregate.getRepaymentTimeline(
+        query.groupBy === 'month' ? 'month' : 'day',
+        hasDateFilter ? dateFilter : undefined,
+      ),
     ]);
 
     // Build unified timeline
@@ -606,15 +306,18 @@ export class FinancialControlService {
       const loanDisb = loanDisbMap.get(date);
       const loanRepay = loanRepayMap.get(date);
 
-      const totalInflow = (income?.totalAmount || 0) + (wallet?.totalAmount || 0) + (loanDisb?.totalAmount || 0);
-      const totalOutflow = (payroll?.totalAmount || 0) + (expense?.totalAmount || 0) + (adCost?.totalSpend || 0) + (loanRepay?.totalAmount || 0);
+      const cashInflow = (income?.totalAmount || 0) + (wallet?.totalAmount || 0) + (loanDisb?.totalAmount || 0);
+      const cashOutflow = (payroll?.totalAmount || 0) + (expense?.totalAmount || 0) + (adCost?.totalSpend || 0) + (loanRepay?.totalAmount || 0);
+      const sessionRevenueAmount = session?.totalRevenue || 0;
+      const teacherCostAmount = session?.totalTeacherCost || 0;
 
       return {
         date,
         inflow: {
           invoices: income?.totalAmount || 0,
           invoiceCount: income?.count || 0,
-          sessionRevenue: session?.totalRevenue || 0,
+          sessionRevenue: sessionRevenueAmount,
+          sessionRevenueIncludedInTotal: false,
           sessionCount: session?.count || 0,
           walletTopUps: wallet?.totalAmount || 0,
           walletTopUpCount: wallet?.count || 0,
@@ -626,15 +329,21 @@ export class FinancialControlService {
           payrollCount: payroll?.count || 0,
           expenses: expense?.totalAmount || 0,
           expenseCount: expense?.count || 0,
-          teacherCost: session?.totalTeacherCost || 0,
+          teacherCost: teacherCostAmount,
+          teacherCostIncludedInTotal: false,
           adCost: adCost?.totalSpend || 0,
           adCostCount: adCost?.count || 0,
           loanRepayments: loanRepay?.totalAmount || 0,
           loanRepaymentCount: loanRepay?.count || 0,
         },
-        totalInflow,
-        totalOutflow,
-        netCashFlow: totalInflow - totalOutflow,
+        accrualReference: {
+          sessionRevenue: sessionRevenueAmount,
+          teacherCost: teacherCostAmount,
+          serviceMargin: sessionRevenueAmount - teacherCostAmount,
+        },
+        totalInflow: cashInflow,
+        totalOutflow: cashOutflow,
+        netCashFlow: cashInflow - cashOutflow,
       };
     });
 
@@ -648,9 +357,25 @@ export class FinancialControlService {
       { totalInflow: 0, totalOutflow: 0, netCashFlow: 0 },
     );
 
+    const accrualReference = timeline.reduce(
+      (acc, t) => ({
+        sessionRevenue: acc.sessionRevenue + (t.accrualReference?.sessionRevenue || 0),
+        teacherCost: acc.teacherCost + (t.accrualReference?.teacherCost || 0),
+        serviceMargin: acc.serviceMargin + (t.accrualReference?.serviceMargin || 0),
+      }),
+      { sessionRevenue: 0, teacherCost: 0, serviceMargin: 0 },
+    );
+
     return {
       ...totals,
       timeline,
+      basis: {
+        requested: requestedBasis,
+        applied: 'cash',
+        totalInflow: 'cash',
+        totalOutflow: 'cash',
+      },
+      accrualReference,
       period: {
         startDate: query.startDate || 'all',
         endDate: query.endDate || 'all',
@@ -659,11 +384,12 @@ export class FinancialControlService {
     };
   }
 
-  // ════════════════════════════════════════════════════════════════════
-  // P&L REPORT — Bảng cân đối thu chi
-  // ════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  // P&L REPORT â€” Báº£ng cÃ¢n Ä‘á»‘i thu chi
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-  async getProfitAndLoss(startDate?: string, endDate?: string): Promise<any> {
+  async getProfitAndLoss(startDate?: string, endDate?: string, basis?: string): Promise<any> {
+    const selectedBasis = this.resolveFinancialBasis(basis);
     const dateFilter: any = {};
     if (startDate) dateFilter.$gte = new Date(startDate);
     if (endDate) {
@@ -676,7 +402,7 @@ export class FinancialControlService {
     const [
       sessionData,
       invoiceData,
-      payrollData,
+      payrollSummary,
       expenseData,
       adCostData,
       loanInterestData,
@@ -706,34 +432,15 @@ export class FinancialControlService {
         },
       ]),
 
-      // Payroll costs
-      this.payrollModel.aggregate([
-        { $match: { status: 'PAID', ...(hasDateFilter ? { paidAt: dateFilter } : {}) } },
-        {
-          $group: {
-            _id: null,
-            totalGross: { $sum: '$grossAmount' },
-            totalNet: { $sum: '$netAmount' },
-            count: { $sum: 1 },
-          },
-        },
-      ]),
+      this.payrollAggregate.getPaidSummaryBreakdown(hasDateFilter ? dateFilter : undefined),
+      this.expenseAggregate.getPaidCategorySummary(hasDateFilter ? dateFilter : undefined),
 
-      // Operating expenses by category
-      this.expenseModel.aggregate([
-        { $match: { paymentStatus: 'PAID', ...(hasDateFilter ? { expenseDate: dateFilter } : {}) } },
-        {
-          $group: {
-            _id: '$category',
-            totalAmount: { $sum: '$amount' },
-            count: { $sum: 1 },
-          },
-        },
-      ]),
-
-      // Ad costs (marketing spend) by platform
+      // Ad costs (marketing spend) by platform — exclude ESTIMATED
       this.adCostModel.aggregate([
-        { $match: { ...(hasDateFilter ? { date: dateFilter } : {}) } },
+        { $match: {
+          source: { $ne: 'ESTIMATED' }, // BUG #5 fix: exclude projected costs from P&L
+          ...(hasDateFilter ? { date: dateFilter } : {}),
+        } },
         {
           $group: {
             _id: '$platform',
@@ -743,18 +450,7 @@ export class FinancialControlService {
         },
       ]),
 
-      // Loan interest expense (paid loan payments)
-      this.loanPaymentModel.aggregate([
-        { $match: { status: 'PAID', ...(hasDateFilter ? { paidDate: dateFilter } : {}) } },
-        {
-          $group: {
-            _id: null,
-            totalInterest: { $sum: '$interestAmount' },
-            totalPaid: { $sum: '$totalAmount' },
-            count: { $sum: 1 },
-          },
-        },
-      ]),
+      this.loanAggregate.getInterestExpenseSummary(hasDateFilter ? dateFilter : undefined),
     ]);
 
     // Revenue breakdown
@@ -766,11 +462,19 @@ export class FinancialControlService {
     invoiceData.forEach((i: any) => {
       revenue.byInvoiceType[i._id] = { amount: i.totalAmount, count: i.count };
     });
-    const totalRevenue = revenue.sessionRevenue;
+    const invoiceRevenue = Object.values(revenue.byInvoiceType).reduce(
+      (sum, item) => sum + (item.amount || 0),
+      0,
+    );
+    const accrualRevenue = revenue.sessionRevenue;
 
     // Cost breakdown
     const teacherCost = sessionData[0]?.totalTeacherCost || 0;
-    const payrollCost = payrollData[0]?.totalNet || 0;
+    const teacherPayrollCash = payrollSummary.teacherTotal || 0;
+    const teacherPayrollCount = payrollSummary.teacherCount || 0;
+    const staffPayrollCash = payrollSummary.staffTotal || 0;
+    const staffPayrollCount = payrollSummary.staffCount || 0;
+    const payrollCost = payrollSummary.total || 0;
 
     const expenseByCategory: Record<string, { amount: number; count: number }> = {};
     let totalExpenses = 0;
@@ -788,39 +492,102 @@ export class FinancialControlService {
     });
 
     // Loan interest expense
-    const interestExpense = loanInterestData[0]?.totalInterest || 0;
+    const interestExpense = loanInterestData.totalInterest || 0;
 
-    const grossProfit = totalRevenue - teacherCost;
-    const netProfit = grossProfit - totalExpenses - totalAdCost - interestExpense;
+    const basisSummary = {
+      cash: {
+        revenue: invoiceRevenue,
+        costOfGoodsSold: teacherPayrollCash,
+        payrollCost,
+        operatingExpenses: totalExpenses,
+        adCost: totalAdCost,
+        interestExpense,
+        totalCosts: payrollCost + totalExpenses + totalAdCost + interestExpense,
+      },
+      accrual: {
+        revenue: accrualRevenue,
+        costOfGoodsSold: teacherCost,
+        payrollCost,
+        operatingExpenses: totalExpenses,
+        adCost: totalAdCost,
+        interestExpense,
+        // In accrual view, payroll excludes teacher payroll to avoid double-counting teacherCost.
+        totalCosts: teacherCost + staffPayrollCash + totalExpenses + totalAdCost + interestExpense,
+      },
+    } as const;
+
+    const selected = basisSummary[selectedBasis];
+    const grossProfit = selected.revenue - selected.costOfGoodsSold;
+    const netProfit = selected.revenue - selected.totalCosts;
 
     return {
       period: { startDate: startDate || 'all', endDate: endDate || 'all' },
+      basis: {
+        selected: selectedBasis,
+        default: 'cash',
+        supported: ['cash', 'accrual'],
+      },
       revenue: {
-        total: totalRevenue,
+        total: selected.revenue,
+        invoiceRevenue,
+        accrualRevenue,
+        byBasis: {
+          cash: invoiceRevenue,
+          accrual: accrualRevenue,
+        },
         ...revenue,
       },
       costs: {
+        costOfGoodsSold: selected.costOfGoodsSold,
         teacherCost,
+        teacherPayrollCash,
+        teacherPayrollCount,
+        staffPayrollCash,
+        staffPayrollCount,
         payrollCost,
         operatingExpenses: totalExpenses,
         expenseByCategory,
         adCost: totalAdCost,
         adCostByPlatform,
         interestExpense,
-        totalCosts: teacherCost + totalExpenses + totalAdCost + interestExpense,
+        totalCosts: selected.totalCosts,
+        byBasis: basisSummary,
       },
       summary: {
+        basis: selectedBasis,
         grossProfit,
-        grossMargin: totalRevenue > 0 ? Math.round((grossProfit / totalRevenue) * 10000) / 100 : 0,
+        grossMargin: selected.revenue > 0 ? Math.round((grossProfit / selected.revenue) * 10000) / 100 : 0,
         netProfit,
-        netMargin: totalRevenue > 0 ? Math.round((netProfit / totalRevenue) * 10000) / 100 : 0,
+        netMargin: selected.revenue > 0 ? Math.round((netProfit / selected.revenue) * 10000) / 100 : 0,
+        byBasis: {
+          cash: {
+            grossProfit: basisSummary.cash.revenue - basisSummary.cash.costOfGoodsSold,
+            grossMargin: basisSummary.cash.revenue > 0
+              ? Math.round(((basisSummary.cash.revenue - basisSummary.cash.costOfGoodsSold) / basisSummary.cash.revenue) * 10000) / 100
+              : 0,
+            netProfit: basisSummary.cash.revenue - basisSummary.cash.totalCosts,
+            netMargin: basisSummary.cash.revenue > 0
+              ? Math.round(((basisSummary.cash.revenue - basisSummary.cash.totalCosts) / basisSummary.cash.revenue) * 10000) / 100
+              : 0,
+          },
+          accrual: {
+            grossProfit: basisSummary.accrual.revenue - basisSummary.accrual.costOfGoodsSold,
+            grossMargin: basisSummary.accrual.revenue > 0
+              ? Math.round(((basisSummary.accrual.revenue - basisSummary.accrual.costOfGoodsSold) / basisSummary.accrual.revenue) * 10000) / 100
+              : 0,
+            netProfit: basisSummary.accrual.revenue - basisSummary.accrual.totalCosts,
+            netMargin: basisSummary.accrual.revenue > 0
+              ? Math.round(((basisSummary.accrual.revenue - basisSummary.accrual.totalCosts) / basisSummary.accrual.revenue) * 10000) / 100
+              : 0,
+          },
+        },
       },
     };
   }
 
-  // ════════════════════════════════════════════════════════════════════
-  // RECONCILIATION — Đối soát tài chính
-  // ════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  // RECONCILIATION â€” Äá»‘i soÃ¡t tÃ i chÃ­nh
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   async getReconciliationReport(startDate?: string, endDate?: string): Promise<any> {
     const dateFilter: any = {};
@@ -831,21 +598,23 @@ export class FinancialControlService {
       dateFilter.$lte = end;
     }
     const hasDateFilter = Object.keys(dateFilter).length > 0;
+    const unreconciledFilter: any = { isReconciled: false };
+    if (hasDateFilter) {
+      unreconciledFilter.transactionDate = dateFilter;
+    }
 
     const [bankSummary, fundsSummary, unreconciledCount, walletTotal, pnl, loanSummary] = await Promise.all([
       this.getBankAccountSummary(),
       this.getFundsSummary(),
-      this.bankTransactionModel.countDocuments({ isReconciled: false }),
+      this.bankTransactionModel.countDocuments(unreconciledFilter),
       this.getWalletTotals(),
       this.getProfitAndLoss(startDate, endDate),
-      this.loanModel2.aggregate([
-        { $match: { status: 'ACTIVE' } },
-        { $group: { _id: null, totalDebt: { $sum: '$remainingBalance' }, count: { $sum: 1 } } },
-      ]),
+      this.loanAggregate.getDebtSummary(['ACTIVE']),
     ]);
 
-    const totalLoanDebt = loanSummary[0]?.totalDebt || 0;
-    const activeLoanCount = loanSummary[0]?.count || 0;
+    const totalLoanDebt = loanSummary.totalDebt || 0;
+    const activeLoanCount = loanSummary.count || 0;
+    const walletLiability = walletTotal.totalLiability ?? Math.max(walletTotal.totalBalance || 0, 0);
 
     return {
       bankAccounts: bankSummary,
@@ -860,9 +629,9 @@ export class FinancialControlService {
       healthIndicators: {
         bankBalance: bankSummary.totalBalance,
         fundBalance: fundsSummary.totalBalance,
-        walletLiability: walletTotal.totalBalance,
+        walletLiability,
         loanDebt: totalLoanDebt,
-        netPosition: bankSummary.totalBalance + fundsSummary.totalBalance - walletTotal.totalBalance - totalLoanDebt,
+        netPosition: bankSummary.totalBalance + fundsSummary.totalBalance - walletLiability - totalLoanDebt,
         unreconciledItems: unreconciledCount,
         fundWarnings: fundsSummary.warningCount,
       },
@@ -876,16 +645,49 @@ export class FinancialControlService {
         $group: {
           _id: null,
           totalBalance: { $sum: '$balance' },
+          totalLiability: {
+            $sum: {
+              $cond: [{ $gt: ['$balance', 0] }, '$balance', 0],
+            },
+          },
+          totalReceivable: {
+            $sum: {
+              $abs: {
+                $cond: [{ $lt: ['$balance', 0] }, '$balance', 0],
+              },
+            },
+          },
           count: { $sum: 1 },
         },
       },
     ]);
-    return agg[0] || { totalBalance: 0, count: 0 };
+    return agg[0] || { totalBalance: 0, totalLiability: 0, totalReceivable: 0, count: 0 };
   }
 
-  // ════════════════════════════════════════════════════════════════════
-  // FINANCIAL DASHBOARD — Bảng chỉ số tài chính quản trị
-  // ════════════════════════════════════════════════════════════════════
+  private async getBurnRateOutflows(since: Date): Promise<{
+    payrollTotal6m: number;
+    expenseTotal6m: number;
+    adCostTotal6m: number;
+  }> {
+    const [payrollTotal6m, expenseTotal6m, adCostRows] = await Promise.all([
+      this.payrollAggregate.getPaidTotalSince(since),
+      this.expenseAggregate.getPaidTotalSince(since),
+      this.adCostModel.aggregate([
+        { $match: { date: { $gte: since }, source: { $ne: 'ESTIMATED' } } }, // BUG #5 fix
+        { $group: { _id: null, total: { $sum: '$spend' } } },
+      ]),
+    ]);
+
+    return {
+      payrollTotal6m,
+      expenseTotal6m,
+      adCostTotal6m: adCostRows[0]?.total || 0,
+    };
+  }
+
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  // FINANCIAL DASHBOARD â€” Báº£ng chá»‰ sá»‘ tÃ i chÃ­nh quáº£n trá»‹
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   async getFinancialDashboard(): Promise<any> {
     const now = new Date();
@@ -899,7 +701,6 @@ export class FinancialControlService {
     const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
-
     const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
     const [
@@ -916,7 +717,8 @@ export class FinancialControlService {
       lastMonthRevenue,
       pnl,
       loanDebtSummary,
-      upcomingLoanPayments,
+      upcomingLoanPayments14Days,
+      upcomingLoanPayments30Days,
     ] = await Promise.all([
       // 1. Bank & Fund balances
       this.getBankAccountSummary(),
@@ -932,16 +734,10 @@ export class FinancialControlService {
       this.getWalletTotals(),
 
       // 4. Payroll APPROVED but not PAID
-      this.payrollModel.aggregate([
-        { $match: { status: 'APPROVED' } },
-        { $group: { _id: null, total: { $sum: '$netAmount' }, count: { $sum: 1 } } },
-      ]),
+      this.payrollAggregate.getApprovedPayables(),
 
       // 5. Expenses APPROVED_UNPAID
-      this.expenseModel.aggregate([
-        { $match: { paymentStatus: 'APPROVED_UNPAID' } },
-        { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } },
-      ]),
+      this.expenseAggregate.getApprovedPayables(),
 
       // 6. Order payment frames due within 14 days
       this.orderModel.aggregate([
@@ -969,20 +765,7 @@ export class FinancialControlService {
       ]),
 
       // 7. Average monthly outflows (last 6 months) for burn rate
-      Promise.all([
-        this.payrollModel.aggregate([
-          { $match: { status: 'PAID', paidAt: { $gte: sixMonthsAgo } } },
-          { $group: { _id: null, total: { $sum: '$netAmount' } } },
-        ]),
-        this.expenseModel.aggregate([
-          { $match: { paymentStatus: 'PAID', paidAt: { $gte: sixMonthsAgo } } },
-          { $group: { _id: null, total: { $sum: '$amount' } } },
-        ]),
-        this.adCostModel.aggregate([
-          { $match: { date: { $gte: sixMonthsAgo } } },
-          { $group: { _id: null, total: { $sum: '$spend' } } },
-        ]),
-      ]),
+      this.getBurnRateOutflows(sixMonthsAgo),
 
       // 8. Pending invoices (money coming in)
       this.invoiceModel.aggregate([
@@ -1005,25 +788,12 @@ export class FinancialControlService {
       // 11. P&L for margins
       this.getProfitAndLoss(),
 
-      // 12. Active loans total debt
-      this.loanModel2.aggregate([
-        { $match: { status: 'ACTIVE' } },
-        { $group: { _id: null, totalDebt: { $sum: '$remainingBalance' }, totalPrincipal: { $sum: '$principal' }, count: { $sum: 1 } } },
-      ]),
-
-      // 13. Upcoming loan payments (next 30 days)
-      this.loanPaymentModel.aggregate([
-        {
-          $match: {
-            status: { $in: ['SCHEDULED', 'OVERDUE'] },
-            dueDate: { $lte: in30Days },
-          },
-        },
-        { $group: { _id: null, total: { $sum: '$totalAmount' }, count: { $sum: 1 } } },
-      ]),
+      this.loanAggregate.getDebtSummary(['ACTIVE']),
+      this.loanAggregate.getUpcomingOutstandingSummary(in14Days),
+      this.loanAggregate.getUpcomingOutstandingSummary(in30Days),
     ]);
 
-    // ── Calculate derived metrics ──
+    // â”€â”€ Calculate derived metrics â”€â”€
 
     const bankBalance = bankSummary.totalBalance || 0;
     const fundBalance = fundsSummary.totalBalance || 0;
@@ -1031,27 +801,31 @@ export class FinancialControlService {
     const availableCash = bankBalance + fundBalance;
 
     // Upcoming payables
-    const payrollPayable = pendingPayroll[0]?.total || 0;
-    const payrollPayableCount = pendingPayroll[0]?.count || 0;
-    const expensePayable = pendingExpenses[0]?.total || 0;
-    const expensePayableCount = pendingExpenses[0]?.count || 0;
+    const payrollPayable = pendingPayroll.total || 0;
+    const payrollPayableCount = pendingPayroll.count || 0;
+    const expensePayable = pendingExpenses.total || 0;
+    const expensePayableCount = pendingExpenses.count || 0;
     const orderPayable = upcomingOrderPayments[0]?.total || 0;
     const orderPayableCount = upcomingOrderPayments[0]?.count || 0;
-    const loanPayable = upcomingLoanPayments[0]?.total || 0;
-    const loanPayableCount = upcomingLoanPayments[0]?.count || 0;
-    const totalDebt = loanDebtSummary[0]?.totalDebt || 0;
-    const activeLoanCount = loanDebtSummary[0]?.count || 0;
-    const totalPayable14Days = payrollPayable + expensePayable + orderPayable;
+    const loanPayable14Days = upcomingLoanPayments14Days.total || 0;
+    const loanPayable14DaysCount = upcomingLoanPayments14Days.count || 0;
+    const loanPayable = upcomingLoanPayments30Days.total || 0;
+    const loanPayableCount = upcomingLoanPayments30Days.count || 0;
+    const totalDebt = loanDebtSummary.totalDebt || 0;
+    const activeLoanCount = loanDebtSummary.count || 0;
+    const totalPayable14Days = payrollPayable + expensePayable + orderPayable + loanPayable14Days;
 
     // Burn rate (average monthly)
-    const [payrollTotal6m, expenseTotal6m, adCostTotal6m] = avgMonthlyOutflows;
-    const totalOutflow6m = (payrollTotal6m[0]?.total || 0) + (expenseTotal6m[0]?.total || 0) + (adCostTotal6m[0]?.total || 0);
+    const totalOutflow6m =
+      avgMonthlyOutflows.payrollTotal6m +
+      avgMonthlyOutflows.expenseTotal6m +
+      avgMonthlyOutflows.adCostTotal6m;
     const burnRate = Math.round(totalOutflow6m / 6);
     const operatingReserve3Months = burnRate * 3;
     const runway = burnRate > 0 ? Math.round((availableCash / burnRate) * 10) / 10 : 999;
 
     // Deferred revenue & receivables
-    const walletBalance = walletTotals.totalBalance || 0;
+    const walletBalance = walletTotals.totalLiability ?? Math.max(walletTotals.totalBalance || 0, 0);
     const pendingInvoiceAmount = pendingInvoices[0]?.total || 0;
     const pendingInvoiceCount = pendingInvoices[0]?.count || 0;
 
@@ -1064,7 +838,7 @@ export class FinancialControlService {
 
     // Accounting ratios
     const currentAssets = availableCash + pendingInvoiceAmount;
-    const currentLiabilities = totalPayable14Days + walletBalance + loanPayable;
+    const currentLiabilities = totalPayable14Days + walletBalance;
     const currentRatio = currentLiabilities > 0
       ? Math.round((currentAssets / currentLiabilities) * 100) / 100
       : 999;
@@ -1089,6 +863,8 @@ export class FinancialControlService {
         expensePayableCount,
         orderPayable,
         orderPayableCount,
+        loanPayable: loanPayable14Days,
+        loanPayableCount: loanPayable14DaysCount,
         totalPayable14Days,
         operatingReserve3Months,
         burnRate,
@@ -1135,9 +911,9 @@ export class FinancialControlService {
     };
   }
 
-  // ════════════════════════════════════════════════════════════════════
-  // FINANCIAL OVERVIEW — Tổng quan tài chính cho Director
-  // ════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  // FINANCIAL OVERVIEW â€” Tá»•ng quan tÃ i chÃ­nh cho Director
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   async getFinancialOverview(startDate?: string, endDate?: string): Promise<any> {
     const [bankSummary, fundsSummary, cashFlow, pnl] = await Promise.all([
@@ -1160,9 +936,9 @@ export class FinancialControlService {
     };
   }
 
-  // ════════════════════════════════════════════════════════════════════
-  // FINANCIAL ALERTS — Cảnh báo & Chỉ dẫn hành động
-  // ════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  // FINANCIAL ALERTS â€” Cáº£nh bÃ¡o & Chá»‰ dáº«n hÃ nh Ä‘á»™ng
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   async getFinancialAlerts(): Promise<any> {
     const [
@@ -1209,7 +985,7 @@ export class FinancialControlService {
 
     const alerts: any[] = [];
 
-    // ── 1. Quỹ Marketing vs chi phí ads tối ưu đề xuất ──
+    // â”€â”€ 1. Quá»¹ Marketing vs chi phÃ­ ads tá»‘i Æ°u Ä‘á» xuáº¥t â”€â”€
     const marketingFundBalance = dashboard.cashPosition.marketingFund || 0;
     const optimalAdsBudget = marketingBudgetNeeded.totalOptimalDailyBudget;
     const optimalMonthlyBudget = optimalAdsBudget * 30;
@@ -1225,8 +1001,8 @@ export class FinancialControlService {
           id: 'MARKETING_FUND_LOW',
           severity: marketingFundBalance < optimalMonthlyBudget * 0.5 ? 'CRITICAL' : 'WARNING',
           category: 'MARKETING',
-          title: 'Quỹ Marketing không đủ cho chi phí QC tối ưu',
-          message: `Quỹ Marketing hiện có ${marketingFundBalance.toLocaleString()}đ, nhưng ngân sách QC tối ưu đề xuất là ${optimalMonthlyBudget.toLocaleString()}đ/tháng (${optimalAdsBudget.toLocaleString()}đ/ngày). Chỉ đủ cho ${coverageMonths} tháng.`,
+          title: 'Quá»¹ Marketing khÃ´ng Ä‘á»§ cho chi phÃ­ QC tá»‘i Æ°u',
+          message: `Quá»¹ Marketing hiá»‡n cÃ³ ${marketingFundBalance.toLocaleString()}Ä‘, nhÆ°ng ngÃ¢n sÃ¡ch QC tá»‘i Æ°u Ä‘á» xuáº¥t lÃ  ${optimalMonthlyBudget.toLocaleString()}Ä‘/thÃ¡ng (${optimalAdsBudget.toLocaleString()}Ä‘/ngÃ y). Chá»‰ Ä‘á»§ cho ${coverageMonths} thÃ¡ng.`,
           data: {
             currentBalance: marketingFundBalance,
             optimalDailyBudget: optimalAdsBudget,
@@ -1236,9 +1012,9 @@ export class FinancialControlService {
             groupBreakdown: marketingBudgetNeeded.groupBreakdown,
           },
           actions: [
-            { label: 'Nạp thêm quỹ Marketing', type: 'FUND_DEPOSIT', target: 'MARKETING', amount: deficit },
-            { label: 'Xem phân tích QC & điều chỉnh ngân sách', type: 'NAVIGATE', target: '/ads-analytics' },
-            { label: 'Giảm ngân sách QC các nhóm hiệu quả thấp', type: 'NAVIGATE', target: '/ads-management' },
+            { label: 'Náº¡p thÃªm quá»¹ Marketing', type: 'FUND_DEPOSIT', target: 'MARKETING', amount: deficit },
+            { label: 'Xem phÃ¢n tÃ­ch QC & Ä‘iá»u chá»‰nh ngÃ¢n sÃ¡ch', type: 'NAVIGATE', target: '/ads-analytics' },
+            { label: 'Giáº£m ngÃ¢n sÃ¡ch QC cÃ¡c nhÃ³m hiá»‡u quáº£ tháº¥p', type: 'NAVIGATE', target: '/ads-management' },
           ],
         });
       } else {
@@ -1246,28 +1022,28 @@ export class FinancialControlService {
           id: 'MARKETING_FUND_OK',
           severity: 'INFO',
           category: 'MARKETING',
-          title: 'Quỹ Marketing đủ cho hoạt động QC',
-          message: `Quỹ Marketing đủ cho ${coverageMonths} tháng QC tối ưu (${optimalMonthlyBudget.toLocaleString()}đ/tháng).`,
+          title: 'Quá»¹ Marketing Ä‘á»§ cho hoáº¡t Ä‘á»™ng QC',
+          message: `Quá»¹ Marketing Ä‘á»§ cho ${coverageMonths} thÃ¡ng QC tá»‘i Æ°u (${optimalMonthlyBudget.toLocaleString()}Ä‘/thÃ¡ng).`,
           data: { currentBalance: marketingFundBalance, optimalMonthlyBudget, coverageMonths },
           actions: [],
         });
       }
     }
 
-    // ── 2. Runway cảnh báo ──
+    // â”€â”€ 2. Runway cáº£nh bÃ¡o â”€â”€
     const { runway, burnRate } = dashboard.obligations;
     if (runway < 2) {
       alerts.push({
         id: 'RUNWAY_CRITICAL',
         severity: 'CRITICAL',
         category: 'CASH_FLOW',
-        title: 'Runway nguy hiểm — dưới 2 tháng',
-        message: `Với tốc độ chi ${burnRate.toLocaleString()}đ/tháng, tiền khả dụng chỉ đủ hoạt động ${runway} tháng. Cần hành động ngay.`,
+        title: 'Runway nguy hiá»ƒm â€” dÆ°á»›i 2 thÃ¡ng',
+        message: `Vá»›i tá»‘c Ä‘á»™ chi ${burnRate.toLocaleString()}Ä‘/thÃ¡ng, tiá»n kháº£ dá»¥ng chá»‰ Ä‘á»§ hoáº¡t Ä‘á»™ng ${runway} thÃ¡ng. Cáº§n hÃ nh Ä‘á»™ng ngay.`,
         data: { runway, burnRate, availableCash: dashboard.cashPosition.availableCash },
         actions: [
-          { label: 'Cắt giảm chi phí vận hành', type: 'NAVIGATE', target: '/expenses' },
-          { label: 'Thu hồi công nợ & hóa đơn chờ duyệt', type: 'NAVIGATE', target: '/invoices' },
-          { label: 'Tạm dừng chiến dịch QC hiệu quả thấp', type: 'NAVIGATE', target: '/ads-management' },
+          { label: 'Cáº¯t giáº£m chi phÃ­ váº­n hÃ nh', type: 'NAVIGATE', target: '/expenses' },
+          { label: 'Thu há»“i cÃ´ng ná»£ & hÃ³a Ä‘Æ¡n chá» duyá»‡t', type: 'NAVIGATE', target: '/invoices' },
+          { label: 'Táº¡m dá»«ng chiáº¿n dá»‹ch QC hiá»‡u quáº£ tháº¥p', type: 'NAVIGATE', target: '/ads-management' },
         ],
       });
     } else if (runway < 4) {
@@ -1275,17 +1051,17 @@ export class FinancialControlService {
         id: 'RUNWAY_WARNING',
         severity: 'WARNING',
         category: 'CASH_FLOW',
-        title: 'Runway thấp — dưới 4 tháng',
-        message: `Runway hiện tại ${runway} tháng. Nên duy trì ít nhất 6 tháng dự phòng.`,
+        title: 'Runway tháº¥p â€” dÆ°á»›i 4 thÃ¡ng',
+        message: `Runway hiá»‡n táº¡i ${runway} thÃ¡ng. NÃªn duy trÃ¬ Ã­t nháº¥t 6 thÃ¡ng dá»± phÃ²ng.`,
         data: { runway, burnRate, availableCash: dashboard.cashPosition.availableCash },
         actions: [
-          { label: 'Tối ưu chi phí', type: 'NAVIGATE', target: '/expenses' },
-          { label: 'Đẩy mạnh thu học phí', type: 'NAVIGATE', target: '/orders' },
+          { label: 'Tá»‘i Æ°u chi phÃ­', type: 'NAVIGATE', target: '/expenses' },
+          { label: 'Äáº©y máº¡nh thu há»c phÃ­', type: 'NAVIGATE', target: '/orders' },
         ],
       });
     }
 
-    // ── 3. Dự phòng hoạt động 3 tháng ──
+    // â”€â”€ 3. Dá»± phÃ²ng hoáº¡t Ä‘á»™ng 3 thÃ¡ng â”€â”€
     if (!dashboard.obligations.reserveHealthy) {
       const { operatingReserve3Months, cashAfterObligations } = dashboard.obligations;
       const shortfall = operatingReserve3Months - dashboard.cashPosition.availableCash;
@@ -1293,40 +1069,40 @@ export class FinancialControlService {
         id: 'RESERVE_INSUFFICIENT',
         severity: 'WARNING',
         category: 'RESERVE',
-        title: 'Tiền khả dụng chưa đủ dự phòng 3 tháng',
-        message: `Cần ${operatingReserve3Months.toLocaleString()}đ dự phòng 3 tháng, hiện thiếu ${shortfall.toLocaleString()}đ.`,
+        title: 'Tiá»n kháº£ dá»¥ng chÆ°a Ä‘á»§ dá»± phÃ²ng 3 thÃ¡ng',
+        message: `Cáº§n ${operatingReserve3Months.toLocaleString()}Ä‘ dá»± phÃ²ng 3 thÃ¡ng, hiá»‡n thiáº¿u ${shortfall.toLocaleString()}Ä‘.`,
         data: { required: operatingReserve3Months, shortfall, available: dashboard.cashPosition.availableCash },
         actions: [
-          { label: 'Nạp quỹ dự phòng', type: 'FUND_DEPOSIT', target: 'RESERVE', amount: shortfall },
-          { label: 'Rà soát & cắt chi phí không cần thiết', type: 'NAVIGATE', target: '/expenses' },
+          { label: 'Náº¡p quá»¹ dá»± phÃ²ng', type: 'FUND_DEPOSIT', target: 'RESERVE', amount: shortfall },
+          { label: 'RÃ  soÃ¡t & cáº¯t chi phÃ­ khÃ´ng cáº§n thiáº¿t', type: 'NAVIGATE', target: '/expenses' },
         ],
       });
     }
 
-    // ── 4. Quỹ dưới mức tối thiểu ──
+    // â”€â”€ 4. Quá»¹ dÆ°á»›i má»©c tá»‘i thiá»ƒu â”€â”€
     for (const warning of (fundsSummary.warnings || [])) {
       alerts.push({
         id: `FUND_BELOW_MIN_${warning.fundCode}`,
         severity: 'WARNING',
         category: 'FUND',
-        title: `Quỹ "${warning.name}" dưới mức tối thiểu`,
-        message: `${warning.name} (${warning.fundCode}): Hiện có ${warning.currentBalance.toLocaleString()}đ, tối thiểu ${warning.minimumBalance.toLocaleString()}đ, thiếu ${warning.deficit.toLocaleString()}đ.`,
+        title: `Quá»¹ "${warning.name}" dÆ°á»›i má»©c tá»‘i thiá»ƒu`,
+        message: `${warning.name} (${warning.fundCode}): Hiá»‡n cÃ³ ${warning.currentBalance.toLocaleString()}Ä‘, tá»‘i thiá»ƒu ${warning.minimumBalance.toLocaleString()}Ä‘, thiáº¿u ${warning.deficit.toLocaleString()}Ä‘.`,
         data: warning,
         actions: [
-          { label: `Nạp thêm ${warning.deficit.toLocaleString()}đ`, type: 'FUND_DEPOSIT', target: warning.fundCode, amount: warning.deficit },
+          { label: `Náº¡p thÃªm ${warning.deficit.toLocaleString()}Ä‘`, type: 'FUND_DEPOSIT', target: warning.fundCode, amount: warning.deficit },
         ],
       });
     }
 
-    // ── 5. Nghĩa vụ thanh toán 14 ngày ──
+    // â”€â”€ 5. NghÄ©a vá»¥ thanh toÃ¡n 14 ngÃ y â”€â”€
     const { totalPayable14Days, cashAfterObligations } = dashboard.obligations;
     if (cashAfterObligations < 0) {
       alerts.push({
         id: 'OBLIGATIONS_EXCEED_CASH',
         severity: 'CRITICAL',
         category: 'OBLIGATIONS',
-        title: 'Không đủ tiền thanh toán nghĩa vụ 14 ngày tới',
-        message: `Tổng phải trả ${totalPayable14Days.toLocaleString()}đ trong 14 ngày, nhưng tiền khả dụng chỉ ${dashboard.cashPosition.availableCash.toLocaleString()}đ. Thiếu ${Math.abs(cashAfterObligations).toLocaleString()}đ.`,
+        title: 'KhÃ´ng Ä‘á»§ tiá»n thanh toÃ¡n nghÄ©a vá»¥ 14 ngÃ y tá»›i',
+        message: `Tá»•ng pháº£i tráº£ ${totalPayable14Days.toLocaleString()}Ä‘ trong 14 ngÃ y, nhÆ°ng tiá»n kháº£ dá»¥ng chá»‰ ${dashboard.cashPosition.availableCash.toLocaleString()}Ä‘. Thiáº¿u ${Math.abs(cashAfterObligations).toLocaleString()}Ä‘.`,
         data: {
           totalPayable: totalPayable14Days,
           available: dashboard.cashPosition.availableCash,
@@ -1334,28 +1110,29 @@ export class FinancialControlService {
           payroll: dashboard.obligations.payrollPayable,
           expenses: dashboard.obligations.expensePayable,
           orders: dashboard.obligations.orderPayable,
+          loans: dashboard.obligations.loanPayable,
         },
         actions: [
-          { label: 'Thu hồi công nợ gấp', type: 'NAVIGATE', target: '/invoices' },
-          { label: 'Hoãn chi lương / chi phí nếu có thể', type: 'INFO' },
-          { label: 'Rút quỹ dự phòng', type: 'FUND_WITHDRAW', target: 'RESERVE' },
+          { label: 'Thu há»“i cÃ´ng ná»£ gáº¥p', type: 'NAVIGATE', target: '/invoices' },
+          { label: 'HoÃ£n chi lÆ°Æ¡ng / chi phÃ­ náº¿u cÃ³ thá»ƒ', type: 'INFO' },
+          { label: 'RÃºt quá»¹ dá»± phÃ²ng', type: 'FUND_WITHDRAW', target: 'RESERVE' },
         ],
       });
     }
 
-    // ── 6. Current Ratio thấp ──
+    // â”€â”€ 6. Current Ratio tháº¥p â”€â”€
     const { currentRatio } = dashboard.metrics;
     if (currentRatio < 1) {
       alerts.push({
         id: 'CURRENT_RATIO_DANGER',
         severity: 'CRITICAL',
         category: 'METRICS',
-        title: 'Current Ratio < 1 — Rủi ro mất khả năng thanh toán',
-        message: `Current Ratio = ${currentRatio}. Tài sản ngắn hạn nhỏ hơn nợ ngắn hạn, cần tăng doanh thu hoặc giảm nợ.`,
+        title: 'Current Ratio < 1 â€” Rá»§i ro máº¥t kháº£ nÄƒng thanh toÃ¡n',
+        message: `Current Ratio = ${currentRatio}. TÃ i sáº£n ngáº¯n háº¡n nhá» hÆ¡n ná»£ ngáº¯n háº¡n, cáº§n tÄƒng doanh thu hoáº·c giáº£m ná»£.`,
         data: { currentRatio },
         actions: [
-          { label: 'Đẩy mạnh thu phí & giảm nợ', type: 'NAVIGATE', target: '/orders' },
-          { label: 'Tối ưu chi phí VH', type: 'NAVIGATE', target: '/expenses' },
+          { label: 'Äáº©y máº¡nh thu phÃ­ & giáº£m ná»£', type: 'NAVIGATE', target: '/orders' },
+          { label: 'Tá»‘i Æ°u chi phÃ­ VH', type: 'NAVIGATE', target: '/expenses' },
         ],
       });
     } else if (currentRatio < 1.5) {
@@ -1363,23 +1140,23 @@ export class FinancialControlService {
         id: 'CURRENT_RATIO_LOW',
         severity: 'WARNING',
         category: 'METRICS',
-        title: 'Current Ratio thấp (< 1.5)',
-        message: `Current Ratio = ${currentRatio}. Nên duy trì >= 1.5 để đảm bảo thanh khoản.`,
+        title: 'Current Ratio tháº¥p (< 1.5)',
+        message: `Current Ratio = ${currentRatio}. NÃªn duy trÃ¬ >= 1.5 Ä‘á»ƒ Ä‘áº£m báº£o thanh khoáº£n.`,
         data: { currentRatio },
         actions: [
-          { label: 'Xem chi tiết tài chính', type: 'NAVIGATE', target: '/financial-control' },
+          { label: 'Xem chi tiáº¿t tÃ i chÃ­nh', type: 'NAVIGATE', target: '/financial-control' },
         ],
       });
     }
 
-    // ── 7. Lợi nhuận ròng âm ──
+    // â”€â”€ 7. Lá»£i nhuáº­n rÃ²ng Ã¢m â”€â”€
     if (pnl.summary.netProfit < 0) {
       alerts.push({
         id: 'NET_PROFIT_NEGATIVE',
         severity: pnl.summary.netProfit < -pnl.revenue.total * 0.2 ? 'CRITICAL' : 'WARNING',
         category: 'PROFITABILITY',
-        title: 'Lợi nhuận ròng âm — đang lỗ',
-        message: `Lỗ ròng ${Math.abs(pnl.summary.netProfit).toLocaleString()}đ (biên lợi nhuận ${pnl.summary.netMargin}%). Cần rà soát cơ cấu chi phí.`,
+        title: 'Lá»£i nhuáº­n rÃ²ng Ã¢m â€” Ä‘ang lá»—',
+        message: `Lá»— rÃ²ng ${Math.abs(pnl.summary.netProfit).toLocaleString()}Ä‘ (biÃªn lá»£i nhuáº­n ${pnl.summary.netMargin}%). Cáº§n rÃ  soÃ¡t cÆ¡ cáº¥u chi phÃ­.`,
         data: {
           netProfit: pnl.summary.netProfit,
           netMargin: pnl.summary.netMargin,
@@ -1387,44 +1164,44 @@ export class FinancialControlService {
           totalCosts: pnl.costs.totalCosts,
         },
         actions: [
-          { label: 'Xem P&L chi tiết', type: 'NAVIGATE', target: '/financial-control?tab=pnl' },
-          { label: 'Rà soát chi phí giáo viên', type: 'NAVIGATE', target: '/sessions' },
-          { label: 'Tăng giá hoặc đẩy enrollment', type: 'NAVIGATE', target: '/orders' },
+          { label: 'Xem P&L chi tiáº¿t', type: 'NAVIGATE', target: '/financial-control?tab=pnl' },
+          { label: 'RÃ  soÃ¡t chi phÃ­ giÃ¡o viÃªn', type: 'NAVIGATE', target: '/sessions' },
+          { label: 'TÄƒng giÃ¡ hoáº·c Ä‘áº©y enrollment', type: 'NAVIGATE', target: '/orders' },
         ],
       });
     }
 
-    // ── 8. Giao dịch chưa đối soát ──
+    // â”€â”€ 8. Giao dá»‹ch chÆ°a Ä‘á»‘i soÃ¡t â”€â”€
     if (unreconciledCount > 20) {
       alerts.push({
         id: 'UNRECONCILED_HIGH',
         severity: 'WARNING',
         category: 'RECONCILIATION',
-        title: `${unreconciledCount} giao dịch chưa đối soát`,
-        message: `Có ${unreconciledCount} giao dịch ngân hàng chưa được đối soát. Nên đối soát định kỳ để đảm bảo chính xác sổ sách.`,
+        title: `${unreconciledCount} giao dá»‹ch chÆ°a Ä‘á»‘i soÃ¡t`,
+        message: `CÃ³ ${unreconciledCount} giao dá»‹ch ngÃ¢n hÃ ng chÆ°a Ä‘Æ°á»£c Ä‘á»‘i soÃ¡t. NÃªn Ä‘á»‘i soÃ¡t Ä‘á»‹nh ká»³ Ä‘á»ƒ Ä‘áº£m báº£o chÃ­nh xÃ¡c sá»• sÃ¡ch.`,
         data: { count: unreconciledCount },
         actions: [
-          { label: 'Đối soát giao dịch', type: 'NAVIGATE', target: '/financial-control?tab=bank' },
+          { label: 'Äá»‘i soÃ¡t giao dá»‹ch', type: 'NAVIGATE', target: '/financial-control?tab=bank' },
         ],
       });
     }
 
-    // ── 9. Chi phí chờ thanh toán ──
+    // â”€â”€ 9. Chi phÃ­ chá» thanh toÃ¡n â”€â”€
     if (pendingExpenses > 5) {
       alerts.push({
         id: 'PENDING_EXPENSES',
         severity: 'INFO',
         category: 'EXPENSES',
-        title: `${pendingExpenses} chi phí đã duyệt chưa thanh toán`,
-        message: `Có ${pendingExpenses} khoản chi phí đã được duyệt nhưng chưa thanh toán. Nên xử lý sớm.`,
+        title: `${pendingExpenses} chi phÃ­ Ä‘Ã£ duyá»‡t chÆ°a thanh toÃ¡n`,
+        message: `CÃ³ ${pendingExpenses} khoáº£n chi phÃ­ Ä‘Ã£ Ä‘Æ°á»£c duyá»‡t nhÆ°ng chÆ°a thanh toÃ¡n. NÃªn xá»­ lÃ½ sá»›m.`,
         data: { count: pendingExpenses },
         actions: [
-          { label: 'Xem chi phí chờ thanh toán', type: 'NAVIGATE', target: '/expenses' },
+          { label: 'Xem chi phÃ­ chá» thanh toÃ¡n', type: 'NAVIGATE', target: '/expenses' },
         ],
       });
     }
 
-    // ── 10. Đơn hàng quá hạn thanh toán ──
+    // â”€â”€ 10. ÄÆ¡n hÃ ng quÃ¡ háº¡n thanh toÃ¡n â”€â”€
     const overdueAmount = overdueOrders[0]?.total || 0;
     const overdueCount = overdueOrders[0]?.count || 0;
     if (overdueCount > 0) {
@@ -1432,17 +1209,17 @@ export class FinancialControlService {
         id: 'OVERDUE_PAYMENTS',
         severity: overdueAmount > burnRate * 0.5 ? 'CRITICAL' : 'WARNING',
         category: 'RECEIVABLE',
-        title: `${overdueCount} kỳ thanh toán quá hạn`,
-        message: `Có ${overdueCount} kỳ thanh toán quá hạn, tổng ${overdueAmount.toLocaleString()}đ. Cần nhắc nhở phụ huynh.`,
+        title: `${overdueCount} ká»³ thanh toÃ¡n quÃ¡ háº¡n`,
+        message: `CÃ³ ${overdueCount} ká»³ thanh toÃ¡n quÃ¡ háº¡n, tá»•ng ${overdueAmount.toLocaleString()}Ä‘. Cáº§n nháº¯c nhá»Ÿ phá»¥ huynh.`,
         data: { count: overdueCount, amount: overdueAmount },
         actions: [
-          { label: 'Xem đơn hàng quá hạn', type: 'NAVIGATE', target: '/orders' },
-          { label: 'Gửi nhắc nhở phụ huynh', type: 'INFO' },
+          { label: 'Xem Ä‘Æ¡n hÃ ng quÃ¡ háº¡n', type: 'NAVIGATE', target: '/orders' },
+          { label: 'Gá»­i nháº¯c nhá»Ÿ phá»¥ huynh', type: 'INFO' },
         ],
       });
     }
 
-    // ── 11. Dòng tiền ròng âm liên tục ──
+    // â”€â”€ 11. DÃ²ng tiá»n rÃ²ng Ã¢m liÃªn tá»¥c â”€â”€
     const recentMonths = recentCashFlow.timeline.slice(-3);
     const negativeMonths = recentMonths.filter((m: any) => m.netCashFlow < 0);
     if (negativeMonths.length >= 2) {
@@ -1451,95 +1228,89 @@ export class FinancialControlService {
         id: 'NEGATIVE_CASHFLOW_TREND',
         severity: negativeMonths.length >= 3 ? 'CRITICAL' : 'WARNING',
         category: 'CASH_FLOW',
-        title: `Dòng tiền ròng âm ${negativeMonths.length}/${recentMonths.length} tháng gần đây`,
-        message: `Dòng tiền ròng âm liên tục cho thấy chi tiêu đang vượt thu nhập. Tổng âm: ${totalNegative.toLocaleString()}đ.`,
+        title: `DÃ²ng tiá»n rÃ²ng Ã¢m ${negativeMonths.length}/${recentMonths.length} thÃ¡ng gáº§n Ä‘Ã¢y`,
+        message: `DÃ²ng tiá»n rÃ²ng Ã¢m liÃªn tá»¥c cho tháº¥y chi tiÃªu Ä‘ang vÆ°á»£t thu nháº­p. Tá»•ng Ã¢m: ${totalNegative.toLocaleString()}Ä‘.`,
         data: { negativeMonths: negativeMonths.length, totalNegative, recentMonths },
         actions: [
-          { label: 'Phân tích dòng tiền chi tiết', type: 'NAVIGATE', target: '/financial-control?tab=cashflow' },
-          { label: 'Rà soát các khoản chi lớn', type: 'NAVIGATE', target: '/expenses' },
-          { label: 'Tăng tuyển sinh / marketing', type: 'NAVIGATE', target: '/ads-analytics' },
+          { label: 'PhÃ¢n tÃ­ch dÃ²ng tiá»n chi tiáº¿t', type: 'NAVIGATE', target: '/financial-control?tab=cashflow' },
+          { label: 'RÃ  soÃ¡t cÃ¡c khoáº£n chi lá»›n', type: 'NAVIGATE', target: '/expenses' },
+          { label: 'TÄƒng tuyá»ƒn sinh / marketing', type: 'NAVIGATE', target: '/ads-analytics' },
         ],
       });
     }
 
-    // ── 12. Khoản vay quá hạn ──
-    const loanOverduePayments = await this.loanPaymentModel.aggregate([
-      { $match: { status: 'OVERDUE' } },
-      { $group: { _id: null, total: { $sum: '$totalAmount' }, count: { $sum: 1 } } },
-    ]);
-    const loanOverdueAmount = loanOverduePayments[0]?.total || 0;
-    const loanOverdueCount = loanOverduePayments[0]?.count || 0;
+    // â”€â”€ 12. Khoáº£n vay quÃ¡ háº¡n â”€â”€
+    const loanOverduePayments = await this.loanAggregate.getOverdueOutstandingSummary();
+    const loanOverdueAmount = loanOverduePayments.total || 0;
+    const loanOverdueCount = loanOverduePayments.count || 0;
     if (loanOverdueCount > 0) {
       alerts.push({
         id: 'LOAN_OVERDUE_PAYMENTS',
         severity: loanOverdueAmount > burnRate * 0.3 ? 'CRITICAL' : 'WARNING',
         category: 'LOAN',
-        title: `${loanOverdueCount} kỳ trả nợ vay quá hạn`,
-        message: `Có ${loanOverdueCount} kỳ trả nợ vay quá hạn, tổng ${loanOverdueAmount.toLocaleString()}đ. Cần xử lý ngay để tránh phạt lãi.`,
+        title: `${loanOverdueCount} ká»³ tráº£ ná»£ vay quÃ¡ háº¡n`,
+        message: `CÃ³ ${loanOverdueCount} ká»³ tráº£ ná»£ vay quÃ¡ háº¡n, tá»•ng ${loanOverdueAmount.toLocaleString()}Ä‘. Cáº§n xá»­ lÃ½ ngay Ä‘á»ƒ trÃ¡nh pháº¡t lÃ£i.`,
         data: { count: loanOverdueCount, amount: loanOverdueAmount },
         actions: [
-          { label: 'Xem khoản vay', type: 'NAVIGATE', target: '/loans' },
-          { label: 'Thanh toán ngay', type: 'INFO' },
+          { label: 'Xem khoáº£n vay', type: 'NAVIGATE', target: '/loans' },
+          { label: 'Thanh toÃ¡n ngay', type: 'INFO' },
         ],
       });
     }
 
-    // ── 13. Tỷ lệ nợ cao ──
+    // â”€â”€ 13. Tá»· lá»‡ ná»£ cao â”€â”€
     const loanTotalDebt = dashboard.debtPosition?.totalDebt || 0;
     if (loanTotalDebt > dashboard.cashPosition.availableCash) {
       alerts.push({
         id: 'LOAN_HIGH_DEBT_RATIO',
         severity: loanTotalDebt > dashboard.cashPosition.availableCash * 2 ? 'CRITICAL' : 'WARNING',
         category: 'LOAN',
-        title: 'Tổng nợ vay vượt tiền khả dụng',
-        message: `Tổng nợ vay ${loanTotalDebt.toLocaleString()}đ vượt tiền khả dụng ${dashboard.cashPosition.availableCash.toLocaleString()}đ. Cần cân nhắc chiến lược trả nợ.`,
+        title: 'Tá»•ng ná»£ vay vÆ°á»£t tiá»n kháº£ dá»¥ng',
+        message: `Tá»•ng ná»£ vay ${loanTotalDebt.toLocaleString()}Ä‘ vÆ°á»£t tiá»n kháº£ dá»¥ng ${dashboard.cashPosition.availableCash.toLocaleString()}Ä‘. Cáº§n cÃ¢n nháº¯c chiáº¿n lÆ°á»£c tráº£ ná»£.`,
         data: { totalDebt: loanTotalDebt, availableCash: dashboard.cashPosition.availableCash },
         actions: [
-          { label: 'Xem chi tiết khoản vay', type: 'NAVIGATE', target: '/loans' },
-          { label: 'Xem dòng tiền', type: 'NAVIGATE', target: '/financial-control?tab=cashflow' },
+          { label: 'Xem chi tiáº¿t khoáº£n vay', type: 'NAVIGATE', target: '/loans' },
+          { label: 'Xem dÃ²ng tiá»n', type: 'NAVIGATE', target: '/financial-control?tab=cashflow' },
         ],
       });
     }
 
-    // ── 14. Khoản vay sắp đáo hạn ──
+    // â”€â”€ 14. Khoáº£n vay sáº¯p Ä‘Ã¡o háº¡n â”€â”€
     const in30DaysAlert = new Date(new Date().getTime() + 30 * 24 * 60 * 60 * 1000);
-    const nearMaturityLoans = await this.loanModel2.find({
-      status: 'ACTIVE',
-      endDate: { $lte: in30DaysAlert },
-    }).lean();
+    const nearMaturityLoans = await this.loanAggregate.getNearMaturityLoans(in30DaysAlert);
     for (const loan of nearMaturityLoans) {
       alerts.push({
         id: `LOAN_NEAR_MATURITY_${(loan as any)._id}`,
         severity: 'WARNING',
         category: 'LOAN',
-        title: `Khoản vay ${(loan as any).loanCode} sắp đáo hạn`,
-        message: `Khoản vay từ ${(loan as any).lenderName}, gốc ${(loan as any).principal.toLocaleString()}đ, còn nợ ${(loan as any).remainingBalance.toLocaleString()}đ, đáo hạn ${new Date((loan as any).endDate).toLocaleDateString('vi-VN')}.`,
+        title: `Khoáº£n vay ${(loan as any).loanCode} sáº¯p Ä‘Ã¡o háº¡n`,
+        message: `Khoáº£n vay tá»« ${(loan as any).lenderName}, gá»‘c ${(loan as any).principal.toLocaleString()}Ä‘, cÃ²n ná»£ ${(loan as any).remainingBalance.toLocaleString()}Ä‘, Ä‘Ã¡o háº¡n ${new Date((loan as any).endDate).toLocaleDateString('vi-VN')}.`,
         data: { loanCode: (loan as any).loanCode, remainingBalance: (loan as any).remainingBalance, endDate: (loan as any).endDate },
         actions: [
-          { label: 'Xem khoản vay', type: 'NAVIGATE', target: '/loans' },
+          { label: 'Xem khoáº£n vay', type: 'NAVIGATE', target: '/loans' },
         ],
       });
     }
 
-    // ── 15. Tăng trưởng doanh thu giảm ──
+    // â”€â”€ 15. TÄƒng trÆ°á»Ÿng doanh thu giáº£m â”€â”€
     const { revenueGrowth } = dashboard.metrics;
     if (revenueGrowth < -10) {
       alerts.push({
         id: 'REVENUE_DECLINING',
         severity: revenueGrowth < -30 ? 'CRITICAL' : 'WARNING',
         category: 'REVENUE',
-        title: `Doanh thu giảm ${Math.abs(revenueGrowth)}% so với tháng trước`,
-        message: `Tháng trước: ${dashboard.metrics.lastMonthRevenue.toLocaleString()}đ → Tháng này: ${dashboard.metrics.thisMonthRevenue.toLocaleString()}đ (${revenueGrowth}%).`,
+        title: `Doanh thu giáº£m ${Math.abs(revenueGrowth)}% so vá»›i thÃ¡ng trÆ°á»›c`,
+        message: `ThÃ¡ng trÆ°á»›c: ${dashboard.metrics.lastMonthRevenue.toLocaleString()}Ä‘ â†’ ThÃ¡ng nÃ y: ${dashboard.metrics.thisMonthRevenue.toLocaleString()}Ä‘ (${revenueGrowth}%).`,
         data: { revenueGrowth, thisMonth: dashboard.metrics.thisMonthRevenue, lastMonth: dashboard.metrics.lastMonthRevenue },
         actions: [
-          { label: 'Tăng chiến dịch QC', type: 'NAVIGATE', target: '/ads-management' },
-          { label: 'Xem phân tích leads', type: 'NAVIGATE', target: '/leads' },
-          { label: 'Đẩy mạnh tuyển sinh', type: 'NAVIGATE', target: '/orders' },
+          { label: 'TÄƒng chiáº¿n dá»‹ch QC', type: 'NAVIGATE', target: '/ads-management' },
+          { label: 'Xem phÃ¢n tÃ­ch leads', type: 'NAVIGATE', target: '/leads' },
+          { label: 'Äáº©y máº¡nh tuyá»ƒn sinh', type: 'NAVIGATE', target: '/orders' },
         ],
       });
     }
 
-    // Sort: CRITICAL → WARNING → INFO
+    // Sort: CRITICAL â†’ WARNING â†’ INFO
     const severityOrder: Record<string, number> = { CRITICAL: 0, WARNING: 1, INFO: 2 };
     alerts.sort((a, b) => (severityOrder[a.severity] ?? 3) - (severityOrder[b.severity] ?? 3));
 
@@ -1559,10 +1330,105 @@ export class FinancialControlService {
   }
 
   /**
-   * Tính ngân sách marketing tối ưu = tổng chi phí ads đề xuất tối ưu từ các nhóm QC
-   * Dùng logarithmic curve fitting giống ads.service
+   * TÃ­nh ngÃ¢n sÃ¡ch marketing tá»‘i Æ°u = tá»•ng chi phÃ­ ads Ä‘á» xuáº¥t tá»‘i Æ°u tá»« cÃ¡c nhÃ³m QC
+   * DÃ¹ng logarithmic curve fitting giá»‘ng ads.service
    */
   private async calculateOptimalMarketingBudget(): Promise<{
+    totalOptimalDailyBudget: number;
+    groupBreakdown: any[];
+  }> {
+    if (!this.adsService) {
+      return this.calculateOptimalMarketingBudgetLegacy();
+    }
+
+    try {
+      const now = new Date();
+      const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+      const start = new Date(end);
+      start.setUTCDate(start.getUTCDate() - 29);
+
+      const [activeGroups, recentSpend] = await Promise.all([
+        this.adGroupModel.find({ status: 'ACTIVE' }).lean(),
+        this.adCostModel.aggregate([
+          { $match: { date: { $gte: start, $lte: end } } },
+          { $group: { _id: null, totalSpend: { $sum: { $ifNull: ['$spend', 0] } } } },
+        ]),
+      ]);
+
+      if (activeGroups.length === 0) {
+        return { totalOptimalDailyBudget: 0, groupBreakdown: [] };
+      }
+
+      const configuredBudget = activeGroups
+        .reduce((sum, group: any) => sum + Number(group.dailyBudget || 0), 0);
+      const recentAverageBudget = Math.round(Number(recentSpend[0]?.totalSpend || 0) / 30);
+      const baselineBudget = Math.max(0, configuredBudget, recentAverageBudget);
+
+      const suggestionResult = await this.adsService.getSuggestions(
+        this.formatDateOnlyUtc(start),
+        this.formatDateOnlyUtc(end),
+        baselineBudget,
+      );
+
+      const groupBreakdown = (Array.isArray(suggestionResult?.suggestions)
+        ? suggestionResult.suggestions
+        : [])
+        .map((row: any) => ({
+          adGroupId: row.adGroupId,
+          adGroupName: row.adGroupName || '',
+          platform: row.platform || '',
+          currentDailySpend: Math.round(Number(row.currentDailySpend || 0)),
+          optimalDailySpend: Math.round(Number(row.suggestedDailySpend || 0)),
+          changePercent: Number.isFinite(row.changePercent) ? row.changePercent : 0,
+          confidence: row.confidence || 'LOW',
+          reason: this.buildSuggestionReason(row),
+        }));
+
+      const included = new Set(groupBreakdown.map((row: any) => String(row.adGroupId)));
+      for (const group of activeGroups as any[]) {
+        const gId = String(group._id);
+        if (included.has(gId)) continue;
+        const dailyBudget = Math.round(Number(group.dailyBudget || 0));
+        groupBreakdown.push({
+          adGroupId: gId,
+          adGroupName: group.name || '',
+          platform: group.platform || '',
+          currentDailySpend: 0,
+          optimalDailySpend: dailyBudget,
+          changePercent: 0,
+          confidence: 'LOW',
+          reason: 'No recent data, fallback to configured daily budget',
+        });
+      }
+
+      const totalFromSuggestions = Number(suggestionResult?.totalSuggestedDailySpend);
+      const totalOptimalDailyBudget = Number.isFinite(totalFromSuggestions)
+        ? Math.round(totalFromSuggestions)
+        : groupBreakdown.reduce((sum: number, row: any) => sum + Number(row.optimalDailySpend || 0), 0);
+
+      return { totalOptimalDailyBudget, groupBreakdown };
+    } catch {
+      return this.calculateOptimalMarketingBudgetLegacy();
+    }
+  }
+
+  private formatDateOnlyUtc(date: Date): string {
+    return date.toISOString().slice(0, 10);
+  }
+
+  private buildSuggestionReason(row: any): string {
+    const dataPoints = Number(row?.dataPoints || 0);
+    if (dataPoints < 7) {
+      return 'Insufficient data (< 7 days)';
+    }
+
+    const changePercent = Number(row?.changePercent || 0);
+    if (changePercent > 0) return 'Increase budget by marginal net-profit signal';
+    if (changePercent < 0) return 'Reduce budget by marginal net-profit signal';
+    return 'Keep current budget level';
+  }
+
+  private async calculateOptimalMarketingBudgetLegacy(): Promise<{
     totalOptimalDailyBudget: number;
     groupBreakdown: any[];
   }> {
@@ -1641,7 +1507,7 @@ export class FinancialControlService {
       const currentAvgSpend = points.length > 0 ? points.reduce((s, p) => s + p.spend, 0) / points.length : 0;
 
       if (points.length < 7) {
-        // Not enough data — use current average as suggestion
+        // Not enough data â€” use current average as suggestion
         groupBreakdown.push({
           adGroupId: gId,
           adGroupName: data.name,
@@ -1649,7 +1515,7 @@ export class FinancialControlService {
           currentDailySpend: Math.round(currentAvgSpend),
           optimalDailySpend: Math.round(currentAvgSpend),
           confidence: 'LOW',
-          reason: 'Chưa đủ dữ liệu (< 7 ngày)',
+          reason: 'ChÆ°a Ä‘á»§ dá»¯ liá»‡u (< 7 ngÃ y)',
         });
         totalOptimal += Math.round(currentAvgSpend);
         continue;
@@ -1663,8 +1529,8 @@ export class FinancialControlService {
       const orderFit = this.fitLogCurveInternal(xValues, yOrders);
       const revFit = this.fitLogCurveInternal(xValues, yRevenue);
 
-      // Find optimal: maximize (revenue - spend) → marginal revenue = 1
-      // d(revenue)/d(spend) = revA / (spend + 1) = 1 → spend = revA - 1
+      // Find optimal: maximize (revenue - spend) â†’ marginal revenue = 1
+      // d(revenue)/d(spend) = revA / (spend + 1) = 1 â†’ spend = revA - 1
       let optimalSpend = currentAvgSpend;
 
       if (revFit.a > 1) {
@@ -1689,10 +1555,10 @@ export class FinancialControlService {
         changePercent: currentAvgSpend > 0 ? Math.round(((rounded - currentAvgSpend) / currentAvgSpend) * 100) : 0,
         confidence: orderFit.rSquared >= 0.5 ? 'HIGH' : orderFit.rSquared >= 0.2 ? 'MEDIUM' : 'LOW',
         reason: rounded > currentAvgSpend
-          ? 'Tăng ngân sách để tối ưu chuyển đổi'
+          ? 'TÄƒng ngÃ¢n sÃ¡ch Ä‘á»ƒ tá»‘i Æ°u chuyá»ƒn Ä‘á»•i'
           : rounded < currentAvgSpend
-          ? 'Giảm ngân sách do hiệu quả biên giảm'
-          : 'Giữ nguyên ngân sách hiện tại',
+          ? 'Giáº£m ngÃ¢n sÃ¡ch do hiá»‡u quáº£ biÃªn giáº£m'
+          : 'Giá»¯ nguyÃªn ngÃ¢n sÃ¡ch hiá»‡n táº¡i',
       });
       totalOptimal += rounded;
     }
@@ -1709,7 +1575,7 @@ export class FinancialControlService {
           currentDailySpend: 0,
           optimalDailySpend: dailyBudget,
           confidence: 'LOW',
-          reason: 'Chưa có dữ liệu chi phí — dùng budget đã cài đặt',
+          reason: 'ChÆ°a cÃ³ dá»¯ liá»‡u chi phÃ­ â€” dÃ¹ng budget Ä‘Ã£ cÃ i Ä‘áº·t',
         });
         totalOptimal += dailyBudget;
       }
@@ -1744,9 +1610,9 @@ export class FinancialControlService {
     return { a, b, rSquared: Math.max(0, rSquared) };
   }
 
-  // ════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // AGING REPORT (Phase 1.4)
-  // ════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   async getAgingReport() {
     const now = new Date();
@@ -1790,7 +1656,9 @@ export class FinancialControlService {
       }
       const entry = agingMap.get(key)!;
       entry.totalDebt += Math.abs(w.balance);
-      entry.items.push({ type: 'WALLET_DEBT', amount: Math.abs(w.balance), date: (w as any).updatedAt || now });
+      const walletDebtDate = (w as any).updatedAt || now;
+      if (walletDebtDate < entry.oldestDate) entry.oldestDate = walletDebtDate;
+      entry.items.push({ type: 'WALLET_DEBT', amount: Math.abs(w.balance), date: walletDebtDate });
     }
 
     // Process unpaid invoices
@@ -1860,57 +1728,216 @@ export class FinancialControlService {
     };
   }
 
-  // ════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // BANK RECONCILIATION (Phase 2.7)
-  // ════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   async getReconciliation(bankAccountId: string, fromDate: string, toDate: string) {
+    if (!bankAccountId) {
+      throw new BadRequestException('bankAccountId is required');
+    }
+    if (!Types.ObjectId.isValid(bankAccountId)) {
+      throw new BadRequestException('Invalid bankAccountId');
+    }
+    if (!fromDate || !toDate) {
+      throw new BadRequestException('fromDate and toDate are required');
+    }
+
+    const from = new Date(fromDate);
+    const to = new Date(toDate);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+      throw new BadRequestException('Invalid fromDate/toDate');
+    }
+    if (from.getTime() > to.getTime()) {
+      throw new BadRequestException('fromDate must be less than or equal to toDate');
+    }
+    to.setHours(23, 59, 59, 999);
+
     const dateFilter = {
-      $gte: new Date(fromDate),
-      $lte: new Date(toDate),
+      $gte: from,
+      $lte: to,
     };
 
-    // Bank transactions
+    // Only reconcile inflow bank rows against wallet top-up ledger rows.
     const bankTxns = await this.bankTransactionModel.find({
       bankAccountId: new Types.ObjectId(bankAccountId),
+      type: { $in: ['DEPOSIT', 'TRANSFER_IN'] },
       transactionDate: dateFilter,
     }).sort({ transactionDate: 1 }).lean();
 
-    // Ledger entries (TOP_UP approved) in same period
+    const ledgerFrom = new Date(from);
+    ledgerFrom.setDate(ledgerFrom.getDate() - 2);
+    const ledgerTo = new Date(to);
+    ledgerTo.setDate(ledgerTo.getDate() + 2);
+    const ledgerDateFilter = {
+      $gte: ledgerFrom,
+      $lte: ledgerTo,
+    };
+
+    // Use bank-transfer top-ups only and support both approvedAt/createdAt for legacy data.
     const ledgerEntries = await this.ledgerModel.find({
       type: 'TOP_UP',
       status: 'APPROVED',
-      createdAt: dateFilter,
+      paymentMethod: 'BANK_TRANSFER',
+      $or: [
+        { approvedAt: ledgerDateFilter },
+        { createdAt: ledgerDateFilter },
+      ],
     }).lean();
 
-    // Match by amount + date proximity (±1 day) + reference
+    const normalizedBankAccountId = bankAccountId.trim();
+
+    const normalizeRef = (value: unknown): string =>
+      typeof value === 'string' ? value.trim().toUpperCase() : '';
+
+    const isUsableRef = (value: string): boolean =>
+      value.length >= 4 && value !== 'CONFIRMED';
+
+    const extractLedgerRefs = (ledger: any): string[] => {
+      const refs = new Set<string>();
+      const directRef = normalizeRef(ledger?.transactionRef);
+      if (isUsableRef(directRef)) {
+        refs.add(directRef);
+      }
+
+      const notes = typeof ledger?.accountingNotes === 'string' ? ledger.accountingNotes : '';
+      const refRegex = /BANK_MATCHED_REF:\s*([^|]+)/gi;
+      let match: RegExpExecArray | null;
+      while ((match = refRegex.exec(notes)) !== null) {
+        const noteRef = normalizeRef(match[1]);
+        if (isUsableRef(noteRef)) {
+          refs.add(noteRef);
+        }
+      }
+
+      return Array.from(refs);
+    };
+
+    const extractLedgerBankAccountIds = (ledger: any): string[] => {
+      const ids = new Set<string>();
+      const notes = typeof ledger?.accountingNotes === 'string' ? ledger.accountingNotes : '';
+      const accountIdRegex = /BANK_MATCHED_BANK_ACCOUNT_ID:\s*([^|]+)/gi;
+      let match: RegExpExecArray | null;
+      while ((match = accountIdRegex.exec(notes)) !== null) {
+        const id = (match[1] || '').trim();
+        if (Types.ObjectId.isValid(id)) {
+          ids.add(id);
+        }
+      }
+      return Array.from(ids);
+    };
+
+    // Exclude entries explicitly tagged to another bank account from this reconciliation run.
+    const scopedLedgerEntries = ledgerEntries.filter((ledger: any) => {
+      const taggedIds = extractLedgerBankAccountIds(ledger);
+      return taggedIds.length === 0 || taggedIds.includes(normalizedBankAccountId);
+    });
+
+    const hasReferenceMatch = (bank: any, ledger: any): boolean => {
+      const bankText = [bank?.reference, bank?.description]
+        .map(v => normalizeRef(v))
+        .filter(Boolean)
+        .join(' ');
+      if (!bankText) return false;
+
+      const ledgerRefs = extractLedgerRefs(ledger);
+      if (ledgerRefs.length === 0) return false;
+      return ledgerRefs.some(ref => bankText.includes(ref));
+    };
+
+    const toTimestamp = (value: unknown): number | null => {
+      if (!value) return null;
+      const ts = new Date(value as any).getTime();
+      return Number.isNaN(ts) ? null : ts;
+    };
+
     const matched: { bank: any; ledger: any }[] = [];
     const usedBankIds = new Set<string>();
     const usedLedgerIds = new Set<string>();
 
-    for (const bank of bankTxns) {
-      const bankDate = new Date((bank as any).transactionDate).getTime();
-      const bankAmount = (bank as any).amount || 0;
+    const findBestLedgerMatch = (bank: any, requireReferenceMatch: boolean): any | null => {
+      const bankDate = toTimestamp(bank?.transactionDate);
+      if (bankDate == null) return null;
+      const bankAmount = Number(bank?.amount || 0);
 
-      for (const ledger of ledgerEntries) {
-        if (usedLedgerIds.has((ledger as any)._id.toString())) continue;
+      let best: any | null = null;
+      let bestDayDiff = Number.POSITIVE_INFINITY;
+      let bestAmountDiff = Number.POSITIVE_INFINITY;
 
-        const ledgerDate = new Date((ledger as any).createdAt).getTime();
-        const ledgerAmount = (ledger as any).amount || 0;
+      for (const ledger of scopedLedgerEntries) {
+        const ledgerId = (ledger as any)?._id?.toString?.();
+        if (!ledgerId || usedLedgerIds.has(ledgerId)) continue;
+
+        const ledgerBankAccountIds = extractLedgerBankAccountIds(ledger);
+        // If ledger already tagged to a specific bank account, only match that account.
+        if (ledgerBankAccountIds.length > 0 && !ledgerBankAccountIds.includes(normalizedBankAccountId)) {
+          continue;
+        }
+
+        const ledgerDate = toTimestamp((ledger as any).approvedAt || (ledger as any).createdAt);
+        if (ledgerDate == null) continue;
+
+        const ledgerAmount = Number((ledger as any).amount || 0);
+        const amountDiff = Math.abs(bankAmount - ledgerAmount);
+        if (amountDiff >= 1) continue;
+
         const dayDiff = Math.abs(bankDate - ledgerDate) / (1000 * 60 * 60 * 24);
+        const allowedDayDiff = requireReferenceMatch ? 2 : 1;
+        if (dayDiff > allowedDayDiff) continue;
 
-        // Match criteria: same amount and within 1 day
-        if (Math.abs(bankAmount - ledgerAmount) < 1 && dayDiff <= 1) {
-          matched.push({ bank, ledger });
-          usedBankIds.add((bank as any)._id.toString());
-          usedLedgerIds.add((ledger as any)._id.toString());
-          break;
+        const ledgerRefs = extractLedgerRefs(ledger);
+        if (requireReferenceMatch && !hasReferenceMatch(bank, ledger)) {
+          continue;
+        }
+        // Prevent fallback pass from stealing entries that already carry explicit bank refs.
+        if (!requireReferenceMatch && ledgerRefs.length > 0) {
+          continue;
+        }
+
+        if (
+          best == null ||
+          dayDiff < bestDayDiff ||
+          (dayDiff === bestDayDiff && amountDiff < bestAmountDiff)
+        ) {
+          best = ledger;
+          bestDayDiff = dayDiff;
+          bestAmountDiff = amountDiff;
         }
       }
+
+      return best;
+    };
+
+    // Pass 1: reference-based matches first.
+    for (const bank of bankTxns) {
+      const bankId = (bank as any)?._id?.toString?.();
+      if (!bankId || usedBankIds.has(bankId)) continue;
+
+      const bestRefMatch = findBestLedgerMatch(bank, true);
+      if (!bestRefMatch) continue;
+
+      const ledgerId = (bestRefMatch as any)._id.toString();
+      matched.push({ bank, ledger: bestRefMatch });
+      usedBankIds.add(bankId);
+      usedLedgerIds.add(ledgerId);
+    }
+
+    // Pass 2: fallback to amount + nearest date.
+    for (const bank of bankTxns) {
+      const bankId = (bank as any)?._id?.toString?.();
+      if (!bankId || usedBankIds.has(bankId)) continue;
+
+      const bestFallbackMatch = findBestLedgerMatch(bank, false);
+      if (!bestFallbackMatch) continue;
+
+      const ledgerId = (bestFallbackMatch as any)._id.toString();
+      matched.push({ bank, ledger: bestFallbackMatch });
+      usedBankIds.add(bankId);
+      usedLedgerIds.add(ledgerId);
     }
 
     const unmatchedBank = bankTxns.filter((b: any) => !usedBankIds.has(b._id.toString()));
-    const unmatchedLedger = ledgerEntries.filter((l: any) => !usedLedgerIds.has(l._id.toString()));
+    const unmatchedLedger = scopedLedgerEntries.filter((l: any) => !usedLedgerIds.has(l._id.toString()));
 
     const matchedAmount = matched.reduce((s, m) => s + ((m.bank as any).amount || 0), 0);
     const unmatchedBankAmount = unmatchedBank.reduce((s, b: any) => s + (b.amount || 0), 0);
@@ -1922,7 +1949,9 @@ export class FinancialControlService {
         ledgerEntry: m.ledger,
       })),
       unmatchedBank,
+      // Keep both keys for compatibility with different frontend consumers.
       unmatchedLedger,
+      unmatchedSystem: unmatchedLedger,
       summary: {
         matchedCount: matched.length,
         matchedAmount,
@@ -1930,59 +1959,66 @@ export class FinancialControlService {
         unmatchedBankAmount,
         unmatchedLedgerCount: unmatchedLedger.length,
         unmatchedLedgerAmount,
+        unmatchedSystemCount: unmatchedLedger.length,
+        unmatchedSystemAmount: unmatchedLedgerAmount,
         variance: unmatchedBankAmount - unmatchedLedgerAmount,
       },
     };
   }
 
-  // ════════════════════════════════════════════════════════════════════
   // BALANCE SHEET (Phase 3.7)
-  // ════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   async getBalanceSheet() {
     // Assets
-    const bankAccounts = await this.bankAccountModel.find({ isActive: true }).lean();
-    const totalBankBalance = bankAccounts.reduce((s, a: any) => s + (a.balance || 0), 0);
+    const bankAccounts = await this.bankAccountModel.find({ status: 'ACTIVE' }).lean();
+    const totalBankBalance = bankAccounts.reduce((s, a: any) => s + (a.currentBalance || 0), 0);
 
     const wallets = await this.walletModel.find({ status: 'ACTIVE' }).lean();
-    const totalWalletBalance = wallets.reduce((s, w: any) => s + Math.max(w.balance || 0, 0), 0);
+    const totalWalletLiability = wallets.reduce((s, w: any) => s + Math.max(w.balance || 0, 0), 0);
     const totalWalletReceivable = wallets.reduce((s, w: any) => s + Math.abs(Math.min(w.balance || 0, 0)), 0);
 
     const funds = await this.fundModel.find({ status: 'ACTIVE' }).lean();
-    const totalFundBalance = funds.reduce((s, f: any) => s + (f.balance || 0), 0);
+    const totalFundBalance = funds.reduce((s, f: any) => s + (f.currentBalance || 0), 0);
 
-    const totalAssets = totalBankBalance + totalWalletBalance + totalFundBalance + totalWalletReceivable;
+    // Wallet positive balances are deferred revenue liability, not asset.
+    const totalAssets = totalBankBalance + totalFundBalance + totalWalletReceivable;
 
     // Liabilities
-    const loansOutstanding = await this.loanModel2.find({ status: { $in: ['ACTIVE', 'OVERDUE'] } }).lean();
-    const totalLoans = loansOutstanding.reduce((s, l: any) => s + ((l.amount || 0) - (l.paidAmount || 0)), 0);
+    const loansOutstanding = await this.loanAggregate.getDebtSummary(['ACTIVE']);
+    const totalLoans = loansOutstanding.totalDebt || 0;
 
-    const pendingPayroll = await this.payrollModel.find({ status: { $in: ['PENDING', 'APPROVED'] } }).lean();
-    const totalPendingPayroll = pendingPayroll.reduce((s, p: any) => s + (p.netAmount || 0), 0);
+    const [pendingPayroll, pendingExpenses] = await Promise.all([
+      this.payrollAggregate.getPendingLiabilities(),
+      this.expenseAggregate.getPendingLiabilities(),
+    ]);
+    const totalPendingPayroll = pendingPayroll.total || 0;
+    const totalPendingExpenses = pendingExpenses.total || 0;
 
-    const pendingExpenses = await this.expenseModel.find({ paymentStatus: { $in: ['PENDING', 'APPROVED'] } }).lean();
-    const totalPendingExpenses = pendingExpenses.reduce((s, e: any) => s + (e.amount || 0), 0);
-
-    const totalLiabilities = totalLoans + totalPendingPayroll + totalPendingExpenses;
+    const totalLiabilities = totalLoans + totalPendingPayroll + totalPendingExpenses + totalWalletLiability;
 
     const equity = totalAssets - totalLiabilities;
 
     return {
       assets: {
-        bankAccounts: bankAccounts.map((a: any) => ({ name: a.bankName, accountNumber: a.accountNumber, balance: a.balance })),
+        bankAccounts: bankAccounts.map((a: any) => ({
+          name: a.bankName,
+          accountNumber: a.accountNumber,
+          balance: a.currentBalance,
+        })),
         totalBankBalance,
-        totalWalletBalance,
         totalWalletReceivable,
         totalFundBalance,
         totalAssets,
       },
       liabilities: {
+        totalWalletLiability,
         totalLoans,
-        loansCount: loansOutstanding.length,
+        loansCount: loansOutstanding.count || 0,
         totalPendingPayroll,
-        payrollCount: pendingPayroll.length,
+        payrollCount: pendingPayroll.count || 0,
         totalPendingExpenses,
-        expensesCount: pendingExpenses.length,
+        expensesCount: pendingExpenses.count || 0,
         totalLiabilities,
       },
       equity,
@@ -1990,9 +2026,9 @@ export class FinancialControlService {
     };
   }
 
-  // ════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // TAX EXPORT (Phase 3.8)
-  // ════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   async getTaxReport(year: number) {
     const months: any[] = [];
@@ -2005,28 +2041,28 @@ export class FinancialControlService {
       // Revenue
       const invoices = await this.invoiceModel.find({
         status: 'APPROVED',
-        approvedAt: { $gte: start, $lte: end },
+        paymentDate: { $gte: start, $lte: end },
       }).lean();
       const revenue = invoices.reduce((s, i: any) => s + (i.amount || 0), 0);
 
       // Expenses by category
-      const expenses = await this.expenseModel.find({
-        paymentStatus: 'PAID',
-        paidAt: { $gte: start, $lte: end },
-      }).lean();
-      const totalExpenses = expenses.reduce((s, e: any) => s + (e.amount || 0), 0);
+      const expenseRows = await this.expenseAggregate.getPaidCategorySummary({
+        $gte: start,
+        $lte: end,
+      });
+      const totalExpenses = expenseRows.reduce((s, e: any) => s + (e.totalAmount || 0), 0);
       const expenseByCategory: Record<string, number> = {};
-      for (const exp of expenses) {
-        const cat = (exp as any).category || 'OTHER';
-        expenseByCategory[cat] = (expenseByCategory[cat] || 0) + ((exp as any).amount || 0);
+      for (const row of expenseRows) {
+        const cat = (row as any)._id || 'OTHER';
+        expenseByCategory[cat] = (expenseByCategory[cat] || 0) + ((row as any).totalAmount || 0);
       }
 
       // Payroll
-      const payrolls = await this.payrollModel.find({
-        status: 'PAID',
-        paidAt: { $gte: start, $lte: end },
-      }).lean();
-      const totalPayroll = payrolls.reduce((s, p: any) => s + (p.netAmount || 0), 0);
+      const payrollSummary = await this.payrollAggregate.getPaidSummary({
+        $gte: start,
+        $lte: end,
+      });
+      const totalPayroll = payrollSummary.total || 0;
 
       months.push({
         month: monthLabel,
@@ -2048,3 +2084,5 @@ export class FinancialControlService {
     return { year, months, summary: yearSummary };
   }
 }
+
+

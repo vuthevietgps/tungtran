@@ -42,6 +42,7 @@ export interface SessionItem {
     homework?: string;
     additionalNotes?: string;
     submittedAt?: string;
+    isLateSubmission?: boolean;
   };
   hasTeachingReport?: boolean;
   createdAt?: string;
@@ -52,6 +53,7 @@ export interface SessionQueryParams {
   studentId?: string;
   teacherId?: string;
   status?: string;
+  hasReport?: 'true' | 'false';
   fromDate?: string;
   toDate?: string;
   page?: number;
@@ -182,17 +184,12 @@ export class SessionService {
     }
   }
 
-  async submitTeachingReport(id: string, payload: any): Promise<boolean> {
-    try {
-      await firstValueFrom(
-        this.http.patch(`${environment.apiBase}/sessions/${id}/teaching-report`, payload, {
-          withCredentials: true,
-        }),
-      );
-      return true;
-    } catch {
-      return false;
-    }
+  async submitTeachingReport(id: string, payload: any): Promise<void> {
+    await firstValueFrom(
+      this.http.patch(`${environment.apiBase}/sessions/${id}/teaching-report`, payload, {
+        withCredentials: true,
+      }),
+    );
   }
 
   async getSessionsPendingReport(params: SessionQueryParams = {}): Promise<{ data: SessionItem[]; meta: any }> {
@@ -201,6 +198,20 @@ export class SessionService {
       return await firstValueFrom(
         this.http.get<{ data: SessionItem[]; meta: any }>(
           `${environment.apiBase}/sessions/my-sessions/pending-report`,
+          { params: httpParams, withCredentials: true },
+        ),
+      );
+    } catch {
+      return { data: [], meta: {} };
+    }
+  }
+
+  async getSessionsCompletedReport(params: SessionQueryParams = {}): Promise<{ data: SessionItem[]; meta: any }> {
+    const httpParams = this.buildParams(params);
+    try {
+      return await firstValueFrom(
+        this.http.get<{ data: SessionItem[]; meta: any }>(
+          `${environment.apiBase}/sessions/my-sessions/completed-report`,
           { params: httpParams, withCredentials: true },
         ),
       );

@@ -24,13 +24,33 @@ export class InvoicesService {
     @InjectConnection() private readonly connection: Connection,
   ) {}
 
+  private getActorId(actor?: JwtPayload): string {
+    return String(actor?.sub ?? actor?._id ?? (actor as any)?.userId ?? '');
+  }
+
+  private assertSaleInvoiceAccess(invoice: any, actor?: JwtPayload): void {
+    if (actor?.role !== Role.SALE) return;
+    const actorId = this.getActorId(actor);
+    const saleId =
+      invoice?.saleId?._id?.toString?.() ??
+      invoice?.saleId?.toString?.() ??
+      null;
+    const createdById =
+      invoice?.createdBy?._id?.toString?.() ??
+      invoice?.createdBy?.toString?.() ??
+      null;
+    if (saleId === actorId || createdById === actorId) return;
+    throw new NotFoundException('Hoa don khong ton tai');
+  }
+
   async create(dto: CreateInvoiceDto, actor: JwtPayload) {
+    const actorId = this.getActorId(actor);
     const existingInvoice = await this.invoiceModel.findOne({ invoiceNumber: dto.invoiceNumber });
     if (existingInvoice) {
-      throw new ConflictException('Số hóa đơn đã tồn tại');
+      throw new ConflictException('Sá»‘ hÃ³a Ä‘Æ¡n Ä‘Ã£ tá»“n táº¡i');
     }
 
-    // ── Resolve class info for pricing ──
+    // â”€â”€ Resolve class info for pricing â”€â”€
     let classroom: any = null;
     if (dto.classId) {
       classroom = await this.classModel.findById(dto.classId).lean();
@@ -48,28 +68,28 @@ export class InvoicesService {
       pricePerSession = classroom.pricePerSession || 0;
     }
 
-    // ── Reference duration: from DTO → class.baseDuration → default 60 ──
+    // â”€â”€ Reference duration: from DTO â†’ class.baseDuration â†’ default 60 â”€â”€
     const referenceDuration =
       dto.referenceDuration ??
       (classroom?.baseDuration || classroom?.sessionDuration || 60);
 
-    // ── Auto-compute pricePerSession from amount + sessions if needed ──
+    // â”€â”€ Auto-compute pricePerSession from amount + sessions if needed â”€â”€
     if (!pricePerSession && amount && dto.sessions) {
       pricePerSession = Math.round(amount / dto.sessions);
     }
 
-    // ── Compute per-minute rate ──
-    // VD: 3,800,000 / 20 buổi / 70 phút = 2,714.29 đ/phút
+    // â”€â”€ Compute per-minute rate â”€â”€
+    // VD: 3,800,000 / 20 buá»•i / 70 phÃºt = 2,714.29 Ä‘/phÃºt
     let perMinuteRate = 0;
     if (pricePerSession && referenceDuration) {
       perMinuteRate = pricePerSession / referenceDuration;
     }
 
-    // ── Resolve saleId: dù ai tạo vẫn ghi nhận sale phụ trách ──
+    // â”€â”€ Resolve saleId: dÃ¹ ai táº¡o váº«n ghi nháº­n sale phá»¥ trÃ¡ch â”€â”€
     let saleId = dto.saleId ? new Types.ObjectId(dto.saleId) : undefined;
     if (!saleId) {
       if (actor.role === Role.SALE) {
-        saleId = new Types.ObjectId(actor._id);
+        saleId = new Types.ObjectId(actorId);
       } else {
         const student = await this.studentModel.findById(dto.studentId).select('saleId').lean();
         if (student?.saleId) {
@@ -78,7 +98,7 @@ export class InvoicesService {
       }
     }
 
-    // Mọi hóa đơn đều phải chờ duyệt
+    // Má»i hÃ³a Ä‘Æ¡n Ä‘á»u pháº£i chá» duyá»‡t
     const status = InvoiceStatus.PENDING_APPROVAL;
 
     const entity = new this.invoiceModel({ 
@@ -87,13 +107,13 @@ export class InvoicesService {
       pricePerSession,
       referenceDuration,
       perMinuteRate,
-      sessionsRemaining: dto.sessions, // Ban đầu = sessions mua
+      sessionsRemaining: dto.sessions, // Ban Ä‘áº§u = sessions mua
       invoiceType: dto.invoiceType || InvoiceType.TUITION,
       status,
       saleId,
       studentId: new Types.ObjectId(dto.studentId),
       classId: dto.classId ? new Types.ObjectId(dto.classId) : undefined,
-      createdBy: actor._id,
+      createdBy: actorId,
     });
     return entity.save();
   }
@@ -101,19 +121,20 @@ export class InvoicesService {
   async findAll(actor: JwtPayload) {
     let filter: any = {};
     if (actor.role === Role.SALE) {
-      // Sale: xem hóa đơn do mình tạo HOẶC của HS mình phụ trách
+      const actorId = this.getActorId(actor);
+      // Sale: xem hÃ³a Ä‘Æ¡n do mÃ¬nh táº¡o HOáº¶C cá»§a HS mÃ¬nh phá»¥ trÃ¡ch
       const ownStudents = await this.studentModel
-        .find({ saleId: actor._id }, '_id')
+        .find({ saleId: actorId }, '_id')
         .lean();
       const ownStudentIds = ownStudents.map((s) => s._id);
       filter = {
         $or: [
-          { createdBy: actor._id },
+          { createdBy: actorId },
           { studentId: { $in: ownStudentIds } },
         ],
       };
     }
-    // DIRECTOR, ACCOUNTING, OPS xem tất cả
+    // DIRECTOR, ACCOUNTING, OPS xem táº¥t cáº£
     return this.invoiceModel.find(filter)
       .populate('studentId', 'fullName parentName parentPhone studentCode')
       .populate('classId', 'name code pricePerSession')
@@ -132,14 +153,15 @@ export class InvoicesService {
       .populate('approvedBy', 'fullName email')
       .populate('saleId', 'fullName email')
       .lean();
-    if (!invoice) throw new NotFoundException('Hóa đơn không tồn tại');
+    if (!invoice) throw new NotFoundException('HÃ³a Ä‘Æ¡n khÃ´ng tá»“n táº¡i');
+    this.assertSaleInvoiceAccess(invoice, actor);
 
-    // PARENT chỉ được xem hóa đơn của con mình
+    // PARENT chá»‰ Ä‘Æ°á»£c xem hÃ³a Ä‘Æ¡n cá»§a con mÃ¬nh
     if (actor?.role === Role.PARENT) {
       const student = invoice.studentId as any;
       const parentUserId = student?.parentUserId?.toString();
-      if (parentUserId !== actor.sub) {
-        throw new ForbiddenException('Bạn không có quyền xem hóa đơn này');
+      if (parentUserId !== this.getActorId(actor)) {
+        throw new ForbiddenException('Báº¡n khÃ´ng cÃ³ quyá»n xem hÃ³a Ä‘Æ¡n nÃ y');
       }
     }
 
@@ -148,17 +170,17 @@ export class InvoicesService {
 
   async update(id: string, dto: UpdateInvoiceDto, actor?: JwtPayload) {
     const invoice = await this.invoiceModel.findById(id);
-    if (!invoice) throw new NotFoundException('Hóa đơn không tồn tại');
+    if (!invoice) throw new NotFoundException('HÃ³a Ä‘Æ¡n khÃ´ng tá»“n táº¡i');
 
-    // SALE chỉ được sửa hóa đơn PENDING_APPROVAL do mình tạo
+    // SALE chá»‰ Ä‘Æ°á»£c sá»­a hÃ³a Ä‘Æ¡n PENDING_APPROVAL do mÃ¬nh táº¡o
     if (actor?.role === Role.SALE) {
-      if (invoice.createdBy.toString() !== (actor as any)._id.toString()) {
-        throw new ForbiddenException('Bạn không có quyền sửa hóa đơn này');
+      if (invoice.createdBy.toString() !== this.getActorId(actor)) {
+        throw new ForbiddenException('Báº¡n khÃ´ng cÃ³ quyá»n sá»­a hÃ³a Ä‘Æ¡n nÃ y');
       }
       if (invoice.status !== InvoiceStatus.PENDING_APPROVAL) {
-        throw new ForbiddenException('Không thể sửa hóa đơn đã được xử lý');
+        throw new ForbiddenException('KhÃ´ng thá»ƒ sá»­a hÃ³a Ä‘Æ¡n Ä‘Ã£ Ä‘Æ°á»£c xá»­ lÃ½');
       }
-      // SALE không được tự đổi status
+      // SALE khÃ´ng Ä‘Æ°á»£c tá»± Ä‘á»•i status
       delete (dto as any).status;
     }
 
@@ -168,7 +190,7 @@ export class InvoicesService {
         _id: { $ne: id }
       });
       if (existingInvoice) {
-        throw new ConflictException('Số hóa đơn đã tồn tại');
+        throw new ConflictException('Sá»‘ hÃ³a Ä‘Æ¡n Ä‘Ã£ tá»“n táº¡i');
       }
     }
 
@@ -192,39 +214,45 @@ export class InvoicesService {
       .populate('createdBy', 'fullName email')
       .populate('approvedBy', 'fullName email')
       .lean();
-    if (!updated) throw new NotFoundException('Hóa đơn không tồn tại');
+    if (!updated) throw new NotFoundException('HÃ³a Ä‘Æ¡n khÃ´ng tá»“n táº¡i');
     return updated;
   }
 
-  /** Duyệt hoặc từ chối hóa đơn (DIRECTOR / ACCOUNTING) */
+  /** Duyá»‡t hoáº·c tá»« chá»‘i hÃ³a Ä‘Æ¡n (DIRECTOR / ACCOUNTING) */
   async approveInvoice(id: string, dto: ApproveInvoiceDto, actor: JwtPayload) {
+    const actorId = this.getActorId(actor);
     if (dto.action === 'APPROVE') {
-      // Wrap approve + wallet top-up trong transaction để đảm bảo atomic
+      // Wrap approve + wallet top-up trong transaction Ä‘á»ƒ Ä‘áº£m báº£o atomic
       const mongoSession = await this.connection.startSession();
       mongoSession.startTransaction();
 
       try {
+        const now = new Date();
+        const approvedByOid = new Types.ObjectId(actorId);
+        // BUG #1 fix: use aggregation pipeline update to set paymentDate = $ifNull($paymentDate, now)
+        // This ensures invoices always have a paymentDate for financial control period filtering
         const invoice = await this.invoiceModel.findOneAndUpdate(
           { _id: id, status: InvoiceStatus.PENDING_APPROVAL },
-          {
+          [{
             $set: {
               status: InvoiceStatus.APPROVED,
-              approvedBy: new Types.ObjectId(actor._id),
-              approvedAt: new Date(),
+              approvedBy: approvedByOid,
+              approvedAt: now,
+              paymentDate: { $ifNull: ['$paymentDate', now] },
             },
-          },
+          }],
           { new: true, session: mongoSession },
         );
         if (!invoice) {
           await mongoSession.abortTransaction();
           const exists = await this.invoiceModel.findById(id).lean();
-          if (!exists) throw new NotFoundException('Hóa đơn không tồn tại');
+          if (!exists) throw new NotFoundException('HÃ³a Ä‘Æ¡n khÃ´ng tá»“n táº¡i');
           throw new BadRequestException(
-            `Hóa đơn đang ở trạng thái "${exists.status}", chỉ có thể duyệt khi ở trạng thái "PENDING_APPROVAL"`,
+            `HÃ³a Ä‘Æ¡n Ä‘ang á»Ÿ tráº¡ng thÃ¡i "${exists.status}", chá»‰ cÃ³ thá»ƒ duyá»‡t khi á»Ÿ tráº¡ng thÃ¡i "PENDING_APPROVAL"`,
           );
         }
 
-        // Wallet top-up for TUITION invoices — trong cùng transaction
+        // Wallet top-up for TUITION invoices â€” trong cÃ¹ng transaction
         if (
           invoice.invoiceType === InvoiceType.TUITION &&
           !invoice.walletTopUpDone &&
@@ -241,13 +269,13 @@ export class InvoicesService {
         mongoSession.endSession();
       }
     } else {
-      // REJECT - atomic, không cần transaction
+      // REJECT - atomic, khÃ´ng cáº§n transaction
       const invoice = await this.invoiceModel.findOneAndUpdate(
         { _id: id, status: InvoiceStatus.PENDING_APPROVAL },
         {
           $set: {
             status: InvoiceStatus.REJECTED,
-            approvedBy: new Types.ObjectId(actor._id),
+            approvedBy: new Types.ObjectId(actorId),
             approvedAt: new Date(),
             rejectedReason: dto.rejectedReason || '',
           },
@@ -256,9 +284,9 @@ export class InvoicesService {
       );
       if (!invoice) {
         const exists = await this.invoiceModel.findById(id).lean();
-        if (!exists) throw new NotFoundException('Hóa đơn không tồn tại');
+        if (!exists) throw new NotFoundException('HÃ³a Ä‘Æ¡n khÃ´ng tá»“n táº¡i');
         throw new BadRequestException(
-          `Hóa đơn đang ở trạng thái "${exists.status}", chỉ có thể duyệt khi ở trạng thái "PENDING_APPROVAL"`,
+          `HÃ³a Ä‘Æ¡n Ä‘ang á»Ÿ tráº¡ng thÃ¡i "${exists.status}", chá»‰ cÃ³ thá»ƒ duyá»‡t khi á»Ÿ tráº¡ng thÃ¡i "PENDING_APPROVAL"`,
         );
       }
     }
@@ -272,22 +300,22 @@ export class InvoicesService {
       .lean();
   }
 
-  // ──────────────────────────────────────────────────────────────────
-  //  INVOICE → WALLET TOP-UP BRIDGE
-  // ──────────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  //  INVOICE â†’ WALLET TOP-UP BRIDGE
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   /**
-   * Khi Invoice TUITION được APPROVED:
-   * 1. Tìm parentUserId của student
-   * 2. Nạp tiền vào ví PH (auto-approved, không cần duyệt lại)
-   * 3. Ghi nhận ledgerEntryId vào invoice để trace
+   * Khi Invoice TUITION Ä‘Æ°á»£c APPROVED:
+   * 1. TÃ¬m parentUserId cá»§a student
+   * 2. Náº¡p tiá»n vÃ o vÃ­ PH (auto-approved, khÃ´ng cáº§n duyá»‡t láº¡i)
+   * 3. Ghi nháº­n ledgerEntryId vÃ o invoice Ä‘á»ƒ trace
    */
   private async topUpWalletForInvoice(
     invoice: InvoiceDocument,
     approver: JwtPayload,
     mongoSession?: import('mongoose').ClientSession,
   ): Promise<void> {
-    // Tìm parentUserId của student
+    // TÃ¬m parentUserId cá»§a student
     const student = await this.studentModel
       .findById(invoice.studentId)
       .select('parentUserId fullName')
@@ -296,14 +324,14 @@ export class InvoicesService {
 
     if (!student?.parentUserId) {
       throw new BadRequestException(
-        `Invoice ${invoice.invoiceNumber}: Student chưa có parentUserId, không thể nạp ví. ` +
-        `Vui lòng cập nhật parentUserId cho học sinh trước khi duyệt hóa đơn.`,
+        `Invoice ${invoice.invoiceNumber}: Student chÆ°a cÃ³ parentUserId, khÃ´ng thá»ƒ náº¡p vÃ­. ` +
+        `Vui lÃ²ng cáº­p nháº­t parentUserId cho há»c sinh trÆ°á»›c khi duyá»‡t hÃ³a Ä‘Æ¡n.`,
       );
     }
 
     const parentUserId = student.parentUserId.toString();
 
-    // Nạp tiền trực tiếp qua walletsService (auto-approved)
+    // Náº¡p tiá»n trá»±c tiáº¿p qua walletsService (auto-approved)
     const ledgerEntry = await this.walletsService.topUpFromInvoice({
       parentUserId,
       invoiceId: (invoice._id as Types.ObjectId).toString(),
@@ -311,10 +339,10 @@ export class InvoicesService {
       amount: invoice.amount,
       studentId: invoice.studentId.toString(),
       classId: invoice.classId?.toString(),
-      approvedBy: approver._id,
-    });
+      approvedBy: this.getActorId(approver),
+    }, { session: mongoSession });
 
-    // Ghi nhận đã nạp ví — trong cùng transaction
+    // Ghi nháº­n Ä‘Ã£ náº¡p vÃ­ â€” trong cÃ¹ng transaction
     await this.invoiceModel.updateOne(
       { _id: invoice._id },
       {
@@ -327,11 +355,11 @@ export class InvoicesService {
     );
 
     this.logger.log(
-      `Invoice ${invoice.invoiceNumber} APPROVED → Wallet topped up ${invoice.amount.toLocaleString('vi-VN')}đ for parent ${parentUserId}`,
+      `Invoice ${invoice.invoiceNumber} APPROVED â†’ Wallet topped up ${invoice.amount.toLocaleString('vi-VN')}Ä‘ for parent ${parentUserId}`,
     );
   }
 
-  /** Lấy danh sách hóa đơn chờ duyệt */
+  /** Láº¥y danh sÃ¡ch hÃ³a Ä‘Æ¡n chá» duyá»‡t */
   async findPendingApproval() {
     return this.invoiceModel.find({ status: InvoiceStatus.PENDING_APPROVAL })
       .populate('studentId', 'fullName parentName parentPhone studentCode')
@@ -343,7 +371,7 @@ export class InvoicesService {
 
   async remove(id: string) {
     const invoice = await this.invoiceModel.findById(id);
-    if (!invoice) throw new NotFoundException('Hóa đơn không tồn tại');
+    if (!invoice) throw new NotFoundException('HÃ³a Ä‘Æ¡n khÃ´ng tá»“n táº¡i');
 
     // Prevent deleting invoices that have already been processed
     if (
@@ -352,7 +380,7 @@ export class InvoicesService {
       invoice.walletTopUpDone
     ) {
       throw new BadRequestException(
-        'Không thể xóa hóa đơn đã duyệt/đã thanh toán. Vui lòng liên hệ admin.',
+        'KhÃ´ng thá»ƒ xÃ³a hÃ³a Ä‘Æ¡n Ä‘Ã£ duyá»‡t/Ä‘Ã£ thanh toÃ¡n. Vui lÃ²ng liÃªn há»‡ admin.',
       );
     }
 
@@ -360,7 +388,7 @@ export class InvoicesService {
     return invoice.toObject();
   }
 
-  /** PH xem hóa đơn của tất cả con */
+  /** PH xem hÃ³a Ä‘Æ¡n cá»§a táº¥t cáº£ con */
   async getParentInvoices(parentUserId: string) {
     const parentObjId = new Types.ObjectId(parentUserId);
     const children = await this.studentModel
@@ -402,7 +430,18 @@ export class InvoicesService {
     };
   }
 
-  async getInvoicesByStudent(studentId: string) {
+  async getInvoicesByStudent(studentId: string, actor?: JwtPayload) {
+    if (actor?.role === Role.SALE) {
+      const student = await this.studentModel
+        .findById(studentId)
+        .select('saleId')
+        .lean();
+      const ownerSaleId = student?.saleId?.toString?.();
+      if (!ownerSaleId || ownerSaleId !== this.getActorId(actor)) {
+        throw new NotFoundException('Hoc sinh khong ton tai');
+      }
+    }
+
     return this.invoiceModel.find({ studentId: new Types.ObjectId(studentId) })
       .populate('createdBy', 'fullName email')
       .sort({ createdAt: -1 })
@@ -446,12 +485,12 @@ export class InvoicesService {
   async confirmPayment(studentId: string, frameIndex: number, action: 'CONFIRM' | 'REJECT') {
     const student = await this.studentModel.findById(studentId);
     if (!student) {
-      throw new NotFoundException('Học sinh không tồn tại');
+      throw new NotFoundException('Há»c sinh khÃ´ng tá»“n táº¡i');
     }
 
     const payment = student.payments?.find(p => p.frameIndex === frameIndex);
     if (!payment) {
-      throw new NotFoundException('Không tìm thấy thông tin thanh toán');
+      throw new NotFoundException('KhÃ´ng tÃ¬m tháº¥y thÃ´ng tin thanh toÃ¡n');
     }
 
     payment.confirmStatus = action === 'CONFIRM' ? 'CONFIRMED' : 'REJECTED';
@@ -459,7 +498,74 @@ export class InvoicesService {
 
     return { 
       success: true, 
-      message: action === 'CONFIRM' ? 'Đã duyệt hóa đơn' : 'Đã từ chối hóa đơn' 
+      message: action === 'CONFIRM' ? 'ÄÃ£ duyá»‡t hÃ³a Ä‘Æ¡n' : 'ÄÃ£ tá»« chá»‘i hÃ³a Ä‘Æ¡n' 
     };
   }
+
+  /**
+   * BUG NGHIEM TRONG fix: Huy hoa don APPROVED va rollback wallet neu da nap tien.
+   * Chi DIRECTOR/ACCOUNTING moi duoc huy hoa don da duyet.
+   * Neu walletTopUpDone = true, se tru lai so tien tuong ung khoi vi phu huynh.
+   */
+  async cancelInvoice(id: string, actor: JwtPayload, reason?: string) {
+    const actorId = this.getActorId(actor);
+
+    const mongoSession = await this.connection.startSession();
+    mongoSession.startTransaction();
+
+    try {
+      const now = new Date();
+      const invoice = await this.invoiceModel.findOneAndUpdate(
+        { _id: id, status: InvoiceStatus.APPROVED },
+        {
+          $set: {
+            status: InvoiceStatus.CANCELLED,
+            cancelledBy: new Types.ObjectId(actorId),
+            cancelledAt: now,
+            ...(reason ? { cancellationReason: reason } : {}),
+          },
+        },
+        { new: true, session: mongoSession },
+      );
+
+      if (!invoice) {
+        await mongoSession.abortTransaction();
+        const exists = await this.invoiceModel.findById(id).lean();
+        if (!exists) throw new NotFoundException('Hoa don khong ton tai');
+        throw new BadRequestException(
+          `Hoa don dang o trang thai "${exists.status}", chi co the huy hoa don o trang thai "APPROVED"`,
+        );
+      }
+
+      // Rollback wallet top-up neu da nap tien vao vi
+      if (invoice.walletTopUpDone && invoice.amount > 0) {
+        await this.walletsService.reverseInvoiceTopUp({
+          invoiceId: (invoice._id as Types.ObjectId).toString(),
+          amount: invoice.amount,
+          reason: reason || `Huy hoa don ${invoice.invoiceNumber}`,
+          cancelledBy: actorId,
+        }, { session: mongoSession });
+      }
+
+      await mongoSession.commitTransaction();
+
+      this.logger.log(
+        `Invoice ${invoice.invoiceNumber} CANCELLED by ${actorId}` +
+        (invoice.walletTopUpDone ? ` -- wallet rollback ${invoice.amount.toLocaleString('vi-VN')}d` : ''),
+      );
+
+      return this.invoiceModel.findById(id)
+        .populate('studentId', 'fullName parentName parentPhone studentCode')
+        .populate('classId', 'name code pricePerSession')
+        .populate('createdBy', 'fullName email')
+        .populate('approvedBy', 'fullName email')
+        .lean();
+    } catch (err) {
+      await mongoSession.abortTransaction();
+      throw err;
+    } finally {
+      mongoSession.endSession();
+    }
+  }
+
 }

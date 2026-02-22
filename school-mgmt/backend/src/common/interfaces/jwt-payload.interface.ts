@@ -4,6 +4,7 @@ import { Role } from './role.enum';
 export interface JwtPayload {
   sub: string;
   _id: string;  // alias of sub, for backward compat
+  userId: string; // alias of sub, for legacy modules still reading userId
   email: string;
   role: Role;
   fullName: string;

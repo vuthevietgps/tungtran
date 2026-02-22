@@ -1,4 +1,10 @@
-import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  InternalServerErrorException,
+  Logger,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
@@ -24,14 +30,49 @@ import { QueryAdCostDto } from './dto/query-ad-cost.dto';
 import { Order, OrderDocument } from '../orders/schemas/order.schema';
 import { Lead, LeadDocument } from '../leads/schemas/lead.schema';
 import { Session, SessionDocument, SessionStatus } from '../sessions/schemas/session.schema';
-import { Expense, ExpenseDocument } from '../expenses/schemas/expense.schema';
+import { Expense, ExpenseDocument, PaymentStatus } from '../expenses/schemas/expense.schema';
 import { Student, StudentDocument } from '../students/schemas/student.schema';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
+
+type NetProfitDailyRow = {
+  date: string;
+  adGroupId: string;
+  adGroupName: string;
+  platform: string;
+  sessionCount: number;
+  revenue: number;
+  teacherCost: number;
+  grossProfit: number;
+  totalExpenseOfDay: number;
+  totalSessionsOfDay: number;
+  overheadPerSession: number;
+  allocatedOverhead: number;
+  adSpend: number;
+  netProfit: number;
+  netMargin: number;
+};
+
+type SuggestionModel = {
+  adGroupId: string;
+  adGroupName: string;
+  platform: string;
+  currentDailySpend: number;
+  suggestedDailySpend: number;
+  expectedDailyNetProfit: number | null;
+  expectedDailyMarginalProfit: number | null;
+  changePercent: number | null;
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  dataPoints: number;
+  coeffA: number | null;
+  coeffB: number | null;
+};
 
 @Injectable()
 export class AdsService {
   private readonly logger = new Logger(AdsService.name);
   private encryptionKey: Buffer | null = null;
+  private readonly maxAnalyticsRangeDays = 366;
+  private readonly maxSuggestionRangeDays = 180;
 
   constructor(
     @InjectModel(AdAccount.name) private adAccountModel: Model<AdAccountDocument>,
@@ -47,16 +88,32 @@ export class AdsService {
   ) {
     const key = this.configService.get<string>('TOKEN_ENCRYPTION_KEY');
     if (key) {
-      this.encryptionKey = Buffer.from(key, 'hex');
+      const normalizedKey = key.trim();
+      if (/^[0-9a-fA-F]{64}$/.test(normalizedKey)) {
+        this.encryptionKey = Buffer.from(normalizedKey, 'hex');
+      } else {
+        this.logger.error('TOKEN_ENCRYPTION_KEY must be a 64-character hex string (32 bytes).');
+      }
+    } else {
+      this.logger.error('TOKEN_ENCRYPTION_KEY is missing. Ads API tokens cannot be safely encrypted.');
     }
   }
 
-  // ─── Encryption helpers ─────────────────────────────────────
+  // â”€â”€â”€ Encryption helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+  private requireEncryptionKey(): Buffer {
+    if (!this.encryptionKey) {
+      throw new InternalServerErrorException(
+        'Token encryption is not configured. Please set TOKEN_ENCRYPTION_KEY.',
+      );
+    }
+    return this.encryptionKey;
+  }
 
   private encrypt(plainText: string): string {
-    if (!this.encryptionKey) return plainText;
+    const key = this.requireEncryptionKey();
     const iv = crypto.randomBytes(12);
-    const cipher = crypto.createCipheriv('aes-256-gcm', this.encryptionKey, iv);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
     let encrypted = cipher.update(plainText, 'utf8', 'hex');
     encrypted += cipher.final('hex');
     const authTag = cipher.getAuthTag().toString('hex');
@@ -64,20 +121,21 @@ export class AdsService {
   }
 
   private decrypt(cipherText: string): string {
-    if (!this.encryptionKey) return cipherText;
+    const key = this.requireEncryptionKey();
     const parts = cipherText.split(':');
+    // Backward compatibility for legacy plaintext rows.
     if (parts.length !== 3) return cipherText;
     const [ivHex, authTagHex, encrypted] = parts;
     const iv = Buffer.from(ivHex, 'hex');
     const authTag = Buffer.from(authTagHex, 'hex');
-    const decipher = crypto.createDecipheriv('aes-256-gcm', this.encryptionKey, iv);
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
     decipher.setAuthTag(authTag);
     let decrypted = decipher.update(encrypted, 'hex', 'utf8');
     decrypted += decipher.final('utf8');
     return decrypted;
   }
 
-  // ─── Ad Account CRUD ────────────────────────────────────────
+  // â”€â”€â”€ Ad Account CRUD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   private async generateAccountCode(): Promise<string> {
     const year = new Date().getFullYear();
@@ -128,7 +186,7 @@ export class AdsService {
 
   async findOneAccount(id: string): Promise<AdAccountDocument> {
     const account = await this.adAccountModel.findById(id).exec();
-    if (!account) throw new NotFoundException('Tài khoản quảng cáo không tồn tại');
+    if (!account) throw new NotFoundException('TÃ i khoáº£n quáº£ng cÃ¡o khÃ´ng tá»“n táº¡i');
     return account;
   }
 
@@ -143,12 +201,12 @@ export class AdsService {
     // Check if there are ad groups linked
     const groupCount = await this.adGroupModel.countDocuments({ adAccountId: id });
     if (groupCount > 0) {
-      throw new BadRequestException(`Tài khoản đang có ${groupCount} nhóm quảng cáo. Hãy xóa nhóm QC trước.`);
+      throw new BadRequestException(`TÃ i khoáº£n Ä‘ang cÃ³ ${groupCount} nhÃ³m quáº£ng cÃ¡o. HÃ£y xÃ³a nhÃ³m QC trÆ°á»›c.`);
     }
     await this.adAccountModel.findByIdAndDelete(id).exec();
   }
 
-  // ─── Ad Group CRUD ──────────────────────────────────────────
+  // â”€â”€â”€ Ad Group CRUD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   private async generateGroupCode(): Promise<string> {
     const year = new Date().getFullYear();
@@ -164,6 +222,11 @@ export class AdsService {
 
   async createGroup(dto: CreateAdGroupDto, user: JwtPayload): Promise<AdGroup> {
     const account = await this.findOneAccount(dto.adAccountId);
+    if (String(account.platform) !== String(dto.platform)) {
+      throw new BadRequestException('Ad group platform must match ad account platform.');
+    }
+    await this.ensureUniqueCampaignId(dto.adAccountId, dto.platformCampaignId);
+
     const groupCode = await this.generateGroupCode();
     const group = new this.adGroupModel({
       ...dto,
@@ -172,7 +235,14 @@ export class AdsService {
       createdById: user._id,
       createdByName: user.fullName,
     });
-    return group.save();
+    try {
+      return await group.save();
+    } catch (err: any) {
+      if (this.isDuplicateKeyError(err)) {
+        await this.ensureUniqueCampaignId(dto.adAccountId, dto.platformCampaignId);
+      }
+      throw err;
+    }
   }
 
   async findAllGroups(query: QueryAdGroupDto): Promise<{ data: AdGroup[]; total: number; page: number; limit: number }> {
@@ -202,22 +272,55 @@ export class AdsService {
 
   async findOneGroup(id: string): Promise<AdGroupDocument> {
     const group = await this.adGroupModel.findById(id).exec();
-    if (!group) throw new NotFoundException('Nhóm quảng cáo không tồn tại');
+    if (!group) throw new NotFoundException('NhÃ³m quáº£ng cÃ¡o khÃ´ng tá»“n táº¡i');
     return group;
   }
 
   async updateGroup(id: string, dto: UpdateAdGroupDto): Promise<AdGroup> {
     const group = await this.findOneGroup(id);
+    if (dto.platformCampaignId && dto.platformCampaignId !== group.platformCampaignId) {
+      await this.ensureUniqueCampaignId(String(group.adAccountId), dto.platformCampaignId, id);
+    }
     Object.assign(group, dto);
-    return group.save();
+    try {
+      return await group.save();
+    } catch (err: any) {
+      if (this.isDuplicateKeyError(err)) {
+        await this.ensureUniqueCampaignId(
+          String(group.adAccountId),
+          dto.platformCampaignId || group.platformCampaignId,
+          id,
+        );
+      }
+      throw err;
+    }
   }
 
   async deleteGroup(id: string): Promise<void> {
     await this.findOneGroup(id);
-    const costCount = await this.adCostModel.countDocuments({ adGroupId: id });
-    if (costCount > 0) {
-      throw new BadRequestException(`Nhóm QC đang có ${costCount} bản ghi chi phí. Không thể xóa.`);
+    const [costCount, leadCount, orderCount, studentCount, sessionCount] = await Promise.all([
+      this.adCostModel.countDocuments({ adGroupId: id }),
+      this.leadModel.countDocuments({ adGroupId: id }),
+      this.orderModel.countDocuments({ adGroupId: id }),
+      this.studentModel.countDocuments({ adGroupId: id }),
+      this.sessionModel.countDocuments({ adGroupId: id }),
+    ]);
+
+    const blockers = [
+      { label: 'ad costs', count: costCount },
+      { label: 'leads', count: leadCount },
+      { label: 'orders', count: orderCount },
+      { label: 'students', count: studentCount },
+      { label: 'sessions', count: sessionCount },
+    ].filter((item) => item.count > 0);
+
+    if (blockers.length > 0) {
+      const detail = blockers.map((item) => `${item.label}: ${item.count}`).join(', ');
+      throw new BadRequestException(
+        `Cannot delete ad group because related data still exists (${detail}).`,
+      );
     }
+
     await this.adGroupModel.findByIdAndDelete(id).exec();
   }
 
@@ -229,10 +332,16 @@ export class AdsService {
     return this.adGroupModel.find({ status: 'ACTIVE' }).sort({ name: 1 }).lean();
   }
 
-  // ─── API Token Management ─────────────────────────────────
+  // â”€â”€â”€ API Token Management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   async createToken(dto: CreateApiTokenDto, user: JwtPayload): Promise<ApiToken> {
     const account = await this.findOneAccount(dto.adAccountId);
+    if (String(account.platform) !== String(dto.platform)) {
+      throw new BadRequestException('API token platform must match ad account platform.');
+    }
+
+    await this.revokeOtherActiveTokens(dto.adAccountId);
+
     const token = new this.apiTokenModel({
       ...dto,
       adAccountName: account.name,
@@ -248,77 +357,252 @@ export class AdsService {
     // Mask tokens for display
     return tokens.map(t => ({
       ...t,
-      accessToken: '••••••••' + (t.accessToken?.slice(-6) || ''),
-      refreshToken: t.refreshToken ? '••••••••' + (t.refreshToken.slice(-6) || '') : undefined,
+      accessToken: 'â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢' + (t.accessToken?.slice(-6) || ''),
+      refreshToken: t.refreshToken ? 'â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢' + (t.refreshToken.slice(-6) || '') : undefined,
     }));
   }
 
   async updateToken(id: string, dto: UpdateApiTokenDto): Promise<ApiToken> {
     const token = await this.apiTokenModel.findById(id).exec();
-    if (!token) throw new NotFoundException('Token không tồn tại');
+    if (!token) throw new NotFoundException('Token not found');
+
+    if (dto.status === ApiTokenStatus.ACTIVE) {
+      await this.revokeOtherActiveTokens(String(token.adAccountId), id);
+    }
 
     if (dto.accessToken) token.accessToken = this.encrypt(dto.accessToken);
     if (dto.refreshToken) token.refreshToken = this.encrypt(dto.refreshToken);
     if (dto.expiresAt) token.expiresAt = new Date(dto.expiresAt);
     if (dto.status) token.status = dto.status;
-    if (dto.label) token.label = dto.label;
+    if (dto.label !== undefined) token.label = dto.label;
 
     return token.save();
   }
 
   async deleteToken(id: string): Promise<void> {
     const token = await this.apiTokenModel.findById(id).exec();
-    if (!token) throw new NotFoundException('Token không tồn tại');
+    if (!token) throw new NotFoundException('Token khÃ´ng tá»“n táº¡i');
     await this.apiTokenModel.findByIdAndDelete(id).exec();
   }
 
   private async getDecryptedToken(accountId: string): Promise<string | null> {
-    const token = await this.apiTokenModel.findOne({
+    const activeTokens = await this.apiTokenModel.find({
       adAccountId: accountId,
       status: ApiTokenStatus.ACTIVE,
-    }).exec();
-    if (!token) return null;
+    }).sort({ createdAt: -1 }).exec();
+    if (!activeTokens.length) return null;
 
-    // Check expiry
-    if (token.expiresAt && token.expiresAt < new Date()) {
-      token.status = ApiTokenStatus.EXPIRED;
-      await token.save();
+    const now = new Date();
+    const expiredIds: Types.ObjectId[] = [];
+    const validTokens: ApiTokenDocument[] = [];
+
+    for (const token of activeTokens) {
+      if (token.expiresAt && token.expiresAt < now) {
+        expiredIds.push(token._id as Types.ObjectId);
+      } else {
+        validTokens.push(token);
+      }
+    }
+
+    if (expiredIds.length > 0) {
+      await this.apiTokenModel.updateMany(
+        { _id: { $in: expiredIds } },
+        { $set: { status: ApiTokenStatus.EXPIRED } },
+      ).exec();
+    }
+
+    if (!validTokens.length) {
       return null;
     }
 
-    token.lastUsedAt = new Date();
+    validTokens.sort((a, b) => {
+      const aExpiry = a.expiresAt ? a.expiresAt.getTime() : Number.MAX_SAFE_INTEGER;
+      const bExpiry = b.expiresAt ? b.expiresAt.getTime() : Number.MAX_SAFE_INTEGER;
+      if (aExpiry !== bExpiry) return bExpiry - aExpiry;
+
+      const aCreated = (a as any).createdAt ? new Date((a as any).createdAt).getTime() : 0;
+      const bCreated = (b as any).createdAt ? new Date((b as any).createdAt).getTime() : 0;
+      return bCreated - aCreated;
+    });
+
+    const token = validTokens[0];
+    token.lastUsedAt = now;
     await token.save();
 
     return this.decrypt(token.accessToken);
   }
 
-  // ─── Ad Cost Management ────────────────────────────────────
+  /**
+   * Normalize incoming date to UTC day-start.
+   * This avoids timezone drift when clients send YYYY-MM-DD.
+   */
+  private normalizeToUtcDay(input: string | Date): Date {
+    if (input instanceof Date) {
+      if (Number.isNaN(input.getTime())) throw new BadRequestException('NgÃƒÂ y khÃƒÂ´ng hÃ¡Â»Â£p lÃ¡Â»â€¡');
+      return new Date(Date.UTC(input.getUTCFullYear(), input.getUTCMonth(), input.getUTCDate()));
+    }
+
+    const raw = String(input || '').trim();
+    const dateOnlyMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (dateOnlyMatch) {
+      const year = Number(dateOnlyMatch[1]);
+      const month = Number(dateOnlyMatch[2]) - 1;
+      const day = Number(dateOnlyMatch[3]);
+      return new Date(Date.UTC(year, month, day));
+    }
+
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) throw new BadRequestException('NgÃƒÂ y khÃƒÂ´ng hÃ¡Â»Â£p lÃ¡Â»â€¡');
+    return new Date(Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate()));
+  }
+
+  private toUtcDateOnlyString(date: Date): string {
+    return date.toISOString().slice(0, 10);
+  }
+
+  private getUtcDateRange(
+    startDate: string,
+    endDate: string,
+    maxRangeDays?: number,
+  ): { start: Date; end: Date } {
+    const start = this.normalizeToUtcDay(startDate);
+    const endDay = this.normalizeToUtcDay(endDate);
+    if (endDay < start) {
+      throw new BadRequestException('Khoáº£ng ngÃ y khÃ´ng há»£p lá»‡: endDate pháº£i >= startDate');
+    }
+
+    if (maxRangeDays && maxRangeDays > 0) {
+      const diffMs = endDay.getTime() - start.getTime();
+      const diffDays = Math.floor(diffMs / 86400000) + 1;
+      if (diffDays > maxRangeDays) {
+        throw new BadRequestException(`Khoảng ngày vượt quá ${maxRangeDays} ngày.`);
+      }
+    }
+
+    const end = new Date(endDay);
+    end.setUTCHours(23, 59, 59, 999);
+    return { start, end };
+  }
+
+  private parseOptionalObjectId(id?: string): Types.ObjectId | undefined {
+    if (!id) return undefined;
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('adGroupId khÃ´ng há»£p lá»‡');
+    }
+    return new Types.ObjectId(id);
+  }
+
+  private groupDayKey(adGroupId: string, date: string): string {
+    return `${adGroupId}_${date}`;
+  }
+
+  private splitGroupDayKey(key: string): { adGroupId: string; date: string } {
+    const pivot = key.indexOf('_');
+    if (pivot <= 0) return { adGroupId: key, date: '' };
+    return {
+      adGroupId: key.slice(0, pivot),
+      date: key.slice(pivot + 1),
+    };
+  }
+
+  private daysInMonth(date: Date): number {
+    return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+  }
+
+  private isDuplicateKeyError(err: any): boolean {
+    return !!(err && (err.code === 11000 || String(err?.message || '').includes('E11000')));
+  }
+
+  private async ensureUniqueCampaignId(
+    adAccountId: string | Types.ObjectId,
+    platformCampaignId: string,
+    excludeGroupId?: string,
+  ): Promise<void> {
+    const campaignId = String(platformCampaignId || '').trim();
+    if (!campaignId) return;
+
+    const filter: any = {
+      adAccountId,
+      platformCampaignId: campaignId,
+    };
+    if (excludeGroupId) {
+      filter._id = { $ne: excludeGroupId };
+    }
+
+    const duplicated = await this.adGroupModel.findOne(filter).select('_id name').lean();
+    if (duplicated) {
+      throw new BadRequestException(
+        `Platform campaign ID "${campaignId}" already exists in this ad account.`,
+      );
+    }
+  }
+
+  private async revokeOtherActiveTokens(
+    adAccountId: string | Types.ObjectId,
+    excludeTokenId?: string,
+  ): Promise<void> {
+    const filter: any = {
+      adAccountId,
+      status: ApiTokenStatus.ACTIVE,
+    };
+    if (excludeTokenId) {
+      filter._id = { $ne: excludeTokenId };
+    }
+
+    await this.apiTokenModel.updateMany(
+      filter,
+      { $set: { status: ApiTokenStatus.REVOKED } },
+    ).exec();
+  }
+
+  // â”€â”€â”€ Ad Cost Management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   async createOrUpdateCost(dto: CreateAdCostDto): Promise<AdCost> {
-    const costDate = new Date(dto.date);
-    costDate.setHours(0, 0, 0, 0);
+    const costDate = this.normalizeToUtcDay(dto.date);
 
     const group = await this.findOneGroup(dto.adGroupId);
+    if (String(group.adAccountId) !== String(dto.adAccountId)) {
+      throw new BadRequestException('NhÃƒÂ³m quÃ¡ÂºÂ£ng cÃƒÂ¡o khÃƒÂ´ng thuÃ¡Â»â„¢c tÃƒÂ i khoÃ¡ÂºÂ£n quÃ¡ÂºÂ£ng cÃƒÂ¡o Ã„â€˜ÃƒÂ£ chÃ¡Â»Ân');
+    }
+    if (String(group.platform) !== String(dto.platform)) {
+      throw new BadRequestException('NÃ¡Â»Ân tÃ¡ÂºÂ£ng quÃ¡ÂºÂ£ng cÃƒÂ¡o khÃƒÂ´ng khÃ¡Â»â€ºp vÃ¡Â»â€ºi nhÃƒÂ³m quÃ¡ÂºÂ£ng cÃƒÂ¡o');
+    }
 
-    const result = await this.adCostModel.findOneAndUpdate(
-      { adGroupId: dto.adGroupId, date: costDate },
-      {
-        $set: {
-          adAccountId: dto.adAccountId,
-          adGroupName: group.name,
-          platform: dto.platform,
-          spend: dto.spend,
-          impressions: dto.impressions || 0,
-          clicks: dto.clicks || 0,
-          conversions: dto.conversions || 0,
-          source: dto.source || AdCostSource.MANUAL,
-          syncedAt: new Date(),
-        },
+    const filter = { adGroupId: dto.adGroupId, date: costDate };
+    const update = {
+      $set: {
+        adAccountId: dto.adAccountId,
+        adGroupName: group.name,
+        platform: dto.platform,
+        spend: dto.spend,
+        impressions: dto.impressions || 0,
+        clicks: dto.clicks || 0,
+        conversions: dto.conversions || 0,
+        source: dto.source || AdCostSource.MANUAL,
+        syncedAt: new Date(),
       },
-      { upsert: true, new: true },
-    ).exec();
+    };
 
-    return result!;
+    try {
+      const result = await this.adCostModel.findOneAndUpdate(
+        filter,
+        update,
+        { upsert: true, new: true },
+      ).exec();
+      return result!;
+    } catch (err: any) {
+      // Concurrent upsert may throw E11000 on unique index (adGroupId + date).
+      // Retry as non-upsert update to converge to one canonical row.
+      if (this.isDuplicateKeyError(err)) {
+        const retried = await this.adCostModel.findOneAndUpdate(
+          filter,
+          update,
+          { new: true },
+        ).exec();
+        if (retried) return retried;
+      }
+      throw err;
+    }
   }
 
   async findAllCosts(query: QueryAdCostDto): Promise<{ data: AdCost[]; total: number; page: number; limit: number }> {
@@ -328,10 +612,10 @@ export class AdsService {
     if (query.platform) filter.platform = query.platform;
     if (query.startDate || query.endDate) {
       filter.date = {};
-      if (query.startDate) filter.date.$gte = new Date(query.startDate);
+      if (query.startDate) filter.date.$gte = this.normalizeToUtcDay(query.startDate);
       if (query.endDate) {
-        const end = new Date(query.endDate);
-        end.setHours(23, 59, 59, 999);
+        const end = this.normalizeToUtcDay(query.endDate);
+        end.setUTCHours(23, 59, 59, 999);
         filter.date.$lte = end;
       }
     }
@@ -350,22 +634,24 @@ export class AdsService {
 
   async deleteCost(id: string): Promise<void> {
     const cost = await this.adCostModel.findById(id).exec();
-    if (!cost) throw new NotFoundException('Bản ghi chi phí không tồn tại');
+    if (!cost) throw new NotFoundException('Báº£n ghi chi phÃ­ khÃ´ng tá»“n táº¡i');
     await this.adCostModel.findByIdAndDelete(id).exec();
   }
 
-  // ─── Ad Cost Sync ─────────────────────────────────────────
+  // â”€â”€â”€ Ad Cost Sync â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   @Cron('0 6 * * *')
   async syncAllAdCosts(): Promise<{ synced: number; errors: string[] }> {
-    this.logger.log('Starting daily ad cost sync...');
+    const lookbackDays = this.getSyncLookbackDays();
+    const syncDates = this.buildRollingSyncDates(lookbackDays);
+    this.logger.log(`Starting daily ad cost sync (lookback ${lookbackDays} day(s))...`);
     const accounts = await this.adAccountModel.find({ status: 'ACTIVE' }).exec();
     let synced = 0;
     const errors: string[] = [];
 
     for (const account of accounts) {
       try {
-        const count = await this.syncAccountCosts(account._id.toString());
+        const count = await this.syncAccountCostsForDates(account._id.toString(), syncDates);
         synced += count;
       } catch (err: any) {
         const msg = `${account.name} (${account.platform}): ${err.message}`;
@@ -379,50 +665,81 @@ export class AdsService {
   }
 
   async syncAccountCosts(accountId: string, dateStr?: string): Promise<number> {
+    const syncDates = [
+      dateStr
+        ? this.normalizeToUtcDay(dateStr)
+        : this.normalizeToUtcDay(new Date(Date.now() - 86400000)),
+    ];
+    return this.syncAccountCostsForDates(accountId, syncDates);
+  }
+
+  private async syncAccountCostsForDates(accountId: string, syncDates: Date[]): Promise<number> {
     const account = await this.findOneAccount(accountId);
     const token = await this.getDecryptedToken(accountId);
     if (!token) {
-      throw new BadRequestException(`Không tìm thấy API token hợp lệ cho tài khoản ${account.name}`);
+      throw new BadRequestException(`KhÃ´ng tÃ¬m tháº¥y API token há»£p lá»‡ cho tÃ i khoáº£n ${account.name}`);
     }
 
     const groups = await this.adGroupModel.find({ adAccountId: accountId, status: 'ACTIVE' }).exec();
     if (groups.length === 0) return 0;
 
-    // Default: sync yesterday's data
-    const syncDate = dateStr ? new Date(dateStr) : new Date(Date.now() - 86400000);
-    syncDate.setHours(0, 0, 0, 0);
-
     let synced = 0;
-
-    switch (account.platform) {
-      case 'FACEBOOK':
-        synced = await this.syncFacebookCosts(token, account, groups, syncDate);
-        break;
-      case 'GOOGLE':
-        synced = await this.syncGoogleCosts(token, account, groups, syncDate);
-        break;
-      case 'TIKTOK':
-        synced = await this.syncTikTokCosts(token, account, groups, syncDate);
-        break;
+    for (const syncDate of syncDates) {
+      synced += await this.syncPlatformCosts(token, account, groups, syncDate);
     }
 
     return synced;
   }
 
+  private async syncPlatformCosts(
+    token: string,
+    account: AdAccountDocument,
+    groups: AdGroupDocument[],
+    syncDate: Date,
+  ): Promise<number> {
+    switch (account.platform) {
+      case 'FACEBOOK':
+        return this.syncFacebookCosts(token, account, groups, syncDate);
+      case 'GOOGLE':
+        return this.syncGoogleCosts(token, account, groups, syncDate);
+      case 'TIKTOK':
+        return this.syncTikTokCosts(token, account, groups, syncDate);
+      default:
+        return 0;
+    }
+  }
+
+  private getSyncLookbackDays(): number {
+    const rawValue = Number(this.configService.get<string>('AD_SYNC_LOOKBACK_DAYS', '3'));
+    if (!Number.isFinite(rawValue)) return 3;
+    return Math.max(1, Math.min(14, Math.floor(rawValue)));
+  }
+
+  private buildRollingSyncDates(lookbackDays: number): Date[] {
+    const dates: Date[] = [];
+    for (let offset = 1; offset <= lookbackDays; offset++) {
+      dates.push(this.normalizeToUtcDay(new Date(Date.now() - (offset * 86400000))));
+    }
+    return dates;
+  }
+
   private async syncFacebookCosts(
     token: string, account: AdAccountDocument, groups: AdGroupDocument[], date: Date,
   ): Promise<number> {
-    const dateStr = date.toISOString().split('T')[0];
+    const dateStr = this.toUtcDateOnlyString(date);
     let synced = 0;
 
     try {
       const url = `https://graph.facebook.com/v21.0/act_${account.platformAccountId}/insights`
         + `?fields=spend,impressions,clicks,actions`
         + `&level=campaign`
-        + `&time_range={"since":"${dateStr}","until":"${dateStr}"}`
-        + `&access_token=${token}`;
+        + `&time_range={"since":"${dateStr}","until":"${dateStr}"}`;
 
-      const response = await this.fetchWithRetry(url);
+      const response = await this.fetchWithRetry(url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
       const data = response?.data || [];
 
       const campaignMap = new Map<string, AdGroupDocument>();
@@ -463,7 +780,7 @@ export class AdsService {
   private async syncGoogleCosts(
     token: string, account: AdAccountDocument, groups: AdGroupDocument[], date: Date,
   ): Promise<number> {
-    const dateStr = date.toISOString().split('T')[0].replace(/-/g, '');
+    const dateStr = this.toUtcDateOnlyString(date);
     let synced = 0;
 
     try {
@@ -487,7 +804,8 @@ export class AdsService {
         campaignMap.set(g.platformCampaignId, g);
       }
 
-      const results = response?.[0]?.results || [];
+      const streamBatches = Array.isArray(response) ? response : [response];
+      const results = streamBatches.flatMap((batch: any) => batch?.results || []);
       for (const row of results) {
         const campaignId = row.campaign?.id?.toString();
         if (!campaignId) continue;
@@ -500,7 +818,7 @@ export class AdsService {
           adGroupId: group._id.toString(),
           adAccountId: account._id.toString(),
           platform: 'GOOGLE',
-          date: date.toISOString().split('T')[0],
+          date: this.toUtcDateOnlyString(date),
           spend: costVnd,
           impressions: Number(row.metrics?.impressions || 0),
           clicks: Number(row.metrics?.clicks || 0),
@@ -520,7 +838,7 @@ export class AdsService {
   private async syncTikTokCosts(
     token: string, account: AdAccountDocument, groups: AdGroupDocument[], date: Date,
   ): Promise<number> {
-    const dateStr = date.toISOString().split('T')[0];
+    const dateStr = this.toUtcDateOnlyString(date);
     let synced = 0;
 
     try {
@@ -593,16 +911,203 @@ export class AdsService {
     }
   }
 
-  // ─── Analytics ─────────────────────────────────────────────
+  // â”€â”€â”€ Analytics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+  private async buildNetProfitDailyRows(
+    start: Date,
+    end: Date,
+    adGroupObjectId?: Types.ObjectId,
+  ): Promise<NetProfitDailyRow[]> {
+    const sessionMatch: any = {
+      adGroupId: { $exists: true, $ne: null },
+      status: SessionStatus.FINALIZED,
+      scheduledDate: { $gte: start, $lte: end },
+    };
+    if (adGroupObjectId) sessionMatch.adGroupId = adGroupObjectId;
+
+    const sessionsByGroupDay = await this.sessionModel.aggregate([
+      { $match: sessionMatch },
+      {
+        $group: {
+          _id: {
+            adGroupId: '$adGroupId',
+            date: {
+              $dateToString: {
+                format: '%Y-%m-%d',
+                date: '$scheduledDate',
+                timezone: 'UTC',
+              },
+            },
+          },
+          revenue: { $sum: { $ifNull: ['$amountCharged', 0] } },
+          teacherCost: { $sum: { $ifNull: ['$teacherPayout', 0] } },
+          sessionCount: { $sum: 1 },
+          adGroupName: { $first: '$adGroupName' },
+        },
+      },
+      { $sort: { '_id.date': 1 } },
+    ]);
+
+    const totalSessionsByDay = await this.sessionModel.aggregate([
+      {
+        $match: {
+          status: SessionStatus.FINALIZED,
+          scheduledDate: { $gte: start, $lte: end },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            $dateToString: {
+              format: '%Y-%m-%d',
+              date: '$scheduledDate',
+              timezone: 'UTC',
+            },
+          },
+          totalSessions: { $sum: 1 },
+        },
+      },
+    ]);
+    const totalSessionMap = new Map<string, number>(
+      totalSessionsByDay.map((row: any) => [String(row._id), Number(row.totalSessions || 0)]),
+    );
+
+    const expensesByDay = await this.expenseModel.aggregate([
+      {
+        $match: {
+          // Accounting view: include incurred expenses even if not yet paid.
+          paymentStatus: { $in: [PaymentStatus.PAID, PaymentStatus.APPROVED_UNPAID] },
+          expenseDate: { $gte: start, $lte: end },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            $dateToString: {
+              format: '%Y-%m-%d',
+              date: '$expenseDate',
+              timezone: 'UTC',
+            },
+          },
+          totalExpense: { $sum: { $ifNull: ['$amount', 0] } },
+        },
+      },
+    ]);
+    const expenseMap = new Map<string, number>(
+      expensesByDay.map((row: any) => [String(row._id), Number(row.totalExpense || 0)]),
+    );
+
+    const adCostMatch: any = { date: { $gte: start, $lte: end } };
+    if (adGroupObjectId) adCostMatch.adGroupId = adGroupObjectId;
+
+    const adCostsByGroupDay = await this.adCostModel.aggregate([
+      { $match: adCostMatch },
+      {
+        $group: {
+          _id: {
+            adGroupId: '$adGroupId',
+            date: {
+              $dateToString: {
+                format: '%Y-%m-%d',
+                date: '$date',
+                timezone: 'UTC',
+              },
+            },
+          },
+          adSpend: { $sum: { $ifNull: ['$spend', 0] } },
+          adGroupName: { $first: '$adGroupName' },
+          platform: { $first: '$platform' },
+        },
+      },
+    ]);
+
+    const adCostMap = new Map<string, any>();
+    for (const c of adCostsByGroupDay) {
+      const gId = String(c._id.adGroupId);
+      const date = String(c._id.date);
+      adCostMap.set(this.groupDayKey(gId, date), c);
+    }
+
+    const sessionDataMap = new Map<string, any>();
+    for (const s of sessionsByGroupDay) {
+      const gId = String(s._id.adGroupId);
+      const date = String(s._id.date);
+      sessionDataMap.set(this.groupDayKey(gId, date), s);
+    }
+
+    const allKeys = new Set<string>([
+      ...Array.from(sessionDataMap.keys()),
+      ...Array.from(adCostMap.keys()),
+    ]);
+
+    const groupIds = new Set<string>();
+    for (const key of allKeys) {
+      const parsed = this.splitGroupDayKey(key);
+      if (parsed.adGroupId) groupIds.add(parsed.adGroupId);
+    }
+
+    const adGroupIds = Array.from(groupIds)
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+
+    const adGroups = adGroupIds.length
+      ? await this.adGroupModel.find({ _id: { $in: adGroupIds } }).select('name platform').lean()
+      : [];
+    const adGroupMetaMap = new Map<string, { name?: string; platform?: string }>(
+      adGroups.map((g: any) => [String(g._id), { name: g.name, platform: g.platform }]),
+    );
+
+    const daily: NetProfitDailyRow[] = [];
+    for (const key of allKeys) {
+      const { adGroupId, date } = this.splitGroupDayKey(key);
+      if (!date) continue;
+
+      const sessionData = sessionDataMap.get(key);
+      const revenue = Number(sessionData?.revenue || 0);
+      const teacherCost = Number(sessionData?.teacherCost || 0);
+      const sessionCount = Number(sessionData?.sessionCount || 0);
+      const grossProfit = revenue - teacherCost;
+
+      const totalSessionsOfDay = Number(totalSessionMap.get(date) || 0);
+      const totalExpenseOfDay = Number(expenseMap.get(date) || 0);
+      const overheadPerSession = totalSessionsOfDay > 0 ? totalExpenseOfDay / totalSessionsOfDay : 0;
+      const allocatedOverhead = Math.round(overheadPerSession * sessionCount);
+
+      const adCostData = adCostMap.get(key);
+      const adSpend = Number(adCostData?.adSpend || 0);
+      const netProfit = grossProfit - allocatedOverhead - adSpend;
+
+      const meta = adGroupMetaMap.get(adGroupId);
+      daily.push({
+        date,
+        adGroupId,
+        adGroupName: sessionData?.adGroupName || adCostData?.adGroupName || meta?.name || '',
+        platform: adCostData?.platform || meta?.platform || '',
+        sessionCount,
+        revenue,
+        teacherCost,
+        grossProfit,
+        totalExpenseOfDay,
+        totalSessionsOfDay,
+        overheadPerSession: Math.round(overheadPerSession),
+        allocatedOverhead,
+        adSpend,
+        netProfit,
+        netMargin: revenue > 0 ? Math.round((netProfit / revenue) * 10000) / 100 : 0,
+      });
+    }
+
+    daily.sort((a, b) => a.date.localeCompare(b.date) || a.adGroupId.localeCompare(b.adGroupId));
+    return daily;
+  }
 
   async getAnalytics(startDate: string, endDate: string, adGroupId?: string, platform?: string): Promise<any> {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
+    const { start, end } = this.getUtcDateRange(startDate, endDate, this.maxAnalyticsRangeDays);
+    const adGroupObjectId = this.parseOptionalObjectId(adGroupId);
 
     // Get ad costs aggregated by group
     const costMatch: any = { date: { $gte: start, $lte: end } };
-    if (adGroupId) costMatch.adGroupId = new Types.ObjectId(adGroupId);
+    if (adGroupObjectId) costMatch.adGroupId = adGroupObjectId;
     if (platform) costMatch.platform = platform;
 
     const costsByGroup = await this.adCostModel.aggregate([
@@ -610,19 +1115,20 @@ export class AdsService {
       {
         $group: {
           _id: '$adGroupId',
-          totalSpend: { $sum: '$spend' },
-          totalImpressions: { $sum: '$impressions' },
-          totalClicks: { $sum: '$clicks' },
-          totalConversions: { $sum: '$conversions' },
+          totalSpend: { $sum: { $ifNull: ['$spend', 0] } },
+          totalImpressions: { $sum: { $ifNull: ['$impressions', 0] } },
+          totalClicks: { $sum: { $ifNull: ['$clicks', 0] } },
+          totalConversions: { $sum: { $ifNull: ['$conversions', 0] } },
           adGroupName: { $first: '$adGroupName' },
           platform: { $first: '$platform' },
         },
       },
     ]);
+    const costMap = new Map(costsByGroup.map((c) => [c._id.toString(), c]));
 
     // Get leads count per ad group
     const leadMatch: any = { adGroupId: { $exists: true, $ne: null }, createdAt: { $gte: start, $lte: end } };
-    if (adGroupId) leadMatch.adGroupId = new Types.ObjectId(adGroupId);
+    if (adGroupObjectId) leadMatch.adGroupId = adGroupObjectId;
 
     const leadsByGroup = await this.leadModel.aggregate([
       { $match: leadMatch },
@@ -636,7 +1142,7 @@ export class AdsService {
       createdAt: { $gte: start, $lte: end },
       status: { $in: ['APPROVED', 'COMPLETED'] },
     };
-    if (adGroupId) orderMatch.adGroupId = new Types.ObjectId(adGroupId);
+    if (adGroupObjectId) orderMatch.adGroupId = adGroupObjectId;
 
     const ordersByGroup = await this.orderModel.aggregate([
       { $match: orderMatch },
@@ -650,31 +1156,80 @@ export class AdsService {
     ]);
     const orderMap = new Map(ordersByGroup.map(o => [o._id.toString(), o]));
 
-    // Combine results
-    const rows = costsByGroup.map(cost => {
-      const gId = cost._id.toString();
+    // Calculate net profit with full business formula to keep all analytics consistent.
+    const dailyNetProfit = await this.buildNetProfitDailyRows(start, end, adGroupObjectId);
+    const netProfitByGroup = new Map<string, number>();
+    const netProfitMetaByGroup = new Map<string, { adGroupName: string; platform: string }>();
+    for (const row of dailyNetProfit) {
+      if (platform && row.platform !== platform) continue;
+      netProfitByGroup.set(row.adGroupId, (netProfitByGroup.get(row.adGroupId) || 0) + row.netProfit);
+      if (!netProfitMetaByGroup.has(row.adGroupId)) {
+        netProfitMetaByGroup.set(row.adGroupId, {
+          adGroupName: row.adGroupName || '',
+          platform: row.platform || '',
+        });
+      }
+    }
+
+    const allGroupIds = new Set<string>();
+    for (const gId of costMap.keys()) allGroupIds.add(gId);
+    for (const gId of leadMap.keys()) allGroupIds.add(gId);
+    for (const gId of orderMap.keys()) allGroupIds.add(gId);
+    for (const gId of netProfitByGroup.keys()) allGroupIds.add(gId);
+    if (adGroupObjectId) allGroupIds.add(adGroupObjectId.toString());
+
+    const adGroupMetaMap = new Map<string, { name: string; platform: string }>();
+    const adGroupIds = Array.from(allGroupIds)
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+    if (adGroupIds.length > 0) {
+      const groups = await this.adGroupModel
+        .find({ _id: { $in: adGroupIds } })
+        .select('_id name platform')
+        .lean();
+      for (const group of groups as any[]) {
+        adGroupMetaMap.set(group._id.toString(), {
+          name: group.name || '',
+          platform: group.platform || '',
+        });
+      }
+    }
+
+    // Combine results from all data sources (cost, leads, orders, net-profit).
+    const rows = Array.from(allGroupIds)
+      .map((gId) => {
+        const cost = costMap.get(gId);
+        const groupMeta = adGroupMetaMap.get(gId);
+        const netProfitMeta = netProfitMetaByGroup.get(gId);
+        const resolvedPlatform = cost?.platform || netProfitMeta?.platform || groupMeta?.platform || '';
+
+        if (platform && resolvedPlatform !== platform) return null;
+
       const leadCount = leadMap.get(gId) || 0;
       const orderData = orderMap.get(gId) || { orderCount: 0, revenue: 0 };
-      const netProfit = orderData.revenue - cost.totalSpend;
-      const roi = cost.totalSpend > 0 ? (netProfit / cost.totalSpend) * 100 : 0;
+      const netProfit = netProfitByGroup.get(gId) || 0;
+      const totalSpend = Number(cost?.totalSpend || 0);
+      const roi = totalSpend > 0 ? (netProfit / totalSpend) * 100 : 0;
 
       return {
         adGroupId: gId,
-        adGroupName: cost.adGroupName || '',
-        platform: cost.platform,
-        totalSpend: cost.totalSpend,
-        totalImpressions: cost.totalImpressions,
-        totalClicks: cost.totalClicks,
-        totalConversions: cost.totalConversions,
+        adGroupName: cost?.adGroupName || netProfitMeta?.adGroupName || groupMeta?.name || '',
+        platform: resolvedPlatform,
+        totalSpend,
+        totalImpressions: Number(cost?.totalImpressions || 0),
+        totalClicks: Number(cost?.totalClicks || 0),
+        totalConversions: Number(cost?.totalConversions || 0),
         leadCount,
         orderCount: orderData.orderCount,
         revenue: orderData.revenue,
-        costPerLead: leadCount > 0 ? Math.round(cost.totalSpend / leadCount) : null,
-        costPerOrder: orderData.orderCount > 0 ? Math.round(cost.totalSpend / orderData.orderCount) : null,
+        costPerLead: leadCount > 0 ? Math.round(totalSpend / leadCount) : null,
+        costPerOrder: orderData.orderCount > 0 ? Math.round(totalSpend / orderData.orderCount) : null,
         netProfit,
         roi: Math.round(roi * 100) / 100,
       };
-    });
+    })
+      .filter((row): row is NonNullable<typeof row> => row !== null)
+      .sort((a, b) => b.totalSpend - a.totalSpend || b.netProfit - a.netProfit);
 
     // Summary
     const summary = {
@@ -695,198 +1250,26 @@ export class AdsService {
     return { rows, summary };
   }
 
-  // ─── Net Profit By Ad Group (Per Day) ─────────────────────
+  // â”€â”€â”€ Net Profit By Ad Group (Per Day) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   /**
-   * Tính lợi nhuận thuần trên mỗi nhóm quảng cáo theo ngày.
+   * TÃ­nh lá»£i nhuáº­n thuáº§n trÃªn má»—i nhÃ³m quáº£ng cÃ¡o theo ngÃ y.
    *
-   * Công thức:
-   *   grossProfit = Σ(amountCharged - teacherPayout) của sessions thuộc adGroup ngày đó
-   *   overheadPerSession = totalExpenses(ngày) / totalSessions(ngày)
-   *   allocatedOverhead = overheadPerSession × sessionCount(adGroup, ngày)
-   *   netProfit = grossProfit - allocatedOverhead - adSpend(adGroup, ngày)
+   * CÃ´ng thá»©c:
+   *   grossProfit = Î£(amountCharged - teacherPayout) cá»§a sessions thuá»™c adGroup ngÃ y Ä‘Ã³
+   *   overheadPerSession = totalExpenses(ngÃ y) / totalSessions(ngÃ y)
+   *   allocatedOverhead = overheadPerSession Ã— sessionCount(adGroup, ngÃ y)
+   *   netProfit = grossProfit - allocatedOverhead - adSpend(adGroup, ngÃ y)
    */
   async getNetProfitByAdGroup(
     startDate: string,
     endDate: string,
     adGroupId?: string,
   ): Promise<any> {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
+    const { start, end } = this.getUtcDateRange(startDate, endDate, this.maxAnalyticsRangeDays);
+    const adGroupObjectId = this.parseOptionalObjectId(adGroupId);
+    const daily = await this.buildNetProfitDailyRows(start, end, adGroupObjectId);
 
-    // ── 1. Sessions FINALIZED theo adGroupId + ngày ──
-    const sessionMatch: any = {
-      adGroupId: { $exists: true, $ne: null },
-      status: SessionStatus.FINALIZED,
-      scheduledDate: { $gte: start, $lte: end },
-    };
-    if (adGroupId) sessionMatch.adGroupId = new Types.ObjectId(adGroupId);
-
-    const sessionsByGroupDay = await this.sessionModel.aggregate([
-      { $match: sessionMatch },
-      {
-        $group: {
-          _id: {
-            adGroupId: '$adGroupId',
-            date: { $dateToString: { format: '%Y-%m-%d', date: '$scheduledDate' } },
-          },
-          revenue: { $sum: '$amountCharged' },
-          teacherCost: { $sum: '$teacherPayout' },
-          sessionCount: { $sum: 1 },
-          adGroupName: { $first: '$adGroupName' },
-        },
-      },
-      { $sort: { '_id.date': 1 } },
-    ]);
-
-    // ── 2. Tổng sessions FINALIZED tất cả theo ngày (để chia overhead) ──
-    const totalSessionsByDay = await this.sessionModel.aggregate([
-      {
-        $match: {
-          status: SessionStatus.FINALIZED,
-          scheduledDate: { $gte: start, $lte: end },
-        },
-      },
-      {
-        $group: {
-          _id: { $dateToString: { format: '%Y-%m-%d', date: '$scheduledDate' } },
-          totalSessions: { $sum: 1 },
-        },
-      },
-    ]);
-    const totalSessionMap = new Map(
-      totalSessionsByDay.map(d => [d._id, d.totalSessions]),
-    );
-
-    // ── 3. Expenses PAID theo ngày ──
-    const expensesByDay = await this.expenseModel.aggregate([
-      {
-        $match: {
-          paymentStatus: 'PAID',
-          expenseDate: { $gte: start, $lte: end },
-        },
-      },
-      {
-        $group: {
-          _id: { $dateToString: { format: '%Y-%m-%d', date: '$expenseDate' } },
-          totalExpense: { $sum: '$amount' },
-        },
-      },
-    ]);
-    const expenseMap = new Map(
-      expensesByDay.map(d => [d._id, d.totalExpense]),
-    );
-
-    // ── 4. Ad costs theo adGroupId + ngày ──
-    const adCostMatch: any = { date: { $gte: start, $lte: end } };
-    if (adGroupId) adCostMatch.adGroupId = new Types.ObjectId(adGroupId);
-
-    const adCostsByGroupDay = await this.adCostModel.aggregate([
-      { $match: adCostMatch },
-      {
-        $group: {
-          _id: {
-            adGroupId: '$adGroupId',
-            date: { $dateToString: { format: '%Y-%m-%d', date: '$date' } },
-          },
-          adSpend: { $sum: '$spend' },
-          adGroupName: { $first: '$adGroupName' },
-          platform: { $first: '$platform' },
-        },
-      },
-    ]);
-    const adCostMap = new Map(
-      adCostsByGroupDay.map(c => [
-        `${c._id.adGroupId}_${c._id.date}`,
-        c,
-      ]),
-    );
-
-    // ── 5. Tính lợi nhuận thuần ──
-    // Collect all unique group+date keys from both sessions and adCosts
-    const allKeys = new Set<string>();
-    const groupInfoMap = new Map<string, { adGroupName: string; platform?: string }>();
-
-    for (const s of sessionsByGroupDay) {
-      const key = `${s._id.adGroupId}_${s._id.date}`;
-      allKeys.add(key);
-      if (!groupInfoMap.has(s._id.adGroupId.toString())) {
-        // Lấy platform từ adCost nếu có
-        const costInfo = adCostMap.get(key);
-        groupInfoMap.set(s._id.adGroupId.toString(), {
-          adGroupName: s.adGroupName || '',
-          platform: costInfo?.platform || '',
-        });
-      }
-    }
-
-    for (const c of adCostsByGroupDay) {
-      const key = `${c._id.adGroupId}_${c._id.date}`;
-      allKeys.add(key);
-      if (!groupInfoMap.has(c._id.adGroupId.toString())) {
-        groupInfoMap.set(c._id.adGroupId.toString(), {
-          adGroupName: c.adGroupName || '',
-          platform: c.platform || '',
-        });
-      }
-    }
-
-    // Build session data map
-    const sessionDataMap = new Map(
-      sessionsByGroupDay.map(s => [
-        `${s._id.adGroupId}_${s._id.date}`,
-        s,
-      ]),
-    );
-
-    const daily: any[] = [];
-
-    for (const key of allKeys) {
-      const [gId, date] = [key.substring(0, 24), key.substring(25)];
-
-      const sessionData = sessionDataMap.get(key);
-      const revenue = sessionData?.revenue || 0;
-      const teacherCost = sessionData?.teacherCost || 0;
-      const sessionCount = sessionData?.sessionCount || 0;
-
-      const grossProfit = revenue - teacherCost;
-
-      const totalSessionsOfDay = totalSessionMap.get(date) || 1;
-      const totalExpenseOfDay = expenseMap.get(date) || 0;
-      const overheadPerSession = totalExpenseOfDay / totalSessionsOfDay;
-      const allocatedOverhead = Math.round(overheadPerSession * sessionCount);
-
-      const adCostData = adCostMap.get(key);
-      const adSpend = adCostData?.adSpend || 0;
-
-      const netProfit = grossProfit - allocatedOverhead - adSpend;
-
-      const info = groupInfoMap.get(gId);
-
-      daily.push({
-        date,
-        adGroupId: gId,
-        adGroupName: info?.adGroupName || '',
-        platform: info?.platform || '',
-        sessionCount,
-        revenue,
-        teacherCost,
-        grossProfit,
-        totalExpenseOfDay,
-        totalSessionsOfDay,
-        overheadPerSession: Math.round(overheadPerSession),
-        allocatedOverhead,
-        adSpend,
-        netProfit,
-        netMargin: revenue > 0 ? Math.round((netProfit / revenue) * 10000) / 100 : 0,
-      });
-    }
-
-    // Sort by date, then adGroupId
-    daily.sort((a, b) => a.date.localeCompare(b.date) || a.adGroupId.localeCompare(b.adGroupId));
-
-    // ── 6. Summary per ad group ──
     const groupSummaryMap = new Map<string, any>();
     for (const row of daily) {
       if (!groupSummaryMap.has(row.adGroupId)) {
@@ -915,18 +1298,19 @@ export class AdsService {
       s.days += 1;
     }
 
-    const summaryByGroup = Array.from(groupSummaryMap.values()).map(s => ({
-      ...s,
-      netMargin: s.totalRevenue > 0
-        ? Math.round((s.totalNetProfit / s.totalRevenue) * 10000) / 100
-        : 0,
-      avgNetProfitPerDay: s.days > 0 ? Math.round(s.totalNetProfit / s.days) : 0,
-      avgNetProfitPerSession: s.totalSessions > 0
-        ? Math.round(s.totalNetProfit / s.totalSessions)
-        : 0,
-    }));
+    const summaryByGroup = Array.from(groupSummaryMap.values())
+      .map((s: any) => ({
+        ...s,
+        netMargin: s.totalRevenue > 0
+          ? Math.round((s.totalNetProfit / s.totalRevenue) * 10000) / 100
+          : 0,
+        avgNetProfitPerDay: s.days > 0 ? Math.round(s.totalNetProfit / s.days) : 0,
+        avgNetProfitPerSession: s.totalSessions > 0
+          ? Math.round(s.totalNetProfit / s.totalSessions)
+          : 0,
+      }))
+      .sort((a, b) => b.totalNetProfit - a.totalNetProfit);
 
-    // Overall summary
     const overall = {
       totalRevenue: summaryByGroup.reduce((s, r) => s + r.totalRevenue, 0),
       totalTeacherCost: summaryByGroup.reduce((s, r) => s + r.totalTeacherCost, 0),
@@ -943,13 +1327,6 @@ export class AdsService {
 
     return { daily, summaryByGroup, overall };
   }
-
-  // ─── Backfill adGroupId cho dữ liệu cũ ───────────────────
-
-  /**
-   * Cập nhật adGroupId từ Order → Student → Session cho dữ liệu đã tồn tại.
-   * Gọi 1 lần hoặc khi cần đồng bộ lại.
-   */
   async backfillAdGroupIds(): Promise<{
     studentsUpdated: number;
     sessionsUpdated: number;
@@ -957,7 +1334,7 @@ export class AdsService {
     let studentsUpdated = 0;
     let sessionsUpdated = 0;
 
-    // Tìm Orders có adGroupId và processedResults.studentId
+    // TÃ¬m Orders cÃ³ adGroupId vÃ  processedResults.studentId
     const orders = await this.orderModel.find({
       adGroupId: { $exists: true, $ne: null },
       'processedResults.studentId': { $exists: true, $ne: null },
@@ -981,7 +1358,7 @@ export class AdsService {
       );
       if (studentResult.modifiedCount > 0) studentsUpdated++;
 
-      // Update Sessions thuộc student này
+      // Update Sessions thuá»™c student nÃ y
       const sessionResult = await this.sessionModel.updateMany(
         { studentId: studentId, adGroupId: { $exists: false } },
         {
@@ -1002,203 +1379,297 @@ export class AdsService {
     return { studentsUpdated, sessionsUpdated };
   }
 
-  // ─── Budget Suggestions (Diminishing Marginal Returns) ────
+  // â”€â”€â”€ Budget Suggestions (Diminishing Marginal Returns) â”€â”€â”€â”€
 
   async getSuggestions(startDate: string, endDate: string, totalBudget: number): Promise<any> {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
-
-    // Get daily data per group
-    const dailyData = await this.adCostModel.aggregate([
-      { $match: { date: { $gte: start, $lte: end } } },
-      {
-        $group: {
-          _id: { adGroupId: '$adGroupId', date: '$date' },
-          spend: { $sum: '$spend' },
-          adGroupName: { $first: '$adGroupName' },
-          platform: { $first: '$platform' },
-        },
-      },
-      { $sort: { '_id.date': 1 } },
-    ]);
-
-    // Get daily orders per ad group
-    const dailyOrders = await this.orderModel.aggregate([
-      {
-        $match: {
-          adGroupId: { $exists: true, $ne: null },
-          createdAt: { $gte: start, $lte: end },
-          status: { $in: ['APPROVED', 'COMPLETED'] },
-        },
-      },
-      {
-        $group: {
-          _id: {
-            adGroupId: '$adGroupId',
-            date: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
-          },
-          orders: { $sum: 1 },
-          revenue: { $sum: '$finalAmount' },
-        },
-      },
-    ]);
-
-    const orderMap = new Map<string, Map<string, { orders: number; revenue: number }>>();
-    for (const o of dailyOrders) {
-      const gId = o._id.adGroupId.toString();
-      if (!orderMap.has(gId)) orderMap.set(gId, new Map());
-      orderMap.get(gId)!.set(o._id.date, { orders: o.orders, revenue: o.revenue });
+    if (!Number.isFinite(totalBudget) || totalBudget < 0) {
+      throw new BadRequestException('totalBudget must be a non-negative number');
     }
 
-    // Organize data by ad group
+    const normalizedBudget = Math.round(totalBudget);
+    const { start, end } = this.getUtcDateRange(startDate, endDate, this.maxSuggestionRangeDays);
+    const dailyRows = await this.buildNetProfitDailyRows(start, end);
+    const maxDailyIncreaseFactor = 1.2; // cap: suggested spend <= previous-day spend * 120%
+
+    if (!dailyRows.length) {
+      return {
+        totalBudget: normalizedBudget,
+        allocated: 0,
+        unallocated: normalizedBudget,
+        totalSuggestedDailySpend: 0,
+        expectedDailyNetProfit: 0,
+        projectedMonthlySpend: 0,
+        projectedMonthlyNetProfit: 0,
+        dailySuggestedTotals: [],
+        monthlyProjection: [],
+        summaryTable: [],
+        suggestions: [],
+      };
+    }
+
     const groupData = new Map<string, {
-      name: string;
+      adGroupName: string;
       platform: string;
-      points: Array<{ spend: number; orders: number; revenue: number }>;
+      rows: NetProfitDailyRow[];
+      points: Array<{ spend: number; netProfit: number }>;
     }>();
 
-    for (const row of dailyData) {
-      const gId = row._id.adGroupId.toString();
-      if (!groupData.has(gId)) {
-        groupData.set(gId, { name: row.adGroupName || '', platform: row.platform, points: [] });
+    for (const row of dailyRows) {
+      if (!groupData.has(row.adGroupId)) {
+        groupData.set(row.adGroupId, {
+          adGroupName: row.adGroupName,
+          platform: row.platform,
+          rows: [],
+          points: [],
+        });
       }
-      const dateStr = row._id.date.toISOString().split('T')[0];
-      const orderInfo = orderMap.get(gId)?.get(dateStr) || { orders: 0, revenue: 0 };
-      groupData.get(gId)!.points.push({
-        spend: row.spend,
-        orders: orderInfo.orders,
-        revenue: orderInfo.revenue,
-      });
+      const target = groupData.get(row.adGroupId)!;
+      target.rows.push(row);
+      if (row.adSpend > 0) {
+        target.points.push({ spend: row.adSpend, netProfit: row.netProfit });
+      }
     }
 
-    // Fit logarithmic curves and calculate suggestions
-    const suggestions: any[] = [];
+    const minPoints = 7;
+    const suggestions: SuggestionModel[] = [];
 
     for (const [gId, data] of groupData) {
-      const points = data.points;
-      const currentAvgSpend = points.reduce((s, p) => s + p.spend, 0) / points.length;
+      const currentAvgSpend = data.rows.length > 0
+        ? Math.round(data.rows.reduce((sum, row) => sum + row.adSpend, 0) / data.rows.length)
+        : 0;
 
-      if (points.length < 7) {
-        // Not enough data for curve fitting
+      if (data.points.length < minPoints) {
         suggestions.push({
           adGroupId: gId,
-          adGroupName: data.name,
+          adGroupName: data.adGroupName,
           platform: data.platform,
-          currentDailySpend: Math.round(currentAvgSpend),
-          suggestedDailySpend: null,
-          expectedOrders: null,
-          expectedRevenue: null,
-          expectedCostPerOrder: null,
+          currentDailySpend: currentAvgSpend,
+          suggestedDailySpend: 0,
+          expectedDailyNetProfit: null,
+          expectedDailyMarginalProfit: null,
           changePercent: null,
           confidence: 'LOW',
-          dataPoints: points.length,
+          dataPoints: data.points.length,
           coeffA: null,
           coeffB: null,
         });
         continue;
       }
 
-      // Fit: orders = a * ln(spend + 1) + b using least squares
-      const { a, b, rSquared } = this.fitLogCurve(
-        points.map(p => p.spend),
-        points.map(p => p.orders),
-      );
-
-      // Also fit revenue curve
-      const revFit = this.fitLogCurve(
-        points.map(p => p.spend),
-        points.map(p => p.revenue),
+      const fit = this.fitLogCurve(
+        data.points.map((p) => p.spend),
+        data.points.map((p) => p.netProfit),
       );
 
       suggestions.push({
         adGroupId: gId,
-        adGroupName: data.name,
+        adGroupName: data.adGroupName,
         platform: data.platform,
-        currentDailySpend: Math.round(currentAvgSpend),
-        suggestedDailySpend: 0, // Will be filled by greedy allocation
-        expectedOrders: 0,
-        expectedRevenue: 0,
-        expectedCostPerOrder: null,
-        changePercent: 0,
-        confidence: rSquared >= 0.5 ? 'HIGH' : rSquared >= 0.2 ? 'MEDIUM' : 'LOW',
-        dataPoints: points.length,
-        coeffA: a,
-        coeffB: b,
-        revCoeffA: revFit.a,
-        revCoeffB: revFit.b,
-        marginalReturn: a > 0 ? a / (currentAvgSpend + 1) : 0,
+        currentDailySpend: currentAvgSpend,
+        suggestedDailySpend: 0,
+        expectedDailyNetProfit: null,
+        expectedDailyMarginalProfit: null,
+        changePercent: null,
+        confidence: fit.rSquared >= 0.5 ? 'HIGH' : fit.rSquared >= 0.2 ? 'MEDIUM' : 'LOW',
+        dataPoints: data.points.length,
+        coeffA: fit.a,
+        coeffB: fit.b,
       });
     }
 
-    // Greedy allocation for groups with sufficient data
-    const allocatable = suggestions.filter(s => s.coeffA !== null && s.coeffA > 0);
-    const step = 100000; // 100K VND increments
     const allocations = new Map<string, number>();
-    for (const s of allocatable) {
-      allocations.set(s.adGroupId, 0);
-    }
+    for (const s of suggestions) allocations.set(s.adGroupId, 0);
 
-    let remaining = totalBudget;
-    while (remaining >= step && allocatable.length > 0) {
-      // Find group with highest marginal return at current allocation
-      let bestGroup: any = null;
-      let bestMarginal = -Infinity;
+    let remainingBudget = normalizedBudget;
+    const allocatable = suggestions.filter((s) => s.coeffA !== null && s.coeffA > 0);
+    const step = 100000;
 
-      for (const s of allocatable) {
-        const currentAlloc = allocations.get(s.adGroupId)!;
-        const marginal = s.coeffA / (currentAlloc + 1);
-        if (marginal > bestMarginal) {
-          bestMarginal = marginal;
-          bestGroup = s;
+    if (allocatable.length > 0 && remainingBudget > 0) {
+      while (remainingBudget >= step) {
+        let bestGroup: SuggestionModel | null = null;
+        let bestMarginal = -Infinity;
+
+        for (const s of allocatable) {
+          const currentAlloc = allocations.get(s.adGroupId) || 0;
+          const marginal = (s.coeffA as number) / (currentAlloc + 1);
+          if (marginal > bestMarginal) {
+            bestMarginal = marginal;
+            bestGroup = s;
+          }
+        }
+
+        if (!bestGroup || bestMarginal <= 0) break;
+
+        allocations.set(bestGroup.adGroupId, (allocations.get(bestGroup.adGroupId) || 0) + step);
+        remainingBudget -= step;
+      }
+
+      if (remainingBudget > 0) {
+        let bestGroup: SuggestionModel | null = null;
+        let bestMarginal = -Infinity;
+
+        for (const s of allocatable) {
+          const currentAlloc = allocations.get(s.adGroupId) || 0;
+          const marginal = (s.coeffA as number) / (currentAlloc + 1);
+          if (marginal > bestMarginal) {
+            bestMarginal = marginal;
+            bestGroup = s;
+          }
+        }
+
+        if (bestGroup && bestMarginal > 0) {
+          allocations.set(bestGroup.adGroupId, (allocations.get(bestGroup.adGroupId) || 0) + remainingBudget);
+          remainingBudget = 0;
         }
       }
+    } else if (suggestions.length > 0 && remainingBudget > 0) {
+      const weights = suggestions.map((s) => Math.max(0, s.currentDailySpend));
+      const weightSum = weights.reduce((sum, value) => sum + value, 0);
 
-      if (!bestGroup || bestMarginal <= 0) break;
-
-      allocations.set(bestGroup.adGroupId, allocations.get(bestGroup.adGroupId)! + step);
-      remaining -= step;
+      if (weightSum > 0) {
+        let distributed = 0;
+        for (let i = 0; i < suggestions.length; i++) {
+          const s = suggestions[i];
+          const isLast = i === suggestions.length - 1;
+          const alloc = isLast
+            ? remainingBudget - distributed
+            : Math.floor((remainingBudget * weights[i]) / weightSum);
+          allocations.set(s.adGroupId, alloc);
+          distributed += alloc;
+        }
+      } else {
+        const perGroup = Math.floor(remainingBudget / suggestions.length);
+        let remainder = remainingBudget - (perGroup * suggestions.length);
+        for (const s of suggestions) {
+          const extra = remainder > 0 ? 1 : 0;
+          allocations.set(s.adGroupId, perGroup + extra);
+          if (remainder > 0) remainder -= 1;
+        }
+      }
+      remainingBudget = 0;
     }
 
-    // Distribute remaining to LOW confidence groups equally
-    const lowConfidence = suggestions.filter(s => s.confidence === 'LOW');
-    if (lowConfidence.length > 0 && remaining > 0) {
-      const perGroup = Math.floor(remaining / lowConfidence.length);
-      for (const s of lowConfidence) {
-        allocations.set(s.adGroupId, (allocations.get(s.adGroupId) || 0) + perGroup);
+    const latestSpendByGroup = new Map<string, number>();
+    for (const [gId, data] of groupData.entries()) {
+      const sortedRows = [...data.rows].sort((a, b) => a.date.localeCompare(b.date));
+      const latest = sortedRows[sortedRows.length - 1];
+      latestSpendByGroup.set(gId, latest?.adSpend || 0);
+    }
+
+    const cappedAllocations = new Map<string, number>();
+    const capInfoByGroup = new Map<string, {
+      previousDayAdSpend: number | null;
+      capByPreviousDay: number | null;
+      cappedByDailyGuard: boolean;
+    }>();
+    for (const s of suggestions) {
+      const rawAlloc = allocations.get(s.adGroupId) || 0;
+      const latestSpend = latestSpendByGroup.get(s.adGroupId) || 0;
+      if (latestSpend > 0) {
+        const capByPreviousDay = Math.round(latestSpend * maxDailyIncreaseFactor);
+        const suggested = Math.min(rawAlloc, capByPreviousDay);
+        cappedAllocations.set(s.adGroupId, suggested);
+        capInfoByGroup.set(s.adGroupId, {
+          previousDayAdSpend: latestSpend,
+          capByPreviousDay,
+          cappedByDailyGuard: rawAlloc > capByPreviousDay,
+        });
+      } else {
+        cappedAllocations.set(s.adGroupId, rawAlloc);
+        capInfoByGroup.set(s.adGroupId, {
+          previousDayAdSpend: null,
+          capByPreviousDay: null,
+          cappedByDailyGuard: false,
+        });
       }
     }
 
-    // Update suggestions with allocation results
+    let expectedDailyNetProfit = 0;
     for (const s of suggestions) {
-      const alloc = allocations.get(s.adGroupId) || 0;
+      const alloc = cappedAllocations.get(s.adGroupId) || 0;
       s.suggestedDailySpend = alloc;
 
-      if (s.coeffA !== null) {
-        s.expectedOrders = Math.max(0, Math.round((s.coeffA * Math.log(alloc + 1) + s.coeffB) * 100) / 100);
-        s.expectedRevenue = Math.max(0, Math.round(s.revCoeffA * Math.log(alloc + 1) + s.revCoeffB));
-        s.expectedCostPerOrder = s.expectedOrders > 0 ? Math.round(alloc / s.expectedOrders) : null;
+      if (s.coeffA !== null && s.coeffB !== null) {
+        const predicted = s.coeffA * Math.log(alloc + 1) + s.coeffB;
+        const marginal = s.coeffA / (alloc + 1);
+        s.expectedDailyNetProfit = Math.round(predicted);
+        s.expectedDailyMarginalProfit = Math.round(marginal * 100) / 100;
+        expectedDailyNetProfit += s.expectedDailyNetProfit;
       }
 
       s.changePercent = s.currentDailySpend > 0
         ? Math.round(((alloc - s.currentDailySpend) / s.currentDailySpend) * 100)
         : null;
-
-      // Clean up internal coefficients
-      delete s.coeffA;
-      delete s.coeffB;
-      delete s.revCoeffA;
-      delete s.revCoeffB;
-      delete s.marginalReturn;
     }
 
+    const totalSuggestedDailySpend = suggestions.reduce((sum, row) => sum + row.suggestedDailySpend, 0);
+
+    const summaryTable = dailyRows
+      .map((row) => {
+        const rawSuggestedAdSpend = allocations.get(row.adGroupId) || 0;
+        const suggestedAdSpend = cappedAllocations.get(row.adGroupId) || 0;
+        const capInfo = capInfoByGroup.get(row.adGroupId);
+        return {
+          date: row.date,
+          adGroupId: row.adGroupId,
+          adGroupName: row.adGroupName,
+          platform: row.platform,
+          netProfit: row.netProfit,
+          actualAdSpend: row.adSpend,
+          rawSuggestedAdSpend,
+          suggestedAdSpend,
+          previousDayAdSpend: capInfo?.previousDayAdSpend ?? null,
+          capByPreviousDay: capInfo?.capByPreviousDay ?? null,
+          cappedByDailyGuard: capInfo?.cappedByDailyGuard ?? false,
+        };
+      })
+      .sort((a, b) => a.date.localeCompare(b.date) || a.adGroupId.localeCompare(b.adGroupId));
+
+    const netProfitByDate = new Map<string, number>();
+    for (const row of summaryTable) {
+      netProfitByDate.set(row.date, (netProfitByDate.get(row.date) || 0) + row.netProfit);
+    }
+    const uniqueDates = Array.from(new Set(dailyRows.map((row) => row.date))).sort();
+    const dailySuggestedTotals = uniqueDates.map((date) => ({
+      date,
+      totalNetProfit: netProfitByDate.get(date) || 0,
+      totalSuggestedAdSpend: totalSuggestedDailySpend,
+    }));
+
+    const monthlyProjection = Array.from(new Set(dailySuggestedTotals.map((row) => row.date.slice(0, 7))))
+      .sort()
+      .map((month) => {
+        const [yearStr, monthStr] = month.split('-');
+        const year = Number(yearStr);
+        const monthNumber = Number(monthStr);
+        const monthDate = new Date(Date.UTC(year, monthNumber - 1, 1));
+        const days = this.daysInMonth(monthDate);
+        return {
+          month,
+          daysInMonth: days,
+          projectedSpend: totalSuggestedDailySpend * days,
+          projectedNetProfit: Math.round(expectedDailyNetProfit * days),
+        };
+      });
+
+    const cleanSuggestions = suggestions
+      .map(({ coeffA, coeffB, ...item }) => item)
+      .sort((a, b) => b.suggestedDailySpend - a.suggestedDailySpend);
+
     return {
-      totalBudget,
-      allocated: suggestions.reduce((s, r) => s + (r.suggestedDailySpend || 0), 0),
-      suggestions: suggestions.sort((a, b) => (b.suggestedDailySpend || 0) - (a.suggestedDailySpend || 0)),
+      totalBudget: normalizedBudget,
+      allocated: totalSuggestedDailySpend,
+      unallocated: Math.max(0, normalizedBudget - totalSuggestedDailySpend),
+      totalSuggestedDailySpend,
+      expectedDailyNetProfit,
+      projectedMonthlySpend: monthlyProjection[0]?.projectedSpend || 0,
+      projectedMonthlyNetProfit: monthlyProjection[0]?.projectedNetProfit || 0,
+      dailySuggestedTotals,
+      monthlyProjection,
+      summaryTable,
+      suggestions: cleanSuggestions,
     };
   }
-
   /**
    * Fit: y = a * ln(x + 1) + b using least squares
    * Returns coefficients and R-squared
@@ -1231,3 +1702,8 @@ export class AdsService {
     return { a, b, rSquared: Math.max(0, rSquared) };
   }
 }
+
+
+
+
+

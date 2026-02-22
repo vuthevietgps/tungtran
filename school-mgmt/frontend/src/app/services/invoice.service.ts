@@ -3,6 +3,14 @@ import { Injectable, inject } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
 
+export type InvoiceStatus =
+  | 'PENDING_APPROVAL'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'CANCELLED'
+  | 'PAID'
+  | 'PENDING';
+
 export interface InvoiceItem {
   _id: string;
   invoiceNumber: string;
@@ -19,13 +27,13 @@ export interface InvoiceItem {
     code: string;
     pricePerSession?: number;
   };
-  sessions?: number;          // Số buổi đăng ký
-  pricePerSession?: number;   // Giá mỗi buổi tại thời điểm lập hóa đơn
+  sessions?: number;
+  pricePerSession?: number;
   amount: number;
   paymentDate: string;
   receiptImage?: string;
   description?: string;
-  status: string;
+  status: InvoiceStatus;
   createdBy: {
     _id: string;
     fullName: string;
@@ -33,6 +41,21 @@ export interface InvoiceItem {
   };
   createdAt: string;
   updatedAt: string;
+}
+
+export interface InvoiceUpsertPayload {
+  invoiceNumber: string;
+  studentId: string;
+  classId?: string;
+  sessions?: number;
+  pricePerSession?: number;
+  amount: number;
+  paymentDate: string;
+  receiptImage?: string;
+  description?: string;
+  invoiceType?: 'TUITION' | 'MATERIAL' | 'OTHER';
+  saleId?: string;
+  referenceDuration?: number;
 }
 
 export interface InvoiceMutationResult {
@@ -60,7 +83,7 @@ export class InvoiceService {
     }
   }
 
-  async create(payload: Omit<InvoiceItem, '_id' | 'createdBy' | 'createdAt' | 'updatedAt'>): Promise<InvoiceMutationResult> {
+  async create(payload: InvoiceUpsertPayload): Promise<InvoiceMutationResult> {
     try {
       await firstValueFrom(
         this.http.post(`${environment.apiBase}/invoices`, payload, { withCredentials: true }),
@@ -71,10 +94,29 @@ export class InvoiceService {
     }
   }
 
-  async update(id: string, payload: Partial<Omit<InvoiceItem, '_id' | 'createdBy' | 'createdAt' | 'updatedAt'>>): Promise<InvoiceMutationResult> {
+  async update(id: string, payload: Partial<InvoiceUpsertPayload>): Promise<InvoiceMutationResult> {
     try {
       await firstValueFrom(
         this.http.patch(`${environment.apiBase}/invoices/${id}`, payload, { withCredentials: true }),
+      );
+      return { ok: true };
+    } catch (error: any) {
+      return this.fail(error);
+    }
+  }
+
+  async approve(
+    id: string,
+    action: 'APPROVE' | 'REJECT',
+    rejectedReason?: string,
+  ): Promise<InvoiceMutationResult> {
+    try {
+      await firstValueFrom(
+        this.http.post(
+          `${environment.apiBase}/invoices/${id}/approve`,
+          { action, rejectedReason },
+          { withCredentials: true },
+        ),
       );
       return { ok: true };
     } catch (error: any) {
@@ -104,7 +146,7 @@ export class InvoiceService {
       );
       return { ok: true, url: res?.url };
     } catch (error: any) {
-      return this.fail(error, 'Không thể tải ảnh lên');
+      return this.fail(error, 'Khong the tai anh len');
     }
   }
 
@@ -122,8 +164,9 @@ export class InvoiceService {
     }
   }
 
-  private fail(error: any, fallback = 'Không thể thực hiện thao tác'): InvoiceMutationResult {
-    const message = error?.error?.message || fallback;
+  private fail(error: any, fallback = 'Khong the thuc hien thao tac'): InvoiceMutationResult {
+    const rawMessage = error?.error?.message;
+    const message = Array.isArray(rawMessage) ? rawMessage.join(', ') : rawMessage || fallback;
     return { ok: false, message };
   }
 }

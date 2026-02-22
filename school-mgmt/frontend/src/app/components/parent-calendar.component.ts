@@ -104,15 +104,15 @@ const STUDENT_COLORS = [
     <div class="session-card" *ngFor="let s of selectedSessions()">
       <div class="session-header">
         <span class="student-badge" [style.background]="getStudentColor(s.studentId._id)">
-          {{ s.studentId?.fullName || 'N/A' }}
+          {{ s.studentId.fullName || 'N/A' }}
         </span>
         <span class="status-badge" [style.background]="getStatusColor(s.status)">
           {{ getStatusLabel(s.status) }}
         </span>
       </div>
       <div class="session-info">
-        <div><strong>Lớp:</strong> {{ s.classId?.name || 'N/A' }} ({{ s.classId?.code || '' }})</div>
-        <div><strong>Giáo viên:</strong> {{ s.teacherId?.fullName || 'N/A' }}</div>
+        <div><strong>Lớp:</strong> {{ s.classId.name || 'N/A' }} ({{ s.classId.code || '' }})</div>
+        <div><strong>Giáo viên:</strong> {{ s.teacherId.fullName || 'N/A' }}</div>
         <div *ngIf="s.scheduledStartTime">
           <strong>Thời gian:</strong> {{ s.scheduledStartTime }} - {{ s.scheduledEndTime || '?' }}
         </div>
@@ -440,7 +440,7 @@ export class ParentCalendarComponent implements OnInit {
       } else {
         map.set(id, {
           color: this.studentColorMap().get(id) || '#94a3b8',
-          studentName: s.studentId?.fullName || 'N/A',
+          studentName: s.studentId.fullName || 'N/A',
           count: 1,
         });
       }

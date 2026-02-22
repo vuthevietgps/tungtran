@@ -11,7 +11,7 @@ export enum StaffPayrollStatus {
   REJECTED = 'REJECTED',
 }
 
-@Schema({ timestamps: true })
+@Schema({ timestamps: true, optimisticConcurrency: true })
 export class StaffPayroll {
   /** Nhân viên */
   @Prop({ type: SchemaTypes.ObjectId, ref: 'User', required: true })
@@ -167,6 +167,13 @@ export class StaffPayroll {
   @Prop({ type: String, trim: true })
   rejectionReason?: string;
 
+  /** Người từ chối (DIRECTOR) — tách biệt với approvedBy */
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'User' })
+  rejectedBy?: Types.ObjectId;
+
+  @Prop({ type: Date })
+  rejectedAt?: Date;
+
   @Prop({ type: Date })
   paidAt?: Date;
 
@@ -187,5 +194,5 @@ export const StaffPayrollSchema = SchemaFactory.createForClass(StaffPayroll);
 
 StaffPayrollSchema.index({ userId: 1, periodStart: 1, periodEnd: 1 });
 StaffPayrollSchema.index({ status: 1 });
-StaffPayrollSchema.index({ payrollCode: 1 }, { unique: true });
 StaffPayrollSchema.index({ createdAt: -1 });
+

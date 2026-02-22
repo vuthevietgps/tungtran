@@ -35,6 +35,14 @@ export interface SalaryConfig {
   updatedAt?: string;
 }
 
+export interface SalaryConfigUserOption {
+  _id: string;
+  fullName: string;
+  role: string;
+  status?: string;
+  hasSalaryConfig?: boolean;
+}
+
 @Injectable({ providedIn: 'root' })
 export class SalaryConfigService {
   private apiUrl = `${environment.apiBase}/salary-config`;
@@ -57,6 +65,10 @@ export class SalaryConfigService {
 
   async getByUserId(userId: string): Promise<SalaryConfig> {
     return firstValueFrom(this.http.get<SalaryConfig>(`${this.apiUrl}/${userId}`));
+  }
+
+  async listUserOptions(): Promise<SalaryConfigUserOption[]> {
+    return firstValueFrom(this.http.get<SalaryConfigUserOption[]>(`${this.apiUrl}/users/options`));
   }
 
   async create(data: any): Promise<SalaryConfig> {

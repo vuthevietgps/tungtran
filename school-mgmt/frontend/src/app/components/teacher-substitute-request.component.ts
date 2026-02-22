@@ -9,17 +9,19 @@ import { AuthService } from '../services/auth.service';
 const STATUS_LABELS: Record<string, string> = {
   OPEN: 'Mới tạo',
   IN_PROGRESS: 'Đang xử lý',
+  WAITING_INFO: 'Chờ thông tin',
   RESOLVED: 'Đã giải quyết',
   CLOSED: 'Đã đóng',
-  REJECTED: 'Từ chối',
+  CANCELLED: 'Đã hủy',
 };
 
 const STATUS_COLORS: Record<string, string> = {
   OPEN: '#3b82f6',
   IN_PROGRESS: '#f59e0b',
+  WAITING_INFO: '#f59e0b',
   RESOLVED: '#10b981',
   CLOSED: '#6b7280',
-  REJECTED: '#ef4444',
+  CANCELLED: '#ef4444',
 };
 
 const PRIORITY_LABELS: Record<string, string> = {
@@ -199,15 +201,18 @@ export class TeacherSubstituteRequestComponent implements OnInit {
   }
 
   getClassName(ticket: any): string {
-    return ticket.metadata?.className || ticket.title?.replace('Yêu cầu GV dạy thay - ', '') || '—';
+    const classRef = ticket.classId;
+    if (classRef?.name) return classRef.name;
+    if (typeof classRef === 'string') return classRef;
+    return '—';
   }
 
   getFromDate(ticket: any): string {
-    return ticket.metadata?.fromDate || '';
+    return ticket.substituteFromDate || '';
   }
 
   getToDate(ticket: any): string {
-    return ticket.metadata?.toDate || '';
+    return ticket.substituteToDate || '';
   }
 
   async loadClasses() {
@@ -266,15 +271,13 @@ export class TeacherSubstituteRequestComponent implements OnInit {
 
     const payload = {
       type: 'SUBSTITUTE_TEACHER',
-      title: `Yêu cầu GV dạy thay - ${className}`,
+      subject: `Yêu cầu GV dạy thay - ${className}`,
       description: this.form.reason,
       priority: 'HIGH',
-      metadata: {
-        classId: this.form.classId,
-        className,
-        fromDate: this.form.fromDate,
-        toDate: this.form.toDate,
-      },
+      classId: this.form.classId,
+      teacherId: this.auth.userSignal()?.sub,
+      substituteFromDate: this.form.fromDate,
+      substituteToDate: this.form.toDate,
     };
 
     try {

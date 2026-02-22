@@ -33,7 +33,7 @@ import { Role, ROLE_LABELS } from '../models/role.enum';
     </header>
 
     <!-- Stats -->
-    <div class="stats-bar" *ngIf="isStaff() && serverStats()">
+    <div class="stats-bar" *ngIf="isOpsOrDirector() && serverStats()">
       <div class="stat-card">
         <span class="stat-value">{{ getStatCount('OPEN') }}</span>
         <span class="stat-label">Mới tạo</span>
@@ -221,7 +221,7 @@ import { Role, ROLE_LABELS } from '../models/role.enum';
           <div class="reply-box" *ngIf="canComment()">
             <textarea [(ngModel)]="newComment" placeholder="Nhập nội dung trả lời..." rows="3"></textarea>
             <div class="reply-actions">
-              <label *ngIf="isStaff()" class="internal-check">
+                <label *ngIf="isOpsOrDirector()" class="internal-check">
                 <input type="checkbox" [(ngModel)]="newCommentInternal" />
                 Ghi chú nội bộ (PH/GV không thấy)
               </label>
@@ -238,7 +238,7 @@ import { Role, ROLE_LABELS } from '../models/role.enum';
         <h4>Hành động</h4>
 
         <!-- Workflow actions for OPS/DIRECTOR -->
-        <div class="action-group" *ngIf="isStaff()">
+        <div class="action-group" *ngIf="isOpsOrDirector()">
           <button class="action-btn start" (click)="doAction('start')"
             *ngIf="['OPEN','WAITING_INFO'].includes(selectedTicket()!.status)">
             ▶ Nhận xử lý
@@ -269,7 +269,7 @@ import { Role, ROLE_LABELS } from '../models/role.enum';
         </div>
 
         <!-- Assign / Priority for staff -->
-        <div class="action-group" *ngIf="isStaff() && !['RESOLVED','CLOSED','CANCELLED'].includes(selectedTicket()!.status)">
+        <div class="action-group" *ngIf="isOpsOrDirector() && !['RESOLVED','CLOSED','CANCELLED'].includes(selectedTicket()!.status)">
           <h5>Ưu tiên</h5>
           <select [(ngModel)]="editPriority" (change)="updatePriority()">
             <option *ngFor="let p of priorityOptions" [value]="p.value">{{ p.label }}</option>
@@ -736,18 +736,19 @@ export class TicketsComponent {
     const role = this.auth.userSignal()?.role;
     if (role === Role.OPS) {
       this.activeTab = 'assigned';
-    } else if (role === Role.DIRECTOR) {
+    } else if (role === Role.DIRECTOR || role === Role.ACCOUNTING) {
       this.activeTab = 'all';
     } else {
       this.activeTab = 'my';
     }
     this.load();
-    if (this.isStaff()) this.loadStats();
+    if (this.isOpsOrDirector()) this.loadStats();
   }
 
   // ─── Helpers ───
   currentUserId(): string { return this.auth.userSignal()?.sub || ''; }
   isStaff(): boolean { return this.auth.hasRole([Role.OPS, Role.DIRECTOR, Role.ACCOUNTING]); }
+  isOpsOrDirector(): boolean { return this.auth.hasRole([Role.OPS, Role.DIRECTOR]); }
   isOps(): boolean { return this.auth.hasRole([Role.OPS]); }
   isCreator(): boolean {
     const t = this.selectedTicket();

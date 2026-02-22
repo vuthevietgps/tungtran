@@ -258,7 +258,7 @@ export class AttendanceComponent {
   constructor(
     private attendanceService: AttendanceService
   ) {
-    this.todayString = new Date().toISOString().split('T')[0];
+    this.todayString = this.formatLocalDateInput(new Date());
     this.selectedDate = this.todayString;
     this.loadClasses();
   }
@@ -418,12 +418,26 @@ export class AttendanceComponent {
         attendances
       };
 
-      const success = await this.attendanceService.bulkMarkAttendance(payload);
+      const result = await this.attendanceService.bulkMarkAttendance(payload);
       
-      if (success) {
+      if (result) {
         // Reload data to get updated state
         await this.loadAttendance();
-        // Success feedback could be added here
+
+        if (result.totalErrors > 0) {
+          const studentNameMap = new Map(
+            data.attendanceList.map((item) => [item.student._id, item.student.fullName]),
+          );
+          const preview = result.errors
+            .slice(0, 3)
+            .map((e) => `${studentNameMap.get(e.studentId) || e.studentId}: ${e.message}`)
+            .join(' | ');
+          const more =
+            result.totalErrors > 3 ? ` (va ${result.totalErrors - 3} loi khac)` : '';
+          this.error.set(
+            `Da luu mot phan diem danh. Co ${result.totalErrors} hoc sinh loi. ${preview}${more}`,
+          );
+        }
       } else {
         this.error.set('Không thể lưu điểm danh. Vui lòng thử lại.');
       }
@@ -456,6 +470,13 @@ export class AttendanceComponent {
     return item.student._id;
   }
 
+  private formatLocalDateInput(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
   async generateLinkForStudent(studentId: string) {
     if (!this.selectedClassId || !this.selectedDate) {
       alert('Vui lòng chọn lớp và ngày trước khi tạo link');
@@ -472,14 +493,23 @@ export class AttendanceComponent {
         this.selectedDate
       );
 
-      // Copy link to clipboard
-      await navigator.clipboard.writeText(result.attendanceUrl);
+      // Clipboard can fail on some browsers/permissions; do not treat it as API failure.
+      let copiedToClipboard = false;
+      try {
+        await navigator.clipboard.writeText(result.attendanceUrl);
+        copiedToClipboard = true;
+      } catch {
+        copiedToClipboard = false;
+      }
       
       // Show success message with link
       const studentName = this.attendanceData()?.attendanceList
         .find(item => item.student._id === studentId)?.student.fullName;
       
-      alert(`✅ Đã tạo link điểm danh cho ${studentName}!\n\nLink đã được copy vào clipboard:\n${result.attendanceUrl}\n\nHạn sử dụng: ${new Date(result.expiresAt).toLocaleString('vi-VN')}`);
+      const copyMessage = copiedToClipboard
+        ? 'Link đã được copy vào clipboard:'
+        : 'Không thể tự động copy. Vui lòng copy link thủ công:';
+      alert(`✅ Đã tạo link điểm danh cho ${studentName}!\n\n${copyMessage}\n${result.attendanceUrl}\n\nHạn sử dụng: ${new Date(result.expiresAt).toLocaleString('vi-VN')}`);
     } catch (error: any) {
       this.error.set(error.message || 'Không thể tạo link điểm danh');
       alert('❌ ' + this.error());

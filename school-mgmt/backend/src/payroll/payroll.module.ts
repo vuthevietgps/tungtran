@@ -9,6 +9,7 @@ import {
   PayrollItemSchema,
 } from './schemas/payroll.schema';
 import { SessionsModule } from '../sessions/sessions.module';
+import { FinancialControlModule } from '../financial-control/financial-control.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { SessionsModule } from '../sessions/sessions.module';
       { name: PayrollItem.name, schema: PayrollItemSchema },
     ]),
     SessionsModule,
+    FinancialControlModule, // BUG #3 fix: cần FinancialControlBankFundService để ghi BankTransaction khi trả lương
   ],
   controllers: [PayrollController],
   providers: [PayrollService],

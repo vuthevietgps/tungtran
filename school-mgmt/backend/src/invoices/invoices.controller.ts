@@ -57,8 +57,11 @@ export class InvoicesController {
 
   @Get('student/:studentId')
   @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.SALE)
-  getInvoicesByStudent(@Param('studentId', ParseMongoIdPipe) studentId: string) {
-    return this.invoicesService.getInvoicesByStudent(studentId);
+  getInvoicesByStudent(
+    @Param('studentId', ParseMongoIdPipe) studentId: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.invoicesService.getInvoicesByStudent(studentId, req.user);
   }
 
   @Get('payments/all')
@@ -92,6 +95,17 @@ export class InvoicesController {
     @Req() req: AuthenticatedRequest,
   ) {
     return this.invoicesService.approveInvoice(id, dto, req.user);
+  }
+
+  /** Hủy hóa đơn APPROVED và rollback wallet — BUG NGHIÊM TRỌNG fix */
+  @Post(':id/cancel')
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING)
+  cancelInvoice(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Body('reason') reason: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.invoicesService.cancelInvoice(id, req.user, reason);
   }
 
   @Patch(':id')

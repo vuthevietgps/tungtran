@@ -55,8 +55,8 @@ export class LeadsController {
 
   @Get(':id')
   @Roles(Role.SALE, Role.OPS, Role.DIRECTOR)
-  findOne(@Param('id', ParseMongoIdPipe) id: string) {
-    return this.leadsService.findOne(id);
+  findOne(@Param('id', ParseMongoIdPipe) id: string, @Req() req: AuthenticatedRequest) {
+    return this.leadsService.findOne(id, req.user);
   }
 
   @Patch(':id')

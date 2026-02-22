@@ -187,36 +187,63 @@ export class ExpensesService {
   }
 
   async update(id: string, dto: UpdateExpenseDto, user: JwtPayload): Promise<Expense> {
-    const expense = await this.findOne(id);
+    const isPrivileged = ['DIRECTOR', 'ACCOUNTING'].includes(user.role);
+    const updatePayload: any = { ...dto };
+    if (dto.expenseDate) {
+      updatePayload.expenseDate = new Date(dto.expenseDate);
+    }
 
-    // Only creator or DIRECTOR/ACCOUNTING can update
-    if (String(expense.createdById) !== String(user._id) && !['DIRECTOR', 'ACCOUNTING'].includes(user.role)) {
+    const updated = await this.expenseModel.findOneAndUpdate(
+      {
+        _id: id,
+        paymentStatus: { $ne: PaymentStatus.PAID },
+        ...(isPrivileged ? {} : { createdById: user._id }),
+      },
+      { $set: updatePayload },
+      { new: true },
+    ).exec();
+
+    if (updated) return updated;
+
+    const existing = await this.expenseModel.findById(id).exec();
+    if (!existing) throw new NotFoundException('Expense not found');
+
+    if (!isPrivileged && String(existing.createdById) !== String(user._id)) {
       throw new BadRequestException('You do not have permission to update this expense');
     }
 
-    // Cannot update if already paid
-    if (expense.paymentStatus === PaymentStatus.PAID) {
+    if (existing.paymentStatus === PaymentStatus.PAID) {
       throw new BadRequestException('Cannot update a paid expense');
     }
 
-    Object.assign(expense, dto);
-    return expense.save();
+    throw new BadRequestException('Expense cannot be updated');
   }
 
   async delete(id: string, user: JwtPayload): Promise<void> {
-    const expense = await this.findOne(id);
+    const isDirector = user.role === 'DIRECTOR';
 
-    // Only creator or DIRECTOR can delete
-    if (String(expense.createdById) !== String(user._id) && user.role !== 'DIRECTOR') {
+    const deleted = await this.expenseModel.findOneAndDelete(
+      {
+        _id: id,
+        paymentStatus: { $ne: PaymentStatus.PAID },
+        ...(isDirector ? {} : { createdById: user._id }),
+      },
+    ).exec();
+
+    if (deleted) return;
+
+    const existing = await this.expenseModel.findById(id).exec();
+    if (!existing) throw new NotFoundException('Expense not found');
+
+    if (!isDirector && String(existing.createdById) !== String(user._id)) {
       throw new BadRequestException('You do not have permission to delete this expense');
     }
 
-    // Cannot delete if already paid
-    if (expense.paymentStatus === PaymentStatus.PAID) {
+    if (existing.paymentStatus === PaymentStatus.PAID) {
       throw new BadRequestException('Cannot delete a paid expense');
     }
 
-    await this.expenseModel.findByIdAndDelete(id).exec();
+    throw new BadRequestException('Expense cannot be deleted');
   }
 
   async approve(id: string, user: JwtPayload): Promise<Expense> {
@@ -271,53 +298,73 @@ export class ExpensesService {
   }
 
   async markPaid(id: string, dto: PayExpenseDto, user: JwtPayload): Promise<Expense> {
-    const updated = await this.expenseModel.findOneAndUpdate(
-      { _id: id, paymentStatus: PaymentStatus.APPROVED_UNPAID },
-      {
-        $set: {
-          paymentStatus: PaymentStatus.PAID,
-          paidById: user._id,
-          paidByName: user.fullName,
-          paidAt: dto.paidAt ? new Date(dto.paidAt) : new Date(),
-          paymentMethod: dto.paymentMethod,
-          ...(dto.notes ? { notes: dto.notes } : {}),
-        },
-      },
-      { new: true },
-    ).exec();
+    const session = await this.connection.startSession();
+    let paidExpense: Expense | null = null;
 
-    if (!updated) {
-      const exists = await this.expenseModel.findById(id).exec();
-      if (!exists) throw new NotFoundException('Expense not found');
-      throw new BadRequestException(
-        `Expense đang ở trạng thái "${exists.paymentStatus}", cần ở "APPROVED_UNPAID" để đánh dấu đã thanh toán`,
-      );
-    }
+    try {
+      await session.withTransaction(async () => {
+        const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
+        const updated = await this.expenseModel.findOneAndUpdate(
+          { _id: id, paymentStatus: PaymentStatus.APPROVED_UNPAID },
+          {
+            $set: {
+              paymentStatus: PaymentStatus.PAID,
+              paidById: user._id,
+              paidByName: user.fullName,
+              paidAt,
+              paymentMethod: dto.paymentMethod,
+              ...(dto.notes ? { notes: dto.notes } : {}),
+            },
+          },
+          { new: true, session },
+        ).exec();
 
-    // Auto-create bank transaction for bank transfer payments
-    if (dto.paymentMethod === 'BANK_TRANSFER') {
-      try {
-        const bankSummary = await this.financialControlService.getBankAccountSummary();
-        const primaryAccount = bankSummary.primaryAccount || bankSummary.accounts?.[0];
-        if (primaryAccount) {
+        if (!updated) {
+          const exists = await this.expenseModel.findById(id).session(session).exec();
+          if (!exists) throw new NotFoundException('Expense not found');
+          throw new BadRequestException(
+            `Expense đang ở trạng thái "${exists.paymentStatus}", cần ở "APPROVED_UNPAID" để đánh dấu đã thanh toán`,
+          );
+        }
+
+        // BUG #2 fix: ghi nhận giao dịch ngân hàng cho cả BANK_TRANSFER lẫn khi chỉ định bankAccountId
+        const shouldRecordBank = dto.paymentMethod === 'BANK_TRANSFER' || !!dto.bankAccountId;
+        if (shouldRecordBank) {
+          let bankAccountId = dto.bankAccountId;
+          if (!bankAccountId) {
+            // BANK_TRANSFER không chỉ định tài khoản → dùng tài khoản chính
+            const bankSummary = await this.financialControlService.getBankAccountSummary();
+            const primaryAccount = bankSummary.primaryAccount || bankSummary.accounts?.[0];
+            if (!primaryAccount) {
+              throw new BadRequestException('Không có tài khoản ngân hàng hoạt động để ghi nhận chi tiền');
+            }
+            bankAccountId = primaryAccount._id.toString();
+          }
+
           await this.financialControlService.recordBankTransaction({
-            bankAccountId: primaryAccount._id.toString(),
+            bankAccountId: bankAccountId!,
             type: 'WITHDRAWAL',
             category: 'EXPENSE',
             amount: updated.amount,
-            transactionDate: (dto.paidAt ? new Date(dto.paidAt) : new Date()).toISOString().split('T')[0],
+            transactionDate: paidAt.toISOString().split('T')[0],
             description: `Chi phí: ${updated.title} (${updated.expenseCode})`,
             reference: updated.expenseCode,
             referenceId: updated._id?.toString(),
             referenceType: 'EXPENSE',
-          }, user);
+          }, user, { session });
         }
-      } catch (err: any) {
-        this.logger.warn(`Không thể tạo giao dịch NH tự động cho ${updated.expenseCode}: ${err.message}`);
-      }
-    }
 
-    return updated;
+        paidExpense = updated;
+      });
+
+      if (!paidExpense) {
+        throw new BadRequestException('Không thể đánh dấu đã thanh toán');
+      }
+
+      return paidExpense;
+    } finally {
+      session.endSession();
+    }
   }
 
   async getStats(startDate?: string, endDate?: string): Promise<any> {

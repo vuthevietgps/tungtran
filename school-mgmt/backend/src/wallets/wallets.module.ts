@@ -6,6 +6,7 @@ import { Wallet, WalletSchema } from './schemas/wallet.schema';
 import { LedgerEntry, LedgerEntrySchema } from './schemas/ledger-entry.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { Invoice, InvoiceSchema } from '../invoices/schemas/invoice.schema';
+import { BankAccount, BankAccountSchema } from '../financial-control/schemas/bank-account.schema';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { Invoice, InvoiceSchema } from '../invoices/schemas/invoice.schema';
       { name: LedgerEntry.name, schema: LedgerEntrySchema },
       { name: User.name, schema: UserSchema },
       { name: Invoice.name, schema: InvoiceSchema },
+      { name: BankAccount.name, schema: BankAccountSchema },
     ]),
   ],
   controllers: [WalletsController],

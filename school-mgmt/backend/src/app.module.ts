@@ -3,6 +3,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ScheduleModule } from '@nestjs/schedule';
 import { CsrfMiddleware } from './common/middleware/csrf.middleware';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
@@ -38,6 +39,7 @@ import { MessagesModule } from './messages/messages.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    ScheduleModule.forRoot(),
     ThrottlerModule.forRoot([{
       ttl: 60000,    // 1 phút
       limit: 100,    // 100 requests/phút/IP (global, generous)
@@ -88,7 +90,7 @@ export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer
       .apply(CsrfMiddleware)
-      .exclude('auth/login', 'auth/register', 'webhooks/(.*)')
+      .exclude('auth/login', 'auth/register', 'webhooks/(.*)', 'public/attendance/(.*)')
       .forRoutes('*');
   }
 }

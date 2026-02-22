@@ -1,8 +1,18 @@
 import { CommonModule } from '@angular/common';
-import { Component, signal, OnInit } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Component, inject, signal, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { firstValueFrom } from 'rxjs';
 import { WalletItem, LedgerItem, WalletService } from '../services/wallet.service';
 import { AuthService } from '../services/auth.service';
+import { environment } from '../../environments/environment';
+
+interface BankAccountOption {
+  _id: string;
+  bankName: string;
+  accountNumber: string;
+  currentBalance: number;
+}
 
 @Component({
   selector: 'app-wallets',
@@ -168,6 +178,14 @@ import { AuthService } from '../services/auth.service';
             <option value="MOMO">MoMo</option>
           </select>
         </label>
+        <ng-container *ngIf="topUpForm.paymentMethod === 'BANK_TRANSFER'">
+          <label>Ma giao dich / noi dung chuyen khoan
+            <input [(ngModel)]="topUpForm.transactionRef" name="transactionRef" placeholder="VD: FT123456789" />
+          </label>
+          <label>Anh bien lai (URL hoac /uploads/...)
+            <input [(ngModel)]="topUpForm.receiptImageUrl" name="receiptImageUrl" required />
+          </label>
+        </ng-container>
         <label>Ghi chú
           <textarea [(ngModel)]="topUpForm.description" name="description" rows="2"></textarea>
         </label>
@@ -215,9 +233,13 @@ import { AuthService } from '../services/auth.service';
             <strong>{{p.userId?.fullName || p.userId}}</strong>
             <span class="amount">{{formatCurrency(p.amount)}}</span>
             <small>{{p.paymentMethod}} · {{p.createdAt | date:'dd/MM HH:mm'}}</small>
+            <small *ngIf="p.transactionRef">Ref: {{p.transactionRef}}</small>
+            <a *ngIf="p.receiptImageUrl" [href]="resolveAssetUrl(p.receiptImageUrl)" target="_blank" rel="noopener">
+              Xem anh bien lai
+            </a>
           </div>
           <div class="pending-actions">
-            <button class="primary sm" (click)="approve(p._id)">✅ Duyệt</button>
+            <button class="primary sm" (click)="openApproveModal(p)">✅ Duyệt</button>
             <button class="danger sm" (click)="reject(p._id)">❌ Từ chối</button>
           </div>
         </div>
@@ -226,6 +248,43 @@ import { AuthService } from '../services/auth.service';
       <div class="modal-actions">
         <button class="ghost" (click)="showPendingModal.set(false)">Đóng</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Approve top-up modal -->
+  <div class="modal-backdrop" *ngIf="showApproveModal()">
+    <div class="modal">
+      <h3>Duyệt yêu cầu nạp tiền</h3>
+      <ng-container *ngIf="selectedPendingTopUp() as selected">
+        <p class="hint">
+          {{selected.userId?.fullName || selected.userId}} · {{formatCurrency(selected.amount)}} · {{selected.paymentMethod}}
+        </p>
+
+        <label *ngIf="selected.paymentMethod === 'BANK_TRANSFER'">Mã sao kê / mã biến động
+          <input [(ngModel)]="approveForm.bankStatementRef" name="bankStatementRef" placeholder="VD: MBVCB123456" />
+        </label>
+
+        <label *ngIf="selected.paymentMethod === 'BANK_TRANSFER'">Tài khoản ngân hàng đối soát
+          <select [(ngModel)]="approveForm.bankAccountId" name="bankAccountId">
+            <option value="">-- Chọn tài khoản --</option>
+            <option *ngFor="let ba of bankAccounts()" [value]="ba._id">
+              {{ba.bankName}} - {{ba.accountNumber}} ({{formatCurrency(ba.currentBalance)}})
+            </option>
+          </select>
+        </label>
+        <p class="hint" *ngIf="selected.paymentMethod === 'BANK_TRANSFER' && !bankAccounts().length">
+          Chưa có tài khoản ngân hàng nào để đối soát.
+        </p>
+
+        <label>Ghi chú kế toán
+          <textarea [(ngModel)]="approveForm.accountingNotes" name="accountingNotes" rows="3"></textarea>
+        </label>
+
+        <div class="modal-actions">
+          <button type="button" class="ghost" (click)="closeApproveModal()">Hủy</button>
+          <button type="button" class="primary" (click)="submitApprove()">Xác nhận duyệt</button>
+        </div>
+      </ng-container>
     </div>
   </div>
   `,
@@ -308,25 +367,38 @@ import { AuthService } from '../services/auth.service';
 })
 export class WalletsComponent implements OnInit {
   private walletSvc = new WalletService();
+  private http = inject(HttpClient);
   private auth: AuthService;
+  private readonly apiBase = environment.apiBase;
 
   wallets = signal<WalletItem[]>([]);
   ledgerEntries = signal<LedgerItem[]>([]);
   myWallet = signal<WalletItem | null>(null);
   myLedger = signal<LedgerItem[]>([]);
+  bankAccounts = signal<BankAccountOption[]>([]);
   pendingTopUps = signal<any[]>([]);
+  selectedPendingTopUp = signal<any | null>(null);
   pendingCount = signal(0);
 
   showTopUpModal = signal(false);
   showTransferModal = signal(false);
   showPendingModal = signal(false);
+  showApproveModal = signal(false);
 
   activeTab: 'wallets' | 'ledger' | 'myWallet' = 'wallets';
 
   ledgerFilter: any = { type: '', fromDate: '', toDate: '' };
 
-  topUpForm = { userId: '', amount: 0, paymentMethod: 'BANK_TRANSFER', description: '' };
+  topUpForm = {
+    userId: '',
+    amount: 0,
+    paymentMethod: 'BANK_TRANSFER',
+    transactionRef: '',
+    receiptImageUrl: '',
+    description: '',
+  };
   transferForm = { fromUserId: '', toUserId: '', amount: 0, description: '' };
+  approveForm = { bankStatementRef: '', accountingNotes: '', bankAccountId: '' };
 
   constructor(auth: AuthService) {
     this.auth = auth;
@@ -374,30 +446,69 @@ export class WalletsComponent implements OnInit {
     this.pendingCount.set(items.length);
   }
 
+  async loadBankAccounts(): Promise<void> {
+    if (!this.canApprove()) return;
+    try {
+      const accounts = await firstValueFrom(
+        this.http.get<BankAccountOption[]>(`${this.apiBase}/financial-control/bank-accounts`, {
+          withCredentials: true,
+        }),
+      );
+      this.bankAccounts.set(accounts || []);
+    } catch (err) {
+      console.error('Error loading bank accounts for approval:', err);
+      this.bankAccounts.set([]);
+    }
+  }
+
   // Top-up
   openTopUp(): void {
-    this.topUpForm = { userId: '', amount: 0, paymentMethod: 'BANK_TRANSFER', description: '' };
+    this.topUpForm = {
+      userId: '',
+      amount: 0,
+      paymentMethod: 'BANK_TRANSFER',
+      transactionRef: '',
+      receiptImageUrl: '',
+      description: '',
+    };
     this.showTopUpModal.set(true);
   }
 
   topUpForUser(w: WalletItem): void {
-    this.topUpForm = { userId: w.userId?._id || '', amount: 0, paymentMethod: 'BANK_TRANSFER', description: '' };
+    this.topUpForm = {
+      userId: w.userId?._id || '',
+      amount: 0,
+      paymentMethod: 'BANK_TRANSFER',
+      transactionRef: '',
+      receiptImageUrl: '',
+      description: '',
+    };
     this.showTopUpModal.set(true);
   }
 
   async submitTopUp(): Promise<void> {
+    if (
+      this.topUpForm.paymentMethod === 'BANK_TRANSFER' &&
+      !this.topUpForm.receiptImageUrl.trim()
+    ) {
+      alert('Chuyen khoan bat buoc nhap anh bien lai.');
+      return;
+    }
+
     const ok = await this.walletSvc.requestTopUp({
       userId: this.topUpForm.userId,
       amount: this.topUpForm.amount,
       paymentMethod: this.topUpForm.paymentMethod,
+      transactionRef: this.topUpForm.transactionRef || undefined,
+      receiptImageUrl: this.topUpForm.receiptImageUrl || undefined,
       description: this.topUpForm.description,
     });
     if (ok) {
       this.showTopUpModal.set(false);
       this.loadWallets();
-      alert('Yêu cầu nạp tiền đã được tạo.');
+      alert('Yeu cau nap tien da duoc tao.');
     } else {
-      alert('Lỗi khi tạo yêu cầu nạp tiền.');
+      alert('Loi khi tao yeu cau nap tien.');
     }
   }
 
@@ -427,17 +538,63 @@ export class WalletsComponent implements OnInit {
   async openPending(): Promise<void> {
     const items = await this.walletSvc.getPendingTopUps();
     this.pendingTopUps.set(items);
+    this.pendingCount.set(items.length);
+    await this.loadBankAccounts();
     this.showPendingModal.set(true);
   }
 
-  async approve(id: string): Promise<void> {
-    const notes = prompt('Ghi chú duyệt (tùy chọn):') || '';
-    const ok = await this.walletSvc.approveTopUp(id, notes);
+  async openApproveModal(item: any): Promise<void> {
+    const isBankTransfer = item?.paymentMethod === 'BANK_TRANSFER';
+    if (isBankTransfer && !item?.receiptImageUrl) {
+      alert('Yeu cau chuyen khoan thieu anh bien lai, khong the duyet.');
+      return;
+    }
+
+    this.selectedPendingTopUp.set(item);
+    this.approveForm = {
+      bankStatementRef: item?.transactionRef || '',
+      accountingNotes: '',
+      bankAccountId: '',
+    };
+    if (isBankTransfer && !this.bankAccounts().length) {
+      await this.loadBankAccounts();
+    }
+    this.showApproveModal.set(true);
+  }
+
+  closeApproveModal(): void {
+    this.showApproveModal.set(false);
+    this.selectedPendingTopUp.set(null);
+    this.approveForm = { bankStatementRef: '', accountingNotes: '', bankAccountId: '' };
+  }
+
+  async submitApprove(): Promise<void> {
+    const item = this.selectedPendingTopUp();
+    if (!item) return;
+
+    const isBankTransfer = item?.paymentMethod === 'BANK_TRANSFER';
+    if (isBankTransfer && !item?.receiptImageUrl) {
+      alert('Yeu cau chuyen khoan thieu anh bien lai, khong the duyet.');
+      return;
+    }
+    if (isBankTransfer && !this.approveForm.bankAccountId) {
+      alert('Vui long chon tai khoan ngan hang doi soat.');
+      return;
+    }
+
+    const ok = await this.walletSvc.approveTopUp(item._id, {
+      accountingNotes: this.approveForm.accountingNotes.trim() || undefined,
+      bankMatched: isBankTransfer ? true : undefined,
+      bankStatementRef: this.approveForm.bankStatementRef.trim() || undefined,
+      bankAccountId: this.approveForm.bankAccountId || undefined,
+    });
+
     if (ok) {
-      this.openPending();
-      this.loadWallets();
+      this.closeApproveModal();
+      await this.openPending();
+      await this.loadWallets();
     } else {
-      alert('Lỗi duyệt');
+      alert('Loi duyet');
     }
   }
 
@@ -446,7 +603,7 @@ export class WalletsComponent implements OnInit {
     if (!reason) return;
     const ok = await this.walletSvc.rejectTopUp(id, reason);
     if (ok) {
-      this.openPending();
+      await this.openPending();
     } else {
       alert('Lỗi từ chối');
     }
@@ -460,6 +617,15 @@ export class WalletsComponent implements OnInit {
   // Helpers
   formatCurrency(n: number): string {
     return (n || 0).toLocaleString('vi-VN') + ' ₫';
+  }
+
+  resolveAssetUrl(url: string): string {
+    if (!url) return '';
+    if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:image/')) {
+      return url;
+    }
+    if (url.startsWith('/')) return `${this.apiBase}${url}`;
+    return url;
   }
 
   typeLabel(type: string): string {

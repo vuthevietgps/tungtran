@@ -2,7 +2,6 @@ import { Component, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { SessionService, SessionItem } from '../services/session.service';
-import { AuthService } from '../services/auth.service';
 
 @Component({
   selector: 'app-teaching-report',
@@ -45,6 +44,10 @@ import { AuthService } from '../services/auth.service';
             <span>HS: {{ s.studentId.fullName || 'N/A' }}</span>
             <span class="divider">|</span>
             <span>{{ s.scheduledDate | date:'dd/MM/yyyy' }}</span>
+            <span class="divider">|</span>
+            <span class="deadline-badge" [class.overdue]="isOverDeadline(s)" [class.near-deadline]="isNearDeadline(s)">
+              {{ isOverDeadline(s) ? 'Trễ ' + getOverdueHours(s) + 'h' : 'Còn ' + getRemainingHours(s) + 'h' }}
+            </span>
             <span class="divider">|</span>
             <span>{{ s.durationMinutes || 60 }} phút</span>
             <span class="divider">|</span>
@@ -139,6 +142,10 @@ import { AuthService } from '../services/auth.service';
               <tr><th>Bài tập</th><td>{{ s.teachingReport?.homework || '—' }}</td></tr>
               <tr><th>Ghi chú</th><td>{{ s.teachingReport?.additionalNotes || '—' }}</td></tr>
               <tr><th>Ngày nộp</th><td>{{ s.teachingReport?.submittedAt | date:'dd/MM/yyyy HH:mm' }}</td></tr>
+              <tr *ngIf="s.teachingReport?.isLateSubmission">
+                <th>Tình trạng</th>
+                <td><span class="badge late-badge">Nộp muộn {{ getLateHours(s) }}h</span></td>
+              </tr>
             </table>
             <div class="form-actions">
               <button class="btn secondary" (click)="startEdit(s)">Sửa báo cáo</button>
@@ -250,6 +257,10 @@ import { AuthService } from '../services/auth.service';
     .badge[data-status="TEACHER_COMPLETED"] { background: #dbeafe; color: #2563eb; }
     .badge[data-status="PARENT_CONFIRMED"] { background: #e0e7ff; color: #4f46e5; }
     .badge[data-status="SCHEDULED"] { background: #f1f5f9; color: #64748b; }
+    .deadline-badge { padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; background: #dcfce7; color: #16a34a; }
+    .deadline-badge.near-deadline { background: #fef9c3; color: #b45309; }
+    .deadline-badge.overdue { background: #fee2e2; color: #dc2626; }
+    .badge.late-badge { background: #fee2e2; color: #dc2626; }
 
     .report-form, .report-view { padding: 0 18px 18px; }
     .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
@@ -335,7 +346,6 @@ export class TeachingReportComponent implements OnInit {
 
   constructor(
     private sessionService: SessionService,
-    private authService: AuthService,
   ) {}
 
   ngOnInit() {
@@ -360,14 +370,11 @@ export class TeachingReportComponent implements OnInit {
     this.loading.set(true);
     this.error.set('');
     try {
-      const user = this.authService.userSignal();
-      const result = await this.sessionService.list({
-        teacherId: user?.sub,
+      const result = await this.sessionService.getSessionsCompletedReport({
         page: this.completedPage,
         limit: 20,
       });
-      // Filter only sessions with teaching report
-      this.completedSessions.set(result.data.filter((s: any) => s.hasTeachingReport));
+      this.completedSessions.set(result.data);
       this.completedMeta.set(result.meta || {});
     } catch (e: any) {
       this.error.set(e?.message || 'Lỗi tải dữ liệu');
@@ -469,28 +476,24 @@ export class TeachingReportComponent implements OnInit {
     this.success.set('');
     
     try {
-      const ok = await this.sessionService.submitTeachingReport(sessionId, this.reportForm);
-      if (ok) {
-        this.success.set('Nộp báo cáo thành công! ✓');
-        this.editingId = '';
-        this.viewingId = '';
-        this.validationErrors.set({});
-        
-        // Clear success message after 3s
-        setTimeout(() => this.success.set(''), 3000);
-        
-        // Reload both tabs
-        await this.loadPending();
-        if (this.activeTab === 'completed') {
-          await this.loadCompleted();
-        }
-      } else {
-        this.error.set('Gửi báo cáo thất bại. Vui lòng thử lại.');
+      await this.sessionService.submitTeachingReport(sessionId, this.reportForm);
+      this.success.set('Nộp báo cáo thành công! ✓');
+      this.editingId = '';
+      this.viewingId = '';
+      this.validationErrors.set({});
+      
+      // Clear success message after 3s
+      setTimeout(() => this.success.set(''), 3000);
+      
+      // Reload both tabs
+      await this.loadPending();
+      if (this.activeTab === 'completed') {
+        await this.loadCompleted();
       }
     } catch (e: any) {
       // Parse detailed error from backend
       if (e?.error?.message) {
-        this.error.set(e.error.message);
+        this.error.set(Array.isArray(e.error.message) ? e.error.message.join('; ') : e.error.message);
       } else if (e?.message) {
         this.error.set(e.message);
       } else {
@@ -515,5 +518,34 @@ export class TeachingReportComponent implements OnInit {
       CANCELLED: 'Đã hủy', NO_SHOW: 'Vắng',
     };
     return map[s] || s;
+  }
+
+  // ─── Deadline helpers (24h window after scheduledDate) ───────────────
+
+  getDeadlineMs(session: SessionItem): number {
+    return new Date(session.scheduledDate).getTime() + 24 * 60 * 60 * 1000;
+  }
+
+  isOverDeadline(session: SessionItem): boolean {
+    return Date.now() > this.getDeadlineMs(session);
+  }
+
+  isNearDeadline(session: SessionItem): boolean {
+    const remaining = this.getDeadlineMs(session) - Date.now();
+    return remaining > 0 && remaining < 4 * 60 * 60 * 1000;
+  }
+
+  getRemainingHours(session: SessionItem): number {
+    return Math.ceil((this.getDeadlineMs(session) - Date.now()) / (60 * 60 * 1000));
+  }
+
+  getOverdueHours(session: SessionItem): number {
+    return Math.floor((Date.now() - this.getDeadlineMs(session)) / (60 * 60 * 1000));
+  }
+
+  getLateHours(session: SessionItem): number {
+    const report = session.teachingReport as any;
+    const submitted = report?.submittedAt ? new Date(report.submittedAt).getTime() : Date.now();
+    return Math.max(0, Math.floor((submitted - this.getDeadlineMs(session)) / (60 * 60 * 1000)));
   }
 }

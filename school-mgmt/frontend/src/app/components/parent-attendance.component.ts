@@ -30,6 +30,40 @@ interface StudentStats {
   latePercent: number;
 }
 
+interface ChildrenAttendanceResponse {
+  children: Array<{
+    student: {
+      _id: string;
+      fullName: string;
+    };
+    records: Array<{
+      _id: string;
+      date: string;
+      status: 'PRESENT' | 'ABSENT' | 'LATE' | 'EXCUSED';
+      className: string;
+      classCode: string;
+      notes?: string;
+      parentConfirm?: string;
+    }>;
+  }>;
+}
+
+interface ChildrenAttendanceStatsResponse {
+  children: Array<{
+    student: {
+      _id: string;
+      fullName: string;
+    };
+    total: number;
+    present: number;
+    absent: number;
+    late: number;
+    presentRate: number;
+    absentRate: number;
+    lateRate: number;
+  }>;
+}
+
 @Component({
   selector: 'app-parent-attendance',
   standalone: true,
@@ -196,8 +230,6 @@ export class ParentAttendanceComponent implements OnInit {
     return all.filter(s => s.studentId === this.selectedStudentId);
   });
 
-  private readonly httpOpts = { withCredentials: true as const };
-
   ngOnInit() {
     const now = new Date();
     const y = now.getFullYear();
@@ -221,26 +253,64 @@ export class ParentAttendanceComponent implements OnInit {
     if (this.fromDate) params.fromDate = this.fromDate;
     if (this.toDate) params.toDate = this.toDate;
     try {
-      const data = await firstValueFrom(
-        this.http.get<AttendanceRecord[]>(`${this.apiBase}/attendance/my-children`, {
+      const response = await firstValueFrom(
+        this.http.get<ChildrenAttendanceResponse>(`${this.apiBase}/attendance/my-children`, {
           params,
           withCredentials: true,
         })
       );
-      this.records.set(data || []);
+      const records = (response?.children || []).flatMap((child) =>
+        (child.records || []).map((record) => ({
+          _id: record._id,
+          studentId: child.student._id,
+          studentName: child.student.fullName,
+          date: record.date,
+          className: record.className || '',
+          classCode: record.classCode || '',
+          status: record.status,
+          note: record.notes || '',
+          parentConfirm: String(record.parentConfirm || '').toUpperCase() === 'OK',
+        })),
+      );
+      this.records.set(records);
     } catch {
       this.records.set([]);
     }
   }
 
   private async loadStats() {
+    const params: any = {};
+    if (this.fromDate) params.fromDate = this.fromDate;
+    if (this.toDate) params.toDate = this.toDate;
+
     try {
-      const data = await firstValueFrom(
-        this.http.get<StudentStats[]>(`${this.apiBase}/attendance/my-children/stats`, {
+      const response = await firstValueFrom(
+        this.http.get<ChildrenAttendanceStatsResponse>(`${this.apiBase}/attendance/my-children/stats`, {
+          params,
           withCredentials: true,
         })
       );
-      this.stats.set(data || []);
+      const stats = (response?.children || []).map((item) => {
+        const total = Number(item.total || 0);
+        const present = Number(item.present || 0);
+        const absent = Number(item.absent || 0);
+        const late = Number(item.late || 0);
+        const excused = Math.max(0, total - present - absent - late);
+
+        return {
+          studentId: item.student._id,
+          studentName: item.student.fullName,
+          totalSessions: total,
+          presentCount: present,
+          absentCount: absent,
+          lateCount: late,
+          excusedCount: excused,
+          presentPercent: Number(item.presentRate ?? (total > 0 ? Math.round((present / total) * 100) : 0)),
+          absentPercent: Number(item.absentRate ?? (total > 0 ? Math.round((absent / total) * 100) : 0)),
+          latePercent: Number(item.lateRate ?? (total > 0 ? Math.round((late / total) * 100) : 0)),
+        } as StudentStats;
+      });
+      this.stats.set(stats);
     } catch {
       this.stats.set([]);
     }

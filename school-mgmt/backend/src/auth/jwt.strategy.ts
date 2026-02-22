@@ -40,6 +40,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     return {
       sub: payload.sub,
       _id: payload.sub,
+      userId: payload.sub,   // backward-compatible alias for legacy services
       email: user.email,       // from DB — always current
       role: user.role,         // from DB — always current
       fullName: user.fullName, // from DB — always current

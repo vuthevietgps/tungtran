@@ -26,6 +26,7 @@ import { CancelSessionDto } from './dto/cancel-session.dto';
 import { RescheduleSessionDto } from './dto/reschedule-session.dto';
 import { BulkCreateSessionDto } from './dto/bulk-create-session.dto';
 import { SubmitTeachingReportDto } from './dto/submit-teaching-report.dto';
+import { BulkTeachingReportDto } from './dto/bulk-teaching-report.dto';
 import { ParseMongoIdPipe } from '../common/pipes/parse-mongo-id.pipe';
 
 @Controller('sessions')
@@ -37,16 +38,16 @@ export class SessionsController {
 
   /** Tạo 1 buổi học */
   @Post()
-  @Roles(Role.OPS, Role.DIRECTOR, Role.TEACHER)
+  @Roles(Role.OPS, Role.DIRECTOR)
   create(@Body() dto: CreateSessionDto, @Req() req: AuthenticatedRequest) {
-    return this.sessionsService.create(dto, req.user.sub);
+    return this.sessionsService.create(dto, req.user.sub, req.user);
   }
 
   /** Tạo buổi học hàng loạt cho cả lớp */
   @Post('bulk')
   @Roles(Role.OPS, Role.DIRECTOR)
   bulkCreate(@Body() dto: BulkCreateSessionDto, @Req() req: AuthenticatedRequest) {
-    return this.sessionsService.bulkCreate(dto, req.user.sub);
+    return this.sessionsService.bulkCreate(dto, req.user);
   }
 
   // ── QUERY ───────────────────────────────────────────────────────
@@ -126,6 +127,17 @@ export class SessionsController {
     } as any);
   }
 
+  /** GV lấy danh sách sessions đã có báo cáo (phân trang chuẩn theo server) */
+  @Get('my-sessions/completed-report')
+  @Roles(Role.TEACHER)
+  getSessionsCompletedReport(@Req() req: AuthenticatedRequest, @Query() query: QuerySessionDto) {
+    return this.sessionsService.findAll({
+      ...query,
+      teacherId: req.user.sub,
+      hasReport: 'true',
+    } as any);
+  }
+
   /** Chi tiết 1 session */
   @Get(':id')
   @Roles(Role.OPS, Role.DIRECTOR, Role.ACCOUNTING, Role.TEACHER, Role.PARENT)
@@ -186,23 +198,32 @@ export class SessionsController {
 
   /** Dời lịch buổi học */
   @Post(':id/reschedule')
-  @Roles(Role.OPS, Role.DIRECTOR, Role.TEACHER)
+  @Roles(Role.OPS, Role.DIRECTOR)
   reschedule(
     @Param('id', ParseMongoIdPipe) id: string,
     @Body() dto: RescheduleSessionDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    return this.sessionsService.reschedule(id, req.user.sub, dto);
+    return this.sessionsService.reschedule(id, req.user, dto);
   }
 
   /** Đánh dấu vắng không phép */
   @Post(':id/no-show')
   @Roles(Role.OPS, Role.DIRECTOR, Role.TEACHER)
-  markNoShow(@Param('id', ParseMongoIdPipe) id: string) {
-    return this.sessionsService.markNoShow(id);
+  markNoShow(@Param('id', ParseMongoIdPipe) id: string, @Req() req: AuthenticatedRequest) {
+    return this.sessionsService.markNoShow(id, req.user);
   }
 
   // ── TEACHING REPORT (Báo cáo giảng dạy) ────────────────────────
+
+  /** GV nộp báo cáo giảng dạy hàng loạt cho toàn bộ sessions của lớp OFFLINE trong 1 ngày.
+   * Route này phải đặt TRƯỚC :id/teaching-report để tránh NestJS parse "bulk-teaching-report" thành MongoId.
+   */
+  @Patch('bulk-teaching-report')
+  @Roles(Role.TEACHER)
+  bulkSubmitTeachingReport(@Body() dto: BulkTeachingReportDto, @Req() req: AuthenticatedRequest) {
+    return this.sessionsService.bulkSubmitTeachingReport(dto.classId, dto.date, req.user.sub, dto);
+  }
 
   /** GV nộp / cập nhật báo cáo giảng dạy.
    * Chỉ sessions có báo cáo mới được tính lương.

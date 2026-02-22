@@ -1,7 +1,13 @@
 import { Component, computed, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { SalaryConfigService, SalaryConfig, CommissionTier, KpiBonusTier } from '../services/salary-config.service';
+import {
+  SalaryConfigService,
+  SalaryConfig,
+  CommissionTier,
+  KpiBonusTier,
+  SalaryConfigUserOption,
+} from '../services/salary-config.service';
 import { AuthService } from '../services/auth.service';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -183,7 +189,16 @@ const COMMISSION_TYPE_LABELS: Record<string, string> = {
         <!-- User ID -->
         <label *ngIf="!editingUserId">
           Mã nhân viên (userId) <span class="req">*</span>
-          <input name="userId" [(ngModel)]="form.userId" placeholder="Nhập userId của nhân viên" required />
+          <select name="userId" [(ngModel)]="form.userId" [disabled]="loadingUserOptions()" required>
+            <option value="" disabled>{{ loadingUserOptions() ? 'Đang tải danh sách nhân viên...' : '-- Chọn nhân viên --' }}</option>
+            <option *ngFor="let user of availableUserOptions()" [value]="user._id">
+              {{ user.fullName }} ({{ user._id }})
+            </option>
+          </select>
+          <small class="muted-sm" *ngIf="!loadingUserOptions() && !availableUserOptions().length">
+            Không còn nhân viên nào chưa có cấu hình lương.
+          </small>
+          <small class="error" *ngIf="userOptionsError()">{{ userOptionsError() }}</small>
         </label>
 
         <div class="form-grid">
@@ -384,7 +399,10 @@ export class SalaryConfigComponent implements OnInit {
   myConfig = signal<SalaryConfig | null>(null);
   showModal = signal(false);
   error = signal('');
+  userOptionsError = signal('');
+  loadingUserOptions = signal(false);
   editingUserId: string | null = null;
+  userOptions = signal<SalaryConfigUserOption[]>([]);
 
   keyword = '';
   filterStatus = '';
@@ -399,6 +417,7 @@ export class SalaryConfigComponent implements OnInit {
   ngOnInit() {
     if (this.isManager()) {
       this.reload();
+      this.loadUserOptions();
     } else {
       this.loadMy();
     }
@@ -431,6 +450,10 @@ export class SalaryConfigComponent implements OnInit {
     return list;
   });
 
+  availableUserOptions = computed(() =>
+    this.userOptions().filter((user) => !user.hasSalaryConfig),
+  );
+
   applyFilter() { /* triggers computed signal */ }
 
   async reload() {
@@ -439,6 +462,20 @@ export class SalaryConfigComponent implements OnInit {
       this.configs.set(result.data || result);
     } catch (e: any) {
       this.error.set(e?.message || 'Không thể tải danh sách cấu hình lương.');
+    }
+  }
+
+  async loadUserOptions() {
+    this.loadingUserOptions.set(true);
+    this.userOptionsError.set('');
+    try {
+      const users = await this.salaryConfigService.listUserOptions();
+      this.userOptions.set(users || []);
+    } catch (e: any) {
+      this.userOptions.set([]);
+      this.userOptionsError.set(e?.message || 'Không thể tải danh sách nhân viên.');
+    } finally {
+      this.loadingUserOptions.set(false);
     }
   }
 
@@ -472,6 +509,9 @@ export class SalaryConfigComponent implements OnInit {
     this.form = this.emptyForm();
     this.error.set('');
     this.showModal.set(true);
+    if (!this.userOptions().length) {
+      this.loadUserOptions();
+    }
   }
 
   openEdit(cfg: SalaryConfig) {
@@ -527,13 +567,13 @@ export class SalaryConfigComponent implements OnInit {
         await this.salaryConfigService.update(this.editingUserId, this.form);
       } else {
         if (!this.form.userId.trim()) {
-          this.error.set('Vui lòng nhập mã nhân viên (userId).');
+          this.error.set('Vui lòng chọn nhân viên.');
           return;
         }
         await this.salaryConfigService.create(this.form);
       }
       this.closeModal();
-      this.reload();
+      await Promise.all([this.reload(), this.loadUserOptions()]);
     } catch (e: any) {
       this.error.set(e?.message || 'Có lỗi xảy ra. Vui lòng thử lại.');
     }
@@ -544,7 +584,7 @@ export class SalaryConfigComponent implements OnInit {
     if (!confirm(`Xóa cấu hình lương của "${name}"? Hành động này không thể hoàn tác.`)) return;
     try {
       await this.salaryConfigService.delete(String(cfg.userId));
-      this.reload();
+      await Promise.all([this.reload(), this.loadUserOptions()]);
     } catch (e: any) {
       alert(e?.message || 'Không thể xóa cấu hình lương.');
     }

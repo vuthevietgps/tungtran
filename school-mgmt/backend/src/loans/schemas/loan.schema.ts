@@ -108,9 +108,8 @@ export class Loan {
 }
 
 export const LoanSchema = SchemaFactory.createForClass(Loan);
-
-LoanSchema.index({ loanCode: 1 }, { unique: true });
 LoanSchema.index({ status: 1 });
 LoanSchema.index({ lenderName: 1 });
 LoanSchema.index({ startDate: -1 });
 LoanSchema.index({ endDate: 1 });
+

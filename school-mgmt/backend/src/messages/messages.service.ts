@@ -1,14 +1,15 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Message, MessageDocument } from './schemas/message.schema';
-import { Conversation, ConversationDocument } from './schemas/conversation.schema';
+import { MessageDocument } from './schemas/message.schema';
+import { ConversationDocument } from './schemas/conversation.schema';
+import { DIRECT_CONVERSATION_MODEL, DIRECT_MESSAGE_MODEL } from './messages.constants';
 
 @Injectable()
 export class MessagesService {
   constructor(
-    @InjectModel(Message.name) private messageModel: Model<MessageDocument>,
-    @InjectModel(Conversation.name) private conversationModel: Model<ConversationDocument>,
+    @InjectModel(DIRECT_MESSAGE_MODEL) private messageModel: Model<MessageDocument>,
+    @InjectModel(DIRECT_CONVERSATION_MODEL) private conversationModel: Model<ConversationDocument>,
   ) {}
 
   /** Get or create a 1-on-1 conversation between two users */

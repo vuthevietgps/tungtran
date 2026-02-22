@@ -1,4 +1,4 @@
-import { IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsBoolean, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 
 /** OPS/DIRECTOR giải quyết ticket */
 export class ResolveTicketDto {
@@ -22,6 +22,7 @@ export class ResolveTicketDto {
   @IsOptional()
   substitutePayRate?: number; // Lương GV dạy thay (VNĐ/buổi)
 
+  @IsBoolean()
   @IsOptional()
   substituteCanCreateLink?: boolean; // Cho phép tạo link điểm danh
 }

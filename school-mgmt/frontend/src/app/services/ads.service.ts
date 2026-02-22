@@ -1,8 +1,8 @@
-import { Injectable } from '@angular/core';
+﻿import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { environment } from '../../environments/environment';
 
-// ─── Interfaces ───────────────────────────────────────────
+// â”€â”€â”€ Interfaces â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface AdAccountItem {
   _id: string;
@@ -112,18 +112,48 @@ export interface AdSuggestionRow {
   adGroupName: string;
   platform: string;
   currentDailySpend: number;
-  suggestedDailySpend: number | null;
-  expectedOrders: number | null;
-  expectedRevenue: number | null;
-  expectedCostPerOrder: number | null;
+  suggestedDailySpend: number;
+  expectedDailyNetProfit: number | null;
+  expectedDailyMarginalProfit: number | null;
   changePercent: number | null;
   confidence: string;
   dataPoints: number;
 }
 
+export interface AdSuggestionSummaryRow {
+  date: string;
+  adGroupId: string;
+  adGroupName: string;
+  platform: string;
+  netProfit: number;
+  actualAdSpend: number;
+  suggestedAdSpend: number;
+}
+
+export interface AdSuggestionDailyTotalRow {
+  date: string;
+  totalNetProfit: number;
+  totalSuggestedAdSpend: number;
+}
+
+export interface AdSuggestionMonthlyProjectionRow {
+  month: string;
+  daysInMonth: number;
+  projectedSpend: number;
+  projectedNetProfit: number;
+}
+
 export interface AdSuggestionResponse {
   totalBudget: number;
   allocated: number;
+  unallocated: number;
+  totalSuggestedDailySpend: number;
+  expectedDailyNetProfit: number;
+  projectedMonthlySpend: number;
+  projectedMonthlyNetProfit: number;
+  dailySuggestedTotals: AdSuggestionDailyTotalRow[];
+  monthlyProjection: AdSuggestionMonthlyProjectionRow[];
+  summaryTable: AdSuggestionSummaryRow[];
   suggestions: AdSuggestionRow[];
 }
 
@@ -145,7 +175,7 @@ export class AdsService {
     return httpParams;
   }
 
-  // ─── Ad Accounts ────────────────────────────────────────
+  // â”€â”€â”€ Ad Accounts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   async listAccounts(params?: Record<string, string>): Promise<PaginatedResponse<AdAccountItem>> {
     return this.http.get<PaginatedResponse<AdAccountItem>>(
@@ -158,7 +188,7 @@ export class AdsService {
       await this.http.post(`${this.apiUrl}/accounts`, data).toPromise();
       return { ok: true };
     } catch (err: any) {
-      return { ok: false, message: err.error?.message || 'Tạo tài khoản thất bại' };
+      return { ok: false, message: err.error?.message || 'Táº¡o tÃ i khoáº£n tháº¥t báº¡i' };
     }
   }
 
@@ -167,7 +197,7 @@ export class AdsService {
       await this.http.patch(`${this.apiUrl}/accounts/${id}`, data).toPromise();
       return { ok: true };
     } catch (err: any) {
-      return { ok: false, message: err.error?.message || 'Cập nhật thất bại' };
+      return { ok: false, message: err.error?.message || 'Cáº­p nháº­t tháº¥t báº¡i' };
     }
   }
 
@@ -176,11 +206,11 @@ export class AdsService {
       await this.http.delete(`${this.apiUrl}/accounts/${id}`).toPromise();
       return { ok: true };
     } catch (err: any) {
-      return { ok: false, message: err.error?.message || 'Xóa thất bại' };
+      return { ok: false, message: err.error?.message || 'XÃ³a tháº¥t báº¡i' };
     }
   }
 
-  // ─── Ad Groups ──────────────────────────────────────────
+  // â”€â”€â”€ Ad Groups â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   async listGroups(params?: Record<string, string>): Promise<PaginatedResponse<AdGroupItem>> {
     return this.http.get<PaginatedResponse<AdGroupItem>>(
@@ -203,7 +233,7 @@ export class AdsService {
       await this.http.post(`${this.apiUrl}/groups`, data).toPromise();
       return { ok: true };
     } catch (err: any) {
-      return { ok: false, message: err.error?.message || 'Tạo nhóm QC thất bại' };
+      return { ok: false, message: err.error?.message || 'Táº¡o nhÃ³m QC tháº¥t báº¡i' };
     }
   }
 
@@ -212,7 +242,7 @@ export class AdsService {
       await this.http.patch(`${this.apiUrl}/groups/${id}`, data).toPromise();
       return { ok: true };
     } catch (err: any) {
-      return { ok: false, message: err.error?.message || 'Cập nhật thất bại' };
+      return { ok: false, message: err.error?.message || 'Cáº­p nháº­t tháº¥t báº¡i' };
     }
   }
 
@@ -221,11 +251,11 @@ export class AdsService {
       await this.http.delete(`${this.apiUrl}/groups/${id}`).toPromise();
       return { ok: true };
     } catch (err: any) {
-      return { ok: false, message: err.error?.message || 'Xóa thất bại' };
+      return { ok: false, message: err.error?.message || 'XÃ³a tháº¥t báº¡i' };
     }
   }
 
-  // ─── API Tokens ─────────────────────────────────────────
+  // â”€â”€â”€ API Tokens â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   async listTokens(accountId: string): Promise<ApiTokenItem[]> {
     return this.http.get<ApiTokenItem[]>(
@@ -238,7 +268,7 @@ export class AdsService {
       await this.http.post(`${this.apiUrl}/tokens`, data).toPromise();
       return { ok: true };
     } catch (err: any) {
-      return { ok: false, message: err.error?.message || 'Tạo token thất bại' };
+      return { ok: false, message: err.error?.message || 'Táº¡o token tháº¥t báº¡i' };
     }
   }
 
@@ -247,7 +277,7 @@ export class AdsService {
       await this.http.patch(`${this.apiUrl}/tokens/${id}`, data).toPromise();
       return { ok: true };
     } catch (err: any) {
-      return { ok: false, message: err.error?.message || 'Cập nhật thất bại' };
+      return { ok: false, message: err.error?.message || 'Cáº­p nháº­t tháº¥t báº¡i' };
     }
   }
 
@@ -256,11 +286,11 @@ export class AdsService {
       await this.http.delete(`${this.apiUrl}/tokens/${id}`).toPromise();
       return { ok: true };
     } catch (err: any) {
-      return { ok: false, message: err.error?.message || 'Xóa thất bại' };
+      return { ok: false, message: err.error?.message || 'XÃ³a tháº¥t báº¡i' };
     }
   }
 
-  // ─── Ad Costs ───────────────────────────────────────────
+  // â”€â”€â”€ Ad Costs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   async listCosts(params?: Record<string, string>): Promise<PaginatedResponse<AdCostItem>> {
     return this.http.get<PaginatedResponse<AdCostItem>>(
@@ -273,7 +303,7 @@ export class AdsService {
       await this.http.post(`${this.apiUrl}/costs`, data).toPromise();
       return { ok: true };
     } catch (err: any) {
-      return { ok: false, message: err.error?.message || 'Tạo chi phí thất bại' };
+      return { ok: false, message: err.error?.message || 'Táº¡o chi phÃ­ tháº¥t báº¡i' };
     }
   }
 
@@ -282,7 +312,7 @@ export class AdsService {
       await this.http.delete(`${this.apiUrl}/costs/${id}`).toPromise();
       return { ok: true };
     } catch (err: any) {
-      return { ok: false, message: err.error?.message || 'Xóa thất bại' };
+      return { ok: false, message: err.error?.message || 'XÃ³a tháº¥t báº¡i' };
     }
   }
 
@@ -292,11 +322,11 @@ export class AdsService {
       const result = await this.http.post<any>(url, {}).toPromise();
       return { ok: true, data: result };
     } catch (err: any) {
-      return { ok: false, message: err.error?.message || 'Đồng bộ thất bại' };
+      return { ok: false, message: err.error?.message || 'Äá»“ng bá»™ tháº¥t báº¡i' };
     }
   }
 
-  // ─── Analytics ──────────────────────────────────────────
+  // â”€â”€â”€ Analytics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   async getAnalytics(startDate: string, endDate: string, adGroupId?: string, platform?: string): Promise<AdAnalyticsResponse> {
     let params = new HttpParams().set('startDate', startDate).set('endDate', endDate);

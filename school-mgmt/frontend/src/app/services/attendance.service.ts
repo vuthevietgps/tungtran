@@ -79,6 +79,19 @@ export interface BulkAttendancePayload {
   }>;
 }
 
+export interface BulkAttendanceResponse {
+  success: any[];
+  errors: Array<{
+    studentId: string;
+    message: string;
+  }>;
+  sessionsCreated: number;
+  totalProcessed: number;
+  totalErrors: number;
+  attendedCount?: number;
+  classMode?: string;
+}
+
 export interface AttendanceStatsResponse {
   classId: string;
   period: {
@@ -125,19 +138,19 @@ export class AttendanceService {
   }
 
   // Điểm danh nhiều học sinh cùng lúc
-  async bulkMarkAttendance(payload: BulkAttendancePayload): Promise<boolean> {
+  async bulkMarkAttendance(payload: BulkAttendancePayload): Promise<BulkAttendanceResponse | null> {
     try {
-      await firstValueFrom(
-        this.http.post(
+      const res = await firstValueFrom(
+        this.http.post<BulkAttendanceResponse>(
           `${environment.apiBase}/attendance/bulk-mark`,
           payload,
           { withCredentials: true },
         ),
       );
-      return true;
+      return res;
     } catch (error) {
       console.error('Error marking attendance:', error);
-      return false;
+      return null;
     }
   }
 
@@ -247,7 +260,10 @@ export class AttendanceService {
 
   // Helper method để format ngày cho API
   formatDateForAPI(date: Date): string {
-    return date.toISOString().split('T')[0]; // YYYY-MM-DD
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   }
 
   // Helper method để get status display text

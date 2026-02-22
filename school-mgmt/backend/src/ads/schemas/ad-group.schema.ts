@@ -56,8 +56,8 @@ export class AdGroup {
 }
 
 export const AdGroupSchema = SchemaFactory.createForClass(AdGroup);
-
-AdGroupSchema.index({ groupCode: 1 }, { unique: true });
 AdGroupSchema.index({ adAccountId: 1 });
+AdGroupSchema.index({ adAccountId: 1, platformCampaignId: 1 }, { unique: true });
 AdGroupSchema.index({ platform: 1, status: 1 });
 AdGroupSchema.index({ createdAt: -1 });
+

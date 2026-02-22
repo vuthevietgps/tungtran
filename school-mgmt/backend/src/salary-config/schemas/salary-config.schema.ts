@@ -13,7 +13,7 @@ export enum SalaryConfigStatus {
   INACTIVE = 'INACTIVE',
 }
 
-@Schema({ timestamps: true })
+@Schema({ timestamps: true, optimisticConcurrency: true })
 export class SalaryConfig {
   /** Nhân viên (unique — mỗi người 1 cấu hình) */
   @Prop({ type: SchemaTypes.ObjectId, ref: 'User', required: true, unique: true })
@@ -100,6 +100,5 @@ export class SalaryConfig {
 }
 
 export const SalaryConfigSchema = SchemaFactory.createForClass(SalaryConfig);
-
-SalaryConfigSchema.index({ userId: 1 }, { unique: true });
 SalaryConfigSchema.index({ status: 1 });
+

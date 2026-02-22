@@ -5,6 +5,7 @@ import { StaffPayrollController } from './staff-payroll.controller';
 import { StaffPayroll, StaffPayrollSchema } from './schemas/staff-payroll.schema';
 import { WorkSessionsModule } from '../work-sessions/work-sessions.module';
 import { SalaryConfigModule } from '../salary-config/salary-config.module';
+import { FinancialControlModule } from '../financial-control/financial-control.module';
 
 @Module({
   imports: [
@@ -13,6 +14,7 @@ import { SalaryConfigModule } from '../salary-config/salary-config.module';
     ]),
     WorkSessionsModule,
     SalaryConfigModule,
+    FinancialControlModule, // BUG #3 fix: ghi BankTransaction khi trả lương nhân viên
   ],
   controllers: [StaffPayrollController],
   providers: [StaffPayrollService],

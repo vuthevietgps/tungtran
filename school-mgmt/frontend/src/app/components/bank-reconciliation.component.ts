@@ -285,7 +285,7 @@ export class BankReconciliationComponent implements OnInit {
       if (this.toDate) params = params.set('toDate', this.toDate);
 
       const data = await this.http
-        .get<ReconciliationResult>(`${this.apiUrl}/reconciliation`, { params })
+        .get<ReconciliationResult>(`${this.apiUrl}/bank-reconciliation`, { params })
         .toPromise() as ReconciliationResult;
 
       this.result.set(data);

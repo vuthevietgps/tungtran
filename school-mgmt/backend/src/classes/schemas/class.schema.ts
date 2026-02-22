@@ -18,11 +18,16 @@ export enum ClassStatus {
  * Chế độ lớp học:
  * - ONLINE: 1:1 (1 GV – 1 HS). Lương GV = teacherPayPerSession cố định.
  * - OFFLINE: 1:N (1 GV – nhiều HS). Lương GV = teacherPayPerStudent × số HS điểm danh.
- *   Mọi HS trong lớp đều bị trừ ví dù có đi học hay không.
+ *   Chỉ HS được điểm danh có mặt/đi muộn mới bị trừ ví.
  */
 export enum ClassMode {
   ONLINE = 'ONLINE',
   OFFLINE = 'OFFLINE',
+}
+
+export enum PricingSnapshotSource {
+  MANUAL = 'MANUAL',
+  INVOICE = 'INVOICE',
 }
 
 // Sub-schema for class schedule (tham khảo — GV & PH tự thỏa thuận)
@@ -57,6 +62,41 @@ export class CancelPolicy {
 }
 
 export const CancelPolicySchema = SchemaFactory.createForClass(CancelPolicy);
+
+@Schema({ _id: false })
+export class PricingSnapshot {
+  @Prop({ type: String, enum: PricingSnapshotSource, default: PricingSnapshotSource.MANUAL })
+  source!: PricingSnapshotSource;
+
+  @Prop({ type: Date, required: true })
+  capturedAt!: Date;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'Invoice' })
+  sourceInvoiceId?: Types.ObjectId;
+
+  @Prop({ type: String, trim: true })
+  sourceInvoiceNumber?: string;
+
+  @Prop({ type: Number, min: 15, default: 60 })
+  referenceDuration!: number; // Minutes
+
+  @Prop({ type: Number, min: 15, default: 60 })
+  sessionDuration!: number; // Minutes
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  pricePerSession!: number; // Price for referenceDuration
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  perMinuteRate!: number;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  teacherPayPerSession!: number;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  teacherPayPerStudent!: number;
+}
+
+export const PricingSnapshotSchema = SchemaFactory.createForClass(PricingSnapshot);
 
 // ─── Sub-schema: Mục chương trình học (Curriculum Item) ─────────────
 
@@ -134,7 +174,7 @@ export class Classroom {
   @Prop({ type: SchemaTypes.ObjectId, ref: User.name, required: true })
   teacher!: Types.ObjectId;
 
-  @Prop({ type: SchemaTypes.ObjectId, ref: User.name, required: true })
+  @Prop({ type: SchemaTypes.ObjectId, ref: User.name, required: false })
   sale!: Types.ObjectId;
 
   /**
@@ -148,6 +188,9 @@ export class Classroom {
   /** Hóa đơn đã duyệt liên kết (SALE tạo lớp từ hóa đơn APPROVED) */
   @Prop({ type: SchemaTypes.ObjectId, ref: 'Invoice', required: false })
   invoiceId?: Types.ObjectId;
+
+  @Prop({ type: PricingSnapshotSchema, required: false })
+  pricingSnapshot?: PricingSnapshot;
 
   @Prop({ type: [SchemaTypes.ObjectId], ref: Student.name, default: [] })
   students!: Types.ObjectId[];
@@ -231,4 +274,4 @@ export const ClassroomSchema = SchemaFactory.createForClass(Classroom);
 ClassroomSchema.index({ teacher: 1 });
 ClassroomSchema.index({ sale: 1 });
 ClassroomSchema.index({ status: 1 });
-ClassroomSchema.index({ code: 1 }, { unique: true });
+

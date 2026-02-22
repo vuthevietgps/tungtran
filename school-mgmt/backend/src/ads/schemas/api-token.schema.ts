@@ -47,3 +47,4 @@ export const ApiTokenSchema = SchemaFactory.createForClass(ApiToken);
 
 ApiTokenSchema.index({ adAccountId: 1 });
 ApiTokenSchema.index({ platform: 1, status: 1 });
+ApiTokenSchema.index({ adAccountId: 1, status: 1, expiresAt: -1, createdAt: -1 });

@@ -124,8 +124,9 @@ export class PayrollController {
     @Param('id', ParseMongoIdPipe) id: string,
     @Param('itemId', ParseMongoIdPipe) itemId: string,
     @Body() dto: AdjustPayrollItemDto,
+    @Req() req: AuthenticatedRequest,
   ) {
-    return this.payrollService.adjustItem(id, itemId, dto);
+    return this.payrollService.adjustItem(id, itemId, dto, req.user.sub);
   }
 
   // ── WORKFLOW ────────────────────────────────────────────────────
@@ -162,15 +163,21 @@ export class PayrollController {
     return this.payrollService.reopen(id);
   }
 
-  /** Xác nhận đã chi lương → PAID */
+  /** Xác nhận đã chi lương → PAID. Truyền bankAccountId để ghi BankTransaction (BUG #3 fix) */
   @Post(':id/mark-paid')
   @Roles(Role.ACCOUNTING, Role.DIRECTOR)
   markPaid(
     @Param('id', ParseMongoIdPipe) id: string,
-    @Body('paymentRef') paymentRef: string,
+    @Body() body: { paymentRef?: string; bankAccountId?: string },
     @Req() req: AuthenticatedRequest,
   ) {
-    return this.payrollService.markPaid(id, req.user.sub, paymentRef);
+    return this.payrollService.markPaid(
+      id,
+      req.user.sub,
+      body.paymentRef,
+      body.bankAccountId,
+      req.user.fullName,
+    );
   }
 
   // ── DELETE ──────────────────────────────────────────────────────

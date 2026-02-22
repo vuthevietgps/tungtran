@@ -59,7 +59,6 @@ export class Fund {
 }
 
 export const FundSchema = SchemaFactory.createForClass(Fund);
-
-FundSchema.index({ fundCode: 1 }, { unique: true });
 FundSchema.index({ fundType: 1 });
 FundSchema.index({ status: 1 });
+

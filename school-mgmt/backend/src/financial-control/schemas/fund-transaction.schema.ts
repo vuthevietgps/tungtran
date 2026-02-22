@@ -52,7 +52,6 @@ export class FundTransaction {
 }
 
 export const FundTransactionSchema = SchemaFactory.createForClass(FundTransaction);
-
-FundTransactionSchema.index({ transactionCode: 1 }, { unique: true });
 FundTransactionSchema.index({ fundId: 1, transactionDate: -1 });
 FundTransactionSchema.index({ type: 1 });
+

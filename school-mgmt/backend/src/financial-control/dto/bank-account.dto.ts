@@ -1,4 +1,14 @@
-import { IsString, IsNotEmpty, IsNumber, Min, IsOptional, IsBoolean, IsEnum } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsNumber,
+  Min,
+  IsOptional,
+  IsBoolean,
+  IsEnum,
+  IsDateString,
+  IsMongoId,
+} from 'class-validator';
 import { BankAccountStatus } from '../schemas/bank-account.schema';
 import { BankTransactionType, BankTransactionCategory } from '../schemas/bank-transaction.schema';
 
@@ -64,7 +74,7 @@ export class UpdateBankAccountDto {
 }
 
 export class RecordBankTransactionDto {
-  @IsString()
+  @IsMongoId()
   @IsNotEmpty()
   bankAccountId!: string;
 
@@ -77,10 +87,10 @@ export class RecordBankTransactionDto {
   category?: string;
 
   @IsNumber()
-  @Min(0)
+  @Min(1)
   amount!: number;
 
-  @IsString()
+  @IsDateString()
   @IsNotEmpty()
   transactionDate!: string;
 
@@ -92,7 +102,7 @@ export class RecordBankTransactionDto {
   @IsOptional()
   reference?: string;
 
-  @IsString()
+  @IsMongoId()
   @IsOptional()
   referenceId?: string;
 
@@ -102,7 +112,7 @@ export class RecordBankTransactionDto {
 }
 
 export class QueryBankTransactionDto {
-  @IsString()
+  @IsMongoId()
   @IsOptional()
   bankAccountId?: string;
 
@@ -114,11 +124,11 @@ export class QueryBankTransactionDto {
   @IsOptional()
   category?: string;
 
-  @IsString()
+  @IsDateString()
   @IsOptional()
   startDate?: string;
 
-  @IsString()
+  @IsDateString()
   @IsOptional()
   endDate?: string;
 

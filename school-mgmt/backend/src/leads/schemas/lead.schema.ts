@@ -163,10 +163,10 @@ export const LeadSchema = SchemaFactory.createForClass(Lead);
 LeadSchema.index({ status: 1 });
 LeadSchema.index({ saleId: 1 });
 LeadSchema.index({ source: 1 });
-LeadSchema.index({ leadCode: 1 }, { unique: true });
 LeadSchema.index({ nextFollowUp: 1 });
 LeadSchema.index({ parentPhone: 1 });
 LeadSchema.index({ createdAt: -1 });
 LeadSchema.index({ assignedAt: 1 });
 LeadSchema.index({ lastContactAt: 1 });
 LeadSchema.index({ adGroupId: 1 });
+

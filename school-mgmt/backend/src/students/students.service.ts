@@ -23,18 +23,23 @@ export class StudentsService {
     @InjectConnection() private readonly connection: Connection,
   ) {}
 
+  private getActorId(actor?: JwtPayload): string | null {
+    return actor?.sub ?? actor?._id ?? (actor as any)?.userId ?? null;
+  }
+
   findAll(actor?: JwtPayload) {
     return this.getStudentList(actor);
   }
 
   private async getStudentList(actor?: JwtPayload) {
+    const actorId = this.getActorId(actor);
     // Sale chỉ thấy HS của mình
     const isSale = actor?.role === Role.SALE;
-    const saleOid = isSale ? new Types.ObjectId(actor._id) : undefined;
+    const saleOid = isSale && actorId ? new Types.ObjectId(actorId) : undefined;
 
     // Parent chỉ thấy con mình
     const isParent = actor?.role === Role.PARENT;
-    const parentOid = isParent ? new Types.ObjectId(actor.sub) : undefined;
+    const parentOid = isParent && actorId ? new Types.ObjectId(actorId) : undefined;
 
     const studentFilter: any = {};
     if (saleOid) studentFilter.saleId = saleOid;
@@ -83,7 +88,10 @@ export class StudentsService {
     const studentFilter: any = {};
     // Sale chỉ thấy HS của mình
     if (actor?.role === Role.SALE) {
-      studentFilter.saleId = new Types.ObjectId((actor as any)._id);
+      const actorId = this.getActorId(actor);
+      if (actorId) {
+        studentFilter.saleId = new Types.ObjectId(actorId);
+      }
     }
     if (searchTerm) {
       // Escape special regex characters to prevent MongoDB injection
@@ -120,12 +128,16 @@ export class StudentsService {
 
     // Get attendance counts for all students
     const studentIds = students.map(s => new Types.ObjectId((s as any)._id));
+    const attendanceMatch: any = {
+      studentId: { $in: studentIds },
+      status: { $in: ['PRESENT', 'LATE'] },
+    };
+    if (classId && Types.ObjectId.isValid(classId)) {
+      attendanceMatch.classId = new Types.ObjectId(classId);
+    }
     const attendanceCounts = await this.attendanceModel.aggregate([
       {
-        $match: {
-          studentId: { $in: studentIds },
-          attendedAt: { $ne: null }
-        }
+        $match: attendanceMatch,
       },
       {
         $group: {
@@ -178,7 +190,10 @@ export class StudentsService {
     if (classId) classFilter._id = new Types.ObjectId(classId);
     // SALE can only see their own classes
     if (actor?.role === Role.SALE) {
-      classFilter.sale = new Types.ObjectId(actor.sub);
+      const actorId = this.getActorId(actor);
+      if (actorId) {
+        classFilter.sale = new Types.ObjectId(actorId);
+      }
     }
 
     // 2. Get classes with populated teacher + students
@@ -279,16 +294,42 @@ export class StudentsService {
   }
 
   async create(createStudentDto: any, actor?: JwtPayload) {
-    // Auto-set saleId khi SALE tạo học sinh
-    if (actor?.role === Role.SALE && !createStudentDto.saleId) {
-      createStudentDto.saleId = (actor as any)._id;
-      createStudentDto.saleName = (actor as any).fullName || '';
+    // SALE ownership is always bound to current actor
+    if (actor?.role === Role.SALE) {
+      const actorId = this.getActorId(actor);
+      if (!actorId) {
+        throw new ForbiddenException('Khong xac dinh duoc sale');
+      }
+      createStudentDto.saleId = actorId;
+      createStudentDto.saleName = actor.fullName || '';
     }
     const student = new this.studentModel(createStudentDto);
     return student.save();
   }
 
-  async update(id: string, updateStudentDto: any) {
+  async update(id: string, updateStudentDto: any, actor?: JwtPayload) {
+    const existing = await this.studentModel.findById(id).select('saleId');
+    if (!existing) {
+      throw new NotFoundException('Hoc sinh khong ton tai');
+    }
+
+    if (actor?.role === Role.SALE) {
+      const actorId = this.getActorId(actor);
+      if (!actorId) {
+        throw new ForbiddenException('Khong xac dinh duoc sale');
+      }
+      if (existing.saleId?.toString() !== actorId) {
+        throw new ForbiddenException('Ban khong phu trach hoc sinh nay');
+      }
+      if (updateStudentDto.saleId && updateStudentDto.saleId !== actorId) {
+        throw new ForbiddenException('SALE khong duoc chuyen ownership hoc sinh');
+      }
+      updateStudentDto.saleId = actorId;
+      if (!updateStudentDto.saleName) {
+        updateStudentDto.saleName = actor.fullName || '';
+      }
+    }
+
     return this.studentModel.findByIdAndUpdate(id, updateStudentDto, { new: true });
   }
 
@@ -347,14 +388,25 @@ export class StudentsService {
 
   async findOne(id: string, actor?: JwtPayload) {
     const student = await this.studentModel.findById(id).populate('productPackage', 'name price');
-    if (!student) return null;
+    if (!student) {
+      throw new NotFoundException('Hoc sinh khong ton tai');
+    }
+
+    const actorId = this.getActorId(actor);
 
     // PARENT can only view their own children
     if (actor?.role === Role.PARENT) {
-      if (student.parentUserId?.toString() !== actor.sub) {
-        return null;
+      if (!actorId || student.parentUserId?.toString() !== actorId) {
+        throw new NotFoundException('Hoc sinh khong ton tai');
       }
     }
+
+    if (actor?.role === Role.SALE) {
+      if (!actorId || student.saleId?.toString() !== actorId) {
+        throw new NotFoundException('Hoc sinh khong ton tai');
+      }
+    }
+
     return student;
   }
 

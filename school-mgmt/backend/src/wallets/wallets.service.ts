@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -21,6 +22,7 @@ import {
 
 import { User } from '../users/schemas/user.schema';
 import { Invoice, InvoiceDocument } from '../invoices/schemas/invoice.schema';
+import { BankAccount, BankAccountDocument, BankAccountStatus } from '../financial-control/schemas/bank-account.schema';
 import { TopUpRequestDto } from './dto/top-up-request.dto';
 import { ApproveTopUpDto } from './dto/approve-top-up.dto';
 import { AdjustBalanceDto } from './dto/adjust-balance.dto';
@@ -36,6 +38,7 @@ export class WalletsService {
     @InjectModel(LedgerEntry.name) private ledgerModel: Model<LedgerEntryDocument>,
     @InjectModel(User.name) private userModel: Model<any>,
     @InjectModel(Invoice.name) private invoiceModel: Model<InvoiceDocument>,
+    @InjectModel(BankAccount.name) private bankAccountModel: Model<BankAccountDocument>,
     @InjectConnection() private connection: Connection,
   ) {}
 
@@ -43,24 +46,23 @@ export class WalletsService {
   //  WALLET CRUD
   // ══════════════════════════════════════════════════════════════════
 
-  /** Tạo ví mới cho user (gọi khi tạo PARENT account) */
-  async createWallet(userId: string): Promise<WalletDocument> {
-    const existing = await this.walletModel.findOne({ userId: new Types.ObjectId(userId) });
-    if (existing) return existing; // Idempotent
-
-    return this.walletModel.create({
-      userId: new Types.ObjectId(userId),
-      balance: 0,
-    });
+  /** Tạo ví mới cho user (idempotent, có thể chạy trong transaction) */
+  async createWallet(userId: string, mongoSession?: ClientSession): Promise<WalletDocument> {
+    const wallet = await this.walletModel
+      .findOneAndUpdate(
+        { userId: new Types.ObjectId(userId) },
+        { $setOnInsert: { userId: new Types.ObjectId(userId), balance: 0 } },
+        { upsert: true, new: true, session: mongoSession },
+      );
+    if (!wallet) {
+      throw new NotFoundException('Không thể tạo ví');
+    }
+    return wallet;
   }
 
   /** Lấy ví theo userId, auto-create nếu chưa có */
   async getOrCreateWallet(userId: string): Promise<WalletDocument> {
-    const wallet = await this.walletModel.findOne({ userId: new Types.ObjectId(userId) });
-    if (!wallet) {
-      return this.createWallet(userId);
-    }
-    return wallet;
+    return this.createWallet(userId);
   }
 
   /** Lấy ví theo ID */
@@ -100,6 +102,15 @@ export class WalletsService {
    * Chưa cộng balance, chờ ACCOUNTING duyệt.
    */
   async requestTopUp(dto: TopUpRequestDto, createdBy: string): Promise<LedgerEntryDocument> {
+    if (
+      dto.paymentMethod === PaymentMethod.BANK_TRANSFER &&
+      !dto.receiptImageUrl?.trim()
+    ) {
+      throw new BadRequestException(
+        'Top-up via bank transfer requires receiptImageUrl',
+      );
+    }
+
     const wallet = await this.getOrCreateWallet(dto.userId);
 
     const entry = await this.ledgerModel.create({
@@ -141,6 +152,28 @@ export class WalletsService {
       if (entry.type !== TransactionType.TOP_UP) {
         throw new BadRequestException('Chỉ duyệt được giao dịch nạp tiền');
       }
+      if (
+        entry.paymentMethod === PaymentMethod.BANK_TRANSFER &&
+        !entry.receiptImageUrl
+      ) {
+        throw new BadRequestException(
+          'Yeu cau nap chuyen khoan thieu anh bien lai',
+        );
+      }
+      if (
+        entry.paymentMethod === PaymentMethod.BANK_TRANSFER &&
+        dto.bankMatched !== true
+      ) {
+        throw new BadRequestException(
+          'Can xac nhan doi soat sao ke truoc khi duyet',
+        );
+      }
+      if (
+        dto.bankAccountId &&
+        entry.paymentMethod !== PaymentMethod.BANK_TRANSFER
+      ) {
+        throw new BadRequestException('bankAccountId chi ap dung cho giao dich chuyen khoan');
+      }
 
       // Update wallet balance atomically (prevent race condition)
       const wallet = await this.walletModel.findById(entry.walletId).session(session);
@@ -167,7 +200,34 @@ export class WalletsService {
       entry.balanceAfter = updatedWallet!.balance;
       entry.approvedBy = new Types.ObjectId(approvedBy);
       entry.approvedAt = new Date();
-      if (dto.accountingNotes) entry.accountingNotes = dto.accountingNotes;
+
+      const approvalNotes: string[] = [];
+      if (dto.accountingNotes?.trim()) {
+        approvalNotes.push(dto.accountingNotes.trim());
+      }
+      if (entry.paymentMethod === PaymentMethod.BANK_TRANSFER) {
+        const bankRef = dto.bankStatementRef?.trim();
+        if (bankRef) {
+          approvalNotes.push(`BANK_MATCHED_REF: ${bankRef}`);
+          entry.transactionRef = bankRef;
+        } else {
+          approvalNotes.push('BANK_MATCHED_REF: CONFIRMED');
+        }
+        if (dto.bankAccountId) {
+          const bankAccount = await this.bankAccountModel.findOne({
+            _id: new Types.ObjectId(dto.bankAccountId),
+            status: BankAccountStatus.ACTIVE,
+          }).session(session).lean();
+          if (!bankAccount) {
+            throw new BadRequestException('Tai khoan ngan hang doi soat khong hop le hoac khong hoat dong');
+          }
+          approvalNotes.push(`BANK_MATCHED_BANK_ACCOUNT_ID: ${dto.bankAccountId}`);
+        }
+      }
+      if (approvalNotes.length > 0) {
+        entry.accountingNotes = approvalNotes.join(' | ');
+      }
+
       await entry.save({ session });
 
       await session.commitTransaction();
@@ -222,35 +282,48 @@ export class WalletsService {
     studentId: string;
     classId?: string;
     approvedBy: string;
-  }): Promise<LedgerEntryDocument> {
-    const mongoSession = await this.connection.startSession();
-    mongoSession.startTransaction();
+  }, options?: { session?: ClientSession }): Promise<LedgerEntryDocument> {
+    const mongoSession = options?.session || await this.connection.startSession();
+    const ownsSession = !options?.session;
+    if (ownsSession) mongoSession.startTransaction();
 
     try {
+      const invoiceObjectId = new Types.ObjectId(params.invoiceId);
+
+      // Idempotency by invoiceId: prevent duplicate wallet top-up for same invoice.
+      const existingEntry = await this.ledgerModel.findOne({
+        type: TransactionType.TOP_UP,
+        status: TransactionStatus.APPROVED,
+        invoiceId: invoiceObjectId,
+      }).session(mongoSession).exec();
+      if (existingEntry) {
+        if (ownsSession) await mongoSession.commitTransaction();
+        return existingEntry;
+      }
+
       // Read wallet INSIDE transaction to prevent stale-balance races
-      let wallet = await this.walletModel
-        .findOne({ userId: new Types.ObjectId(params.parentUserId) })
-        .session(mongoSession);
+      const wallet = await this.createWallet(params.parentUserId, mongoSession);
       if (!wallet) {
-        await this.createWallet(params.parentUserId);
-        wallet = (await this.walletModel
-          .findOne({ userId: new Types.ObjectId(params.parentUserId) })
-          .session(mongoSession))!;
+        throw new NotFoundException('Không thể tạo ví cho phụ huynh');
+      }
+      if (wallet.status === WalletStatus.FROZEN) {
+        throw new BadRequestException('Ví đang bị đóng băng, không thể nạp tiền');
       }
 
       const balanceBefore = wallet.balance;
-      
+
       // Use atomic $inc to prevent race conditions
-      await this.walletModel.updateOne(
+      const updatedWallet = await this.walletModel.findOneAndUpdate(
         { _id: wallet._id },
         {
           $inc: { balance: params.amount, totalTopUp: params.amount },
           $set: { lastTransactionAt: new Date() },
         },
-        { session: mongoSession },
+        { session: mongoSession, new: true },
       );
-      
-      const updatedWallet = await this.walletModel.findById(wallet._id).session(mongoSession);
+      if (!updatedWallet) {
+        throw new NotFoundException('Ví không tồn tại');
+      }
 
       const entry = await this.ledgerModel.create(
         [
@@ -265,6 +338,7 @@ export class WalletsService {
             description: `Nạp tiền từ hóa đơn ${params.invoiceNumber}`,
             studentId: new Types.ObjectId(params.studentId),
             classId: params.classId ? new Types.ObjectId(params.classId) : undefined,
+            invoiceId: invoiceObjectId,
             paymentMethod: PaymentMethod.SYSTEM,
             approvedBy: new Types.ObjectId(params.approvedBy),
             approvedAt: new Date(),
@@ -274,17 +348,95 @@ export class WalletsService {
         { session: mongoSession },
       );
 
-      await mongoSession.commitTransaction();
+      if (ownsSession) await mongoSession.commitTransaction();
       this.logger.log(
         `Invoice top-up: ${params.amount}đ → wallet ${wallet._id} (invoice: ${params.invoiceNumber})`,
       );
       return entry[0];
     } catch (err) {
-      await mongoSession.abortTransaction();
+      if (ownsSession) await mongoSession.abortTransaction();
       throw err;
     } finally {
-      mongoSession.endSession();
+      if (ownsSession) mongoSession.endSession();
     }
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  //  REVERSE INVOICE TOP-UP (Rollback khi hủy hóa đơn APPROVED)
+  // ══════════════════════════════════════════════════════════════════
+
+  /**
+   * BUG NGHIÊM TRỌNG fix: Rollback wallet top-up khi hủy hóa đơn APPROVED.
+   * Gọi từ InvoicesService.cancelInvoice() trong cùng transaction.
+   * Tạo ADJUSTMENT entry âm để trừ lại số tiền đã nạp.
+   * Ví có thể về âm nếu PH đã dùng hết tiền (được phép).
+   */
+  async reverseInvoiceTopUp(
+    params: {
+      invoiceId: string;
+      amount: number;
+      reason: string;
+      cancelledBy: string;
+    },
+    options?: { session?: ClientSession },
+  ): Promise<LedgerEntryDocument> {
+    const mongoSession = options?.session;
+    const invoiceObjectId = new Types.ObjectId(params.invoiceId);
+
+    // Tìm original TOP_UP entry của invoice này
+    const originalEntry = await this.ledgerModel
+      .findOne({ type: TransactionType.TOP_UP, invoiceId: invoiceObjectId })
+      .session(mongoSession || null)
+      .exec();
+
+    if (!originalEntry) {
+      // Không có entry để reverse — trường hợp này không nên xảy ra nếu walletTopUpDone = true
+      this.logger.warn(`reverseInvoiceTopUp: no TOP_UP entry found for invoice ${params.invoiceId}`);
+      return null as any;
+    }
+
+    // Atomic decrement wallet balance (new: false để lấy balance trước khi trừ)
+    const walletBefore = await this.walletModel.findOneAndUpdate(
+      { _id: originalEntry.walletId },
+      {
+        $inc: { balance: -params.amount, totalTopUp: -params.amount },
+        $set: { lastTransactionAt: new Date() },
+      },
+      { session: mongoSession, new: false },
+    );
+
+    if (!walletBefore) {
+      throw new NotFoundException('Ví không tồn tại khi rollback invoice top-up');
+    }
+
+    const balanceBefore = walletBefore.balance;
+    const balanceAfter = balanceBefore - params.amount;
+
+    // Tạo ADJUSTMENT entry ghi nhận việc trừ tiền do hủy hóa đơn
+    const [entry] = await this.ledgerModel.create(
+      [{
+        walletId: originalEntry.walletId,
+        userId: originalEntry.userId,
+        type: TransactionType.ADJUSTMENT,
+        status: TransactionStatus.COMPLETED,
+        amount: params.amount,
+        balanceBefore,
+        balanceAfter,
+        description: `Hoàn tiền do hủy hóa đơn: ${params.reason}`,
+        invoiceId: invoiceObjectId,
+        paymentMethod: PaymentMethod.SYSTEM,
+        approvedBy: new Types.ObjectId(params.cancelledBy),
+        approvedAt: new Date(),
+        createdBy: new Types.ObjectId(params.cancelledBy),
+      }],
+      mongoSession ? { session: mongoSession } : {},
+    );
+
+    this.logger.log(
+      `Invoice top-up reversed: -${params.amount}đ from wallet ${originalEntry.walletId} (invoice: ${params.invoiceId})`,
+    );
+
+    return entry;
   }
 
   // ══════════════════════════════════════════════════════════════════
@@ -338,14 +490,9 @@ export class WalletsService {
       }
 
       // Read wallet INSIDE transaction to prevent stale-balance races
-      let wallet = await this.walletModel
-        .findOne({ userId: new Types.ObjectId(params.parentUserId) })
-        .session(mongoSession);
+      const wallet = await this.createWallet(params.parentUserId, mongoSession);
       if (!wallet) {
-        await this.createWallet(params.parentUserId);
-        wallet = (await this.walletModel
-          .findOne({ userId: new Types.ObjectId(params.parentUserId) })
-          .session(mongoSession))!;
+        throw new NotFoundException('Không thể tạo ví cho phụ huynh');
       }
 
       if (wallet.status === WalletStatus.FROZEN) {
@@ -459,14 +606,9 @@ export class WalletsService {
       }
 
       // Read wallet INSIDE transaction to prevent stale-balance races
-      let wallet = await this.walletModel
-        .findOne({ userId: new Types.ObjectId(params.parentUserId) })
-        .session(mongoSession);
+      const wallet = await this.createWallet(params.parentUserId, mongoSession);
       if (!wallet) {
-        await this.createWallet(params.parentUserId);
-        wallet = (await this.walletModel
-          .findOne({ userId: new Types.ObjectId(params.parentUserId) })
-          .session(mongoSession))!;
+        throw new NotFoundException('Không thể tạo ví cho phụ huynh');
       }
 
       const balanceBefore = wallet.balance;
@@ -530,14 +672,9 @@ export class WalletsService {
 
     try {
       // Read wallet INSIDE transaction to prevent stale-balance
-      let wallet = await this.walletModel
-        .findOne({ userId: new Types.ObjectId(dto.userId) })
-        .session(mongoSession);
+      const wallet = await this.createWallet(dto.userId, mongoSession);
       if (!wallet) {
-        await this.createWallet(dto.userId);
-        wallet = (await this.walletModel
-          .findOne({ userId: new Types.ObjectId(dto.userId) })
-          .session(mongoSession))!;
+        throw new NotFoundException('Không thể tạo ví cho user');
       }
 
       const balanceBefore = wallet.balance;
@@ -881,6 +1018,7 @@ export class WalletsService {
   async getSessionEquivalence(params: {
     studentId: string;
     classId: string;
+    requesterParentUserId?: string;
   }) {
     // 1) Tìm invoice APPROVED mới nhất cho student + class
     const invoice = await this.invoiceModel.findOne({
@@ -902,6 +1040,12 @@ export class WalletsService {
       .findOne({ _id: new Types.ObjectId(params.studentId) });
     if (!student?.parentUserId) {
       throw new NotFoundException('Không tìm thấy phụ huynh của học sinh');
+    }
+    if (
+      params.requesterParentUserId &&
+      student.parentUserId.toString() !== params.requesterParentUserId
+    ) {
+      throw new ForbiddenException('Bạn không có quyền tra cứu học sinh không thuộc mình');
     }
 
     const wallet = await this.walletModel

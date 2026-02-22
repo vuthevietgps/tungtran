@@ -279,12 +279,12 @@ export class ComprehensiveReportComponent implements OnInit {
 
   private searchTimeout: any;
 
-  /** Split session indices into chunks of 20 for display */
+  /** Split session indices into chunks of 40 for display */
   sessionChunks = computed(() => {
     const max = this.maxSessions();
     if (max === 0) return [];
     const chunks: { start: number; end: number; indices: number[] }[] = [];
-    for (let i = 0; i < max; i += 20) {
+    for (let i = 0; i < max; i += 40) {
       const end = Math.min(i + 20, max);
       const indices: number[] = [];
       for (let j = i; j < end; j++) indices.push(j);

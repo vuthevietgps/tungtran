@@ -76,11 +76,10 @@ export class Conversation {
 }
 
 export const ConversationSchema = SchemaFactory.createForClass(Conversation);
-
-ConversationSchema.index({ conversationCode: 1 }, { unique: true });
 ConversationSchema.index({ fanpageId: 1, platformUserId: 1 }, { unique: true });
 ConversationSchema.index({ status: 1 });
 ConversationSchema.index({ lastMessageAt: -1 });
 ConversationSchema.index({ assignedAgentId: 1 });
 ConversationSchema.index({ adGroupId: 1 });
 ConversationSchema.index({ platform: 1 });
+

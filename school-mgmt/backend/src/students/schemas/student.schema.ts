@@ -140,5 +140,5 @@ export const StudentSchema = SchemaFactory.createForClass(Student);
 StudentSchema.index({ approvalStatus: 1 });
 StudentSchema.index({ saleId: 1 });
 StudentSchema.index({ parentUserId: 1 });
-StudentSchema.index({ studentCode: 1 }, { unique: true });
 StudentSchema.index({ adGroupId: 1 });
+

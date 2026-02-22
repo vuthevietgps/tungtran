@@ -13,11 +13,15 @@ import { CreateApiTokenDto } from './dto/create-api-token.dto';
 import { UpdateApiTokenDto } from './dto/update-api-token.dto';
 import { CreateAdCostDto } from './dto/create-ad-cost.dto';
 import { QueryAdCostDto } from './dto/query-ad-cost.dto';
+import { QueryAdsAnalyticsDto } from './dto/query-ads-analytics.dto';
+import { QueryAdsProfitDto } from './dto/query-ads-profit.dto';
+import { QueryAdsSuggestionsDto } from './dto/query-ads-suggestions.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '../common/interfaces/role.enum';
+import { ParseMongoIdPipe } from '../common/pipes/parse-mongo-id.pipe';
 
 @Controller('ads')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -34,7 +38,7 @@ export class AdsController {
 
   @Get('accounts/:id')
   @Roles(Role.DIRECTOR, Role.OPS, Role.SALE)
-  async findOneAccount(@Param('id') id: string) {
+  async findOneAccount(@Param('id', ParseMongoIdPipe) id: string) {
     return this.adsService.findOneAccount(id);
   }
 
@@ -46,13 +50,13 @@ export class AdsController {
 
   @Patch('accounts/:id')
   @Roles(Role.DIRECTOR)
-  async updateAccount(@Param('id') id: string, @Body() dto: UpdateAdAccountDto) {
+  async updateAccount(@Param('id', ParseMongoIdPipe) id: string, @Body() dto: UpdateAdAccountDto) {
     return this.adsService.updateAccount(id, dto);
   }
 
   @Delete('accounts/:id')
   @Roles(Role.DIRECTOR)
-  async deleteAccount(@Param('id') id: string) {
+  async deleteAccount(@Param('id', ParseMongoIdPipe) id: string) {
     await this.adsService.deleteAccount(id);
     return { message: 'Đã xóa tài khoản quảng cáo' };
   }
@@ -79,7 +83,7 @@ export class AdsController {
 
   @Get('groups/:id')
   @Roles(Role.DIRECTOR, Role.OPS, Role.SALE)
-  async findOneGroup(@Param('id') id: string) {
+  async findOneGroup(@Param('id', ParseMongoIdPipe) id: string) {
     return this.adsService.findOneGroup(id);
   }
 
@@ -91,13 +95,13 @@ export class AdsController {
 
   @Patch('groups/:id')
   @Roles(Role.DIRECTOR, Role.OPS)
-  async updateGroup(@Param('id') id: string, @Body() dto: UpdateAdGroupDto) {
+  async updateGroup(@Param('id', ParseMongoIdPipe) id: string, @Body() dto: UpdateAdGroupDto) {
     return this.adsService.updateGroup(id, dto);
   }
 
   @Delete('groups/:id')
   @Roles(Role.DIRECTOR)
-  async deleteGroup(@Param('id') id: string) {
+  async deleteGroup(@Param('id', ParseMongoIdPipe) id: string) {
     await this.adsService.deleteGroup(id);
     return { message: 'Đã xóa nhóm quảng cáo' };
   }
@@ -106,7 +110,7 @@ export class AdsController {
 
   @Get('tokens/:accountId')
   @Roles(Role.DIRECTOR)
-  async findTokens(@Param('accountId') accountId: string) {
+  async findTokens(@Param('accountId', ParseMongoIdPipe) accountId: string) {
     return this.adsService.findTokensByAccount(accountId);
   }
 
@@ -118,13 +122,13 @@ export class AdsController {
 
   @Patch('tokens/:id')
   @Roles(Role.DIRECTOR)
-  async updateToken(@Param('id') id: string, @Body() dto: UpdateApiTokenDto) {
+  async updateToken(@Param('id', ParseMongoIdPipe) id: string, @Body() dto: UpdateApiTokenDto) {
     return this.adsService.updateToken(id, dto);
   }
 
   @Delete('tokens/:id')
   @Roles(Role.DIRECTOR)
-  async deleteToken(@Param('id') id: string) {
+  async deleteToken(@Param('id', ParseMongoIdPipe) id: string) {
     await this.adsService.deleteToken(id);
     return { message: 'Đã xóa token' };
   }
@@ -145,7 +149,7 @@ export class AdsController {
 
   @Delete('costs/:id')
   @Roles(Role.DIRECTOR)
-  async deleteCost(@Param('id') id: string) {
+  async deleteCost(@Param('id', ParseMongoIdPipe) id: string) {
     await this.adsService.deleteCost(id);
     return { message: 'Đã xóa bản ghi chi phí' };
   }
@@ -161,7 +165,7 @@ export class AdsController {
   @Post('sync/:accountId')
   @Roles(Role.DIRECTOR)
   async triggerSyncAccount(
-    @Param('accountId') accountId: string,
+    @Param('accountId', ParseMongoIdPipe) accountId: string,
     @Query('date') date?: string,
   ) {
     const synced = await this.adsService.syncAccountCosts(accountId, date);
@@ -172,23 +176,23 @@ export class AdsController {
 
   @Get('analytics')
   @Roles(Role.DIRECTOR, Role.OPS)
-  async getAnalytics(
-    @Query('startDate') startDate: string,
-    @Query('endDate') endDate: string,
-    @Query('adGroupId') adGroupId?: string,
-    @Query('platform') platform?: string,
-  ) {
-    return this.adsService.getAnalytics(startDate, endDate, adGroupId, platform);
+  async getAnalytics(@Query() query: QueryAdsAnalyticsDto) {
+    return this.adsService.getAnalytics(
+      query.startDate,
+      query.endDate,
+      query.adGroupId,
+      query.platform,
+    );
   }
 
   @Get('analytics/profit')
   @Roles(Role.DIRECTOR)
-  async getNetProfitByAdGroup(
-    @Query('startDate') startDate: string,
-    @Query('endDate') endDate: string,
-    @Query('adGroupId') adGroupId?: string,
-  ) {
-    return this.adsService.getNetProfitByAdGroup(startDate, endDate, adGroupId);
+  async getNetProfitByAdGroup(@Query() query: QueryAdsProfitDto) {
+    return this.adsService.getNetProfitByAdGroup(
+      query.startDate,
+      query.endDate,
+      query.adGroupId,
+    );
   }
 
   @Post('backfill-adgroup')
@@ -199,11 +203,7 @@ export class AdsController {
 
   @Get('suggestions')
   @Roles(Role.DIRECTOR)
-  async getSuggestions(
-    @Query('startDate') startDate: string,
-    @Query('endDate') endDate: string,
-    @Query('totalBudget') totalBudget: string,
-  ) {
-    return this.adsService.getSuggestions(startDate, endDate, Number(totalBudget));
+  async getSuggestions(@Query() query: QueryAdsSuggestionsDto) {
+    return this.adsService.getSuggestions(query.startDate, query.endDate, query.totalBudget);
   }
 }

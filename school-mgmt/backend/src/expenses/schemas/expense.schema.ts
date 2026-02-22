@@ -129,8 +129,6 @@ export class Expense {
 }
 
 export const ExpenseSchema = SchemaFactory.createForClass(Expense);
-
-ExpenseSchema.index({ expenseCode: 1 }, { unique: true });
 ExpenseSchema.index({ expenseDate: -1 });
 ExpenseSchema.index({ paymentStatus: 1 });
 ExpenseSchema.index({ category: 1 });
@@ -138,3 +136,4 @@ ExpenseSchema.index({ createdById: 1 });
 ExpenseSchema.index({ createdAt: -1 });
 ExpenseSchema.index({ isRecurring: 1, recurringActive: 1, nextOccurrence: 1 });
 ExpenseSchema.index({ parentExpenseId: 1 });
+

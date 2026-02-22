@@ -1,8 +1,9 @@
-import { Component, computed, signal, OnInit } from '@angular/core';
+import { Component, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { AdsService, AdAccountItem, AdGroupItem, ApiTokenItem, AdCostItem } from '../services/ads.service';
 import { AuthService } from '../services/auth.service';
+import { Role } from '../models/role.enum';
 
 const PLATFORM_LABELS: Record<string, string> = {
   FACEBOOK: 'Facebook',
@@ -53,7 +54,7 @@ const STATUS_COLORS: Record<string, string> = {
   <div class="tabs">
     <button [class.active]="activeTab === 'accounts'" (click)="switchTab('accounts')">Tài khoản QC</button>
     <button [class.active]="activeTab === 'groups'" (click)="switchTab('groups')">Nhóm QC</button>
-    <button [class.active]="activeTab === 'tokens'" (click)="switchTab('tokens')">API Token</button>
+    <button *ngIf="canManageTokens()" [class.active]="activeTab === 'tokens'" (click)="switchTab('tokens')">API Token</button>
     <button [class.active]="activeTab === 'costs'" (click)="switchTab('costs')">Chi phí Ads</button>
   </div>
 
@@ -75,7 +76,7 @@ const STATUS_COLORS: Record<string, string> = {
           <option value="DISABLED">Vô hiệu</option>
         </select>
       </div>
-      <button class="primary" (click)="openAccountModal()">+ Thêm tài khoản</button>
+      <button *ngIf="canManageAccounts()" class="primary" (click)="openAccountModal()">+ Thêm tài khoản</button>
     </section>
 
     <table class="data" *ngIf="accounts().length; else emptyAccounts">
@@ -99,8 +100,9 @@ const STATUS_COLORS: Record<string, string> = {
           <td class="amount">{{acc.monthlyBudget ? (acc.monthlyBudget | number) + 'đ' : '-'}}</td>
           <td><span class="badge" [style.background]="statusColor(acc.status)">{{accountStatusLabel(acc.status)}}</span></td>
           <td class="actions-cell">
-            <button class="ghost" (click)="editAccount(acc)">Sửa</button>
-            <button class="ghost danger" (click)="removeAccount(acc)">Xóa</button>
+            <button *ngIf="canManageAccounts()" class="ghost" (click)="editAccount(acc)">Sửa</button>
+            <button *ngIf="canManageAccounts()" class="ghost danger" (click)="removeAccount(acc)">Xóa</button>
+            <span *ngIf="!canManageAccounts()">-</span>
           </td>
         </tr>
       </tbody>
@@ -130,7 +132,7 @@ const STATUS_COLORS: Record<string, string> = {
           <option *ngFor="let acc of allAccounts()" [value]="acc._id">{{acc.name}}</option>
         </select>
       </div>
-      <button class="primary" (click)="openGroupModal()">+ Thêm nhóm QC</button>
+      <button *ngIf="canManageGroups()" class="primary" (click)="openGroupModal()">+ Thêm nhóm QC</button>
     </section>
 
     <table class="data" *ngIf="groups().length; else emptyGroups">
@@ -156,8 +158,9 @@ const STATUS_COLORS: Record<string, string> = {
           <td class="amount">{{grp.dailyBudget ? (grp.dailyBudget | number) + 'đ' : '-'}}</td>
           <td><span class="badge" [style.background]="statusColor(grp.status)">{{groupStatusLabel(grp.status)}}</span></td>
           <td class="actions-cell">
-            <button class="ghost" (click)="editGroup(grp)">Sửa</button>
-            <button class="ghost danger" (click)="removeGroup(grp)">Xóa</button>
+            <button *ngIf="canManageGroups()" class="ghost" (click)="editGroup(grp)">Sửa</button>
+            <button *ngIf="canDeleteGroups()" class="ghost danger" (click)="removeGroup(grp)">Xóa</button>
+            <span *ngIf="!canManageGroups()">-</span>
           </td>
         </tr>
       </tbody>
@@ -166,7 +169,7 @@ const STATUS_COLORS: Record<string, string> = {
   </ng-container>
 
   <!-- ═══ Tab 3: API Tokens ═══ -->
-  <ng-container *ngIf="activeTab === 'tokens'">
+  <ng-container *ngIf="activeTab === 'tokens' && canManageTokens()">
     <section class="tab-header">
       <div class="filters">
         <select [(ngModel)]="tokenAccountId" (ngModelChange)="loadTokens()">
@@ -227,8 +230,8 @@ const STATUS_COLORS: Record<string, string> = {
         </select>
       </div>
       <div class="btn-group">
-        <button class="primary" (click)="openCostModal()">+ Nhập chi phí</button>
-        <button class="success" (click)="triggerSync()" [disabled]="syncing()">
+        <button *ngIf="canManageCosts()" class="primary" (click)="openCostModal()">+ Nhập chi phí</button>
+        <button *ngIf="canTriggerSync()" class="success" (click)="triggerSync()" [disabled]="syncing()">
           {{syncing() ? 'Đang đồng bộ...' : 'Đồng bộ API'}}
         </button>
       </div>
@@ -259,7 +262,8 @@ const STATUS_COLORS: Record<string, string> = {
           <td>{{c.conversions | number}}</td>
           <td><span class="badge source">{{c.source}}</span></td>
           <td class="actions-cell">
-            <button class="ghost danger" (click)="removeCost(c)">Xóa</button>
+            <button *ngIf="canManageCosts()" class="ghost danger" (click)="removeCost(c)">Xóa</button>
+            <span *ngIf="!canManageCosts()">-</span>
           </td>
         </tr>
       </tbody>
@@ -535,6 +539,7 @@ export class AdsManagementComponent implements OnInit {
   }
 
   switchTab(tab: string) {
+    if (tab === 'tokens' && !this.canManageTokens()) return;
     this.activeTab = tab;
     if (tab === 'accounts') this.loadAccounts();
     if (tab === 'groups') this.loadGroups();
@@ -550,30 +555,52 @@ export class AdsManagementComponent implements OnInit {
   tokenStatusLabel(s: string) { return TOKEN_STATUS_LABELS[s] || s; }
   statusColor(s: string) { return STATUS_COLORS[s] || '#6b7280'; }
 
+  isDirector() { return this.authService.hasRole([Role.DIRECTOR]); }
+  canManageAccounts() { return this.isDirector(); }
+  canManageGroups() { return this.authService.hasRole([Role.DIRECTOR, Role.OPS]); }
+  canDeleteGroups() { return this.isDirector(); }
+  canManageTokens() { return this.isDirector(); }
+  canManageCosts() { return this.isDirector(); }
+  canTriggerSync() { return this.isDirector(); }
+
   // ─── Load data ──────────────────────────────────────────
 
   async loadAccounts() {
-    const params: Record<string, string> = {};
-    if (this.accKeyword) params['search'] = this.accKeyword;
-    if (this.accFilterPlatform) params['platform'] = this.accFilterPlatform;
-    if (this.accFilterStatus) params['status'] = this.accFilterStatus;
-    const res = await this.adsService.listAccounts(params);
-    this.accounts.set(res.data);
+    try {
+      const params: Record<string, string> = {};
+      if (this.accKeyword) params['search'] = this.accKeyword;
+      if (this.accFilterPlatform) params['platform'] = this.accFilterPlatform;
+      if (this.accFilterStatus) params['status'] = this.accFilterStatus;
+      const res = await this.adsService.listAccounts(params);
+      this.accounts.set(res.data);
+    } catch {
+      this.accounts.set([]);
+      this.error.set('Không tải được danh sách tài khoản quảng cáo.');
+    }
   }
 
   async loadAllAccounts() {
-    const res = await this.adsService.listAccounts({ limit: '200' });
-    this.allAccounts.set(res.data);
+    try {
+      const res = await this.adsService.listAccounts({ limit: '200' });
+      this.allAccounts.set(res.data);
+    } catch {
+      this.allAccounts.set([]);
+    }
   }
 
   async loadGroups() {
-    const params: Record<string, string> = {};
-    if (this.grpKeyword) params['search'] = this.grpKeyword;
-    if (this.grpFilterPlatform) params['platform'] = this.grpFilterPlatform;
-    if (this.grpFilterStatus) params['status'] = this.grpFilterStatus;
-    if (this.grpFilterAccount) params['adAccountId'] = this.grpFilterAccount;
-    const res = await this.adsService.listGroups(params);
-    this.groups.set(res.data);
+    try {
+      const params: Record<string, string> = {};
+      if (this.grpKeyword) params['search'] = this.grpKeyword;
+      if (this.grpFilterPlatform) params['platform'] = this.grpFilterPlatform;
+      if (this.grpFilterStatus) params['status'] = this.grpFilterStatus;
+      if (this.grpFilterAccount) params['adAccountId'] = this.grpFilterAccount;
+      const res = await this.adsService.listGroups(params);
+      this.groups.set(res.data);
+    } catch {
+      this.groups.set([]);
+      this.error.set('Không tải được danh sách nhóm quảng cáo.');
+    }
   }
 
   async loadAllGroups() {
@@ -586,24 +613,35 @@ export class AdsManagementComponent implements OnInit {
   }
 
   async loadTokens() {
-    if (!this.tokenAccountId) { this.tokens.set([]); return; }
-    const res = await this.adsService.listTokens(this.tokenAccountId);
-    this.tokens.set(res);
+    if (!this.canManageTokens() || !this.tokenAccountId) { this.tokens.set([]); return; }
+    try {
+      const res = await this.adsService.listTokens(this.tokenAccountId);
+      this.tokens.set(res);
+    } catch {
+      this.tokens.set([]);
+      this.error.set('Không tải được danh sách token.');
+    }
   }
 
   async loadCosts() {
-    const params: Record<string, string> = {};
-    if (this.costStartDate) params['startDate'] = this.costStartDate;
-    if (this.costEndDate) params['endDate'] = this.costEndDate;
-    if (this.costFilterPlatform) params['platform'] = this.costFilterPlatform;
-    if (this.costFilterGroup) params['adGroupId'] = this.costFilterGroup;
-    const res = await this.adsService.listCosts(params);
-    this.costs.set(res.data);
+    try {
+      const params: Record<string, string> = {};
+      if (this.costStartDate) params['startDate'] = this.costStartDate;
+      if (this.costEndDate) params['endDate'] = this.costEndDate;
+      if (this.costFilterPlatform) params['platform'] = this.costFilterPlatform;
+      if (this.costFilterGroup) params['adGroupId'] = this.costFilterGroup;
+      const res = await this.adsService.listCosts(params);
+      this.costs.set(res.data);
+    } catch {
+      this.costs.set([]);
+      this.error.set('Không tải được dữ liệu chi phí quảng cáo.');
+    }
   }
 
   // ─── Account CRUD ───────────────────────────────────────
 
   openAccountModal() {
+    if (!this.canManageAccounts()) return;
     this.editingAccount = null;
     this.accForm = { name: '', platform: '', platformAccountId: '', monthlyBudget: 0, notes: '' };
     this.error.set('');
@@ -611,6 +649,7 @@ export class AdsManagementComponent implements OnInit {
   }
 
   editAccount(acc: AdAccountItem) {
+    if (!this.canManageAccounts()) return;
     this.editingAccount = acc;
     this.accForm = { name: acc.name, platform: acc.platform, platformAccountId: acc.platformAccountId, monthlyBudget: acc.monthlyBudget || 0, status: acc.status, notes: acc.notes || '' };
     this.error.set('');
@@ -618,6 +657,7 @@ export class AdsManagementComponent implements OnInit {
   }
 
   async submitAccount() {
+    if (!this.canManageAccounts()) return;
     this.error.set('');
     let result;
     if (this.editingAccount) {
@@ -632,6 +672,7 @@ export class AdsManagementComponent implements OnInit {
   }
 
   async removeAccount(acc: AdAccountItem) {
+    if (!this.canManageAccounts()) return;
     if (!confirm(`Xóa tài khoản "${acc.name}"?`)) return;
     const result = await this.adsService.deleteAccount(acc._id);
     if (!result.ok) { alert(result.message); return; }
@@ -642,6 +683,7 @@ export class AdsManagementComponent implements OnInit {
   // ─── Group CRUD ─────────────────────────────────────────
 
   openGroupModal() {
+    if (!this.canManageGroups()) return;
     this.editingGroup = null;
     this.grpForm = { name: '', adAccountId: '', platform: '', platformCampaignId: '', dailyBudget: 0, startDate: '', endDate: '', targetAudience: '', notes: '' };
     this.error.set('');
@@ -649,6 +691,7 @@ export class AdsManagementComponent implements OnInit {
   }
 
   editGroup(grp: AdGroupItem) {
+    if (!this.canManageGroups()) return;
     this.editingGroup = grp;
     this.grpForm = {
       name: grp.name, adAccountId: grp.adAccountId, platform: grp.platform,
@@ -666,6 +709,7 @@ export class AdsManagementComponent implements OnInit {
   }
 
   async submitGroup() {
+    if (!this.canManageGroups()) return;
     this.error.set('');
     let result;
     if (this.editingGroup) {
@@ -680,6 +724,7 @@ export class AdsManagementComponent implements OnInit {
   }
 
   async removeGroup(grp: AdGroupItem) {
+    if (!this.canDeleteGroups()) return;
     if (!confirm(`Xóa nhóm QC "${grp.name}"?`)) return;
     const result = await this.adsService.deleteGroup(grp._id);
     if (!result.ok) { alert(result.message); return; }
@@ -690,6 +735,7 @@ export class AdsManagementComponent implements OnInit {
   // ─── Token CRUD ─────────────────────────────────────────
 
   openTokenModal() {
+    if (!this.canManageTokens()) return;
     this.editingToken = null;
     const acc = this.allAccounts().find(a => a._id === this.tokenAccountId);
     this.tokenForm = { adAccountId: this.tokenAccountId, platform: acc?.platform || '', accessToken: '', refreshToken: '', expiresAt: '', label: '' };
@@ -698,6 +744,7 @@ export class AdsManagementComponent implements OnInit {
   }
 
   editToken(t: ApiTokenItem) {
+    if (!this.canManageTokens()) return;
     this.editingToken = t;
     this.tokenForm = { accessToken: '', refreshToken: '', expiresAt: t.expiresAt?.split('T')[0] || '', label: t.label || '', status: t.status };
     this.error.set('');
@@ -710,6 +757,7 @@ export class AdsManagementComponent implements OnInit {
   }
 
   async submitToken() {
+    if (!this.canManageTokens()) return;
     this.error.set('');
     let result;
     if (this.editingToken) {
@@ -729,6 +777,7 @@ export class AdsManagementComponent implements OnInit {
   }
 
   async removeToken(t: ApiTokenItem) {
+    if (!this.canManageTokens()) return;
     if (!confirm('Xóa token này?')) return;
     const result = await this.adsService.deleteToken(t._id);
     if (!result.ok) { alert(result.message); return; }
@@ -738,6 +787,7 @@ export class AdsManagementComponent implements OnInit {
   // ─── Cost entry ─────────────────────────────────────────
 
   openCostModal() {
+    if (!this.canManageCosts()) return;
     this.costForm = { adGroupId: '', adAccountId: '', platform: '', date: new Date().toISOString().split('T')[0], spend: 0, impressions: 0, clicks: 0, conversions: 0 };
     this.error.set('');
     this.showCostModal.set(true);
@@ -752,6 +802,7 @@ export class AdsManagementComponent implements OnInit {
   }
 
   async submitCost() {
+    if (!this.canManageCosts()) return;
     this.error.set('');
     const result = await this.adsService.createCost({ ...this.costForm, source: 'MANUAL' });
     if (!result.ok) { this.error.set(result.message || 'Lỗi'); return; }
@@ -760,6 +811,7 @@ export class AdsManagementComponent implements OnInit {
   }
 
   async removeCost(c: AdCostItem) {
+    if (!this.canManageCosts()) return;
     if (!confirm('Xóa bản ghi chi phí này?')) return;
     const result = await this.adsService.deleteCost(c._id);
     if (!result.ok) { alert(result.message); return; }
@@ -769,6 +821,7 @@ export class AdsManagementComponent implements OnInit {
   // ─── Sync ───────────────────────────────────────────────
 
   async triggerSync() {
+    if (!this.canTriggerSync()) return;
     this.syncing.set(true);
     const result = await this.adsService.triggerSync();
     this.syncing.set(false);

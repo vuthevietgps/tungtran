@@ -95,7 +95,7 @@ const STATUS_COLORS: Record<string, string> = {
       <tbody>
         <tr *ngFor="let inv of child.invoices">
           <td><code>{{inv.invoiceNumber}}</code></td>
-          <td>{{inv.classId?.name || '-'}}</td>
+          <td>{{inv.classId.name || '-'}}</td>
           <td class="center">{{inv.sessions}}</td>
           <td class="right">{{inv.pricePerSession | number}}đ</td>
           <td class="right"><strong>{{inv.amount | number}}đ</strong></td>

@@ -72,14 +72,47 @@ export interface CashFlowData {
   totalOutflow: number;
   netCashFlow: number;
   timeline: any[];
+  basis?: {
+    requested: 'cash' | 'accrual';
+    applied: 'cash' | 'accrual';
+    totalInflow: 'cash' | 'accrual';
+    totalOutflow: 'cash' | 'accrual';
+  };
+  accrualReference?: {
+    sessionRevenue: number;
+    teacherCost: number;
+    serviceMargin: number;
+  };
   period: { startDate: string; endDate: string; groupBy: string };
 }
 
 export interface ProfitAndLoss {
   period: { startDate: string; endDate: string };
-  revenue: { total: number; sessionRevenue: number; sessionCount: number; byInvoiceType: Record<string, any> };
-  costs: { teacherCost: number; payrollCost: number; operatingExpenses: number; expenseByCategory: Record<string, any>; adCost: number; adCostByPlatform: Record<string, any>; interestExpense?: number; totalCosts: number };
-  summary: { grossProfit: number; grossMargin: number; netProfit: number; netMargin: number };
+  basis?: { selected: 'cash' | 'accrual'; default: 'cash' | 'accrual'; supported: Array<'cash' | 'accrual'> };
+  revenue: {
+    total: number;
+    sessionRevenue: number;
+    invoiceRevenue?: number;
+    accrualRevenue?: number;
+    byBasis?: { cash: number; accrual: number };
+    sessionCount: number;
+    byInvoiceType: Record<string, any>;
+  };
+  costs: {
+    costOfGoodsSold?: number;
+    teacherCost: number;
+    teacherPayrollCash?: number;
+    staffPayrollCash?: number;
+    payrollCost: number;
+    operatingExpenses: number;
+    expenseByCategory: Record<string, any>;
+    adCost: number;
+    adCostByPlatform: Record<string, any>;
+    interestExpense?: number;
+    totalCosts: number;
+    byBasis?: Record<string, any>;
+  };
+  summary: { basis?: 'cash' | 'accrual'; grossProfit: number; grossMargin: number; netProfit: number; netMargin: number; byBasis?: Record<string, any> };
 }
 
 export interface FinancialDashboard {
@@ -268,10 +301,11 @@ export class FinancialControlService {
   }
 
   // ─── P&L ───────────────────────────────────────────────────────
-  async getProfitAndLoss(startDate?: string, endDate?: string): Promise<ProfitAndLoss> {
+  async getProfitAndLoss(startDate?: string, endDate?: string, basis: 'cash' | 'accrual' = 'cash'): Promise<ProfitAndLoss> {
     let params = new HttpParams();
     if (startDate) params = params.set('startDate', startDate);
     if (endDate) params = params.set('endDate', endDate);
+    params = params.set('basis', basis);
     return this.http.get<ProfitAndLoss>(`${this.apiUrl}/profit-and-loss`, { params }).toPromise() as Promise<ProfitAndLoss>;
   }
 

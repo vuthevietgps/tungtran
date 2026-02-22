@@ -73,6 +73,10 @@ export class LedgerEntry {
   @Prop({ type: SchemaTypes.ObjectId, ref: 'Session' })
   sessionId?: Types.ObjectId;
 
+  /** Invoice liên quan (nếu top-up từ hóa đơn) */
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'Invoice' })
+  invoiceId?: Types.ObjectId;
+
   /** Class liên quan */
   @Prop({ type: SchemaTypes.ObjectId, ref: 'Classroom' })
   classId?: Types.ObjectId;
@@ -132,3 +136,13 @@ LedgerEntrySchema.index({ userId: 1, type: 1 });
 LedgerEntrySchema.index({ sessionId: 1 });
 LedgerEntrySchema.index({ status: 1, type: 1 }); // Tìm topup PENDING
 LedgerEntrySchema.index({ createdAt: -1 });
+LedgerEntrySchema.index(
+  { invoiceId: 1, type: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      type: TransactionType.TOP_UP,
+      invoiceId: { $exists: true },
+    },
+  },
+);

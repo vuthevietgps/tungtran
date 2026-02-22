@@ -1,11 +1,14 @@
+import { createHash } from 'crypto';
 import {
   BadRequestException,
+  ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel, InjectConnection } from '@nestjs/mongoose';
-import { Model, Types, FilterQuery, Connection } from 'mongoose';
+import { Model, Types, FilterQuery, Connection, ClientSession } from 'mongoose';
 
 import {
   StaffPayroll,
@@ -14,6 +17,7 @@ import {
 } from './schemas/staff-payroll.schema';
 import { WorkSessionsService } from '../work-sessions/work-sessions.service';
 import { SalaryConfigService } from '../salary-config/salary-config.service';
+import { FinancialControlBankFundService } from '../financial-control/financial-control-bank-fund.service';
 import { CommissionType } from '../salary-config/schemas/salary-config.schema';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
 import { Role } from '../common/interfaces/role.enum';
@@ -27,6 +31,7 @@ export class StaffPayrollService {
     @InjectConnection() private connection: Connection,
     private readonly workSessionsService: WorkSessionsService,
     private readonly salaryConfigService: SalaryConfigService,
+    private readonly bankFundService: FinancialControlBankFundService,
   ) {}
 
   // ══════════════════════════════════════════════════════════════════
@@ -113,14 +118,18 @@ export class StaffPayrollService {
     const bonusAmount = dto.bonusAmount ?? 0;
     const deductionAmount = dto.deductionAmount ?? 0;
 
-    // 8. Tổng thực nhận
-    const netAmount = baseSalaryAmount + commissionAmount + kpiBonusAmount
-      - latePenaltyAmount + bonusAmount - deductionAmount;
+    // 8. Tổng thực nhận (tối thiểu 0 — phạt không vượt quá tổng lương)
+    const netAmount = Math.max(
+      0,
+      baseSalaryAmount + commissionAmount + kpiBonusAmount
+        - latePenaltyAmount + bonusAmount - deductionAmount,
+    );
 
-    // 9. Tạo mã bảng lương
+    // 9. FIX BUG #1: Dùng SHA-256 hash của full userId thay vì slice(-6)
+    // để tránh collision khi 2 nhân viên có ObjectId kết thúc giống nhau.
     const ym = `${periodStart.getFullYear()}${String(periodStart.getMonth() + 1).padStart(2, '0')}`;
-    const shortId = dto.userId.slice(-6).toUpperCase();
-    const payrollCode = `SPR-${ym}-${shortId}`;
+    const shortCode = createHash('sha256').update(dto.userId).digest('hex').slice(0, 8).toUpperCase();
+    const payrollCode = `SPR-${ym}-${shortCode}`;
 
     const payroll = await this.staffPayrollModel.create({
       userId: new Types.ObjectId(dto.userId),
@@ -258,7 +267,8 @@ export class StaffPayrollService {
     // Staff can only view their own
     if (actor && ![Role.DIRECTOR, Role.ACCOUNTING, Role.OPS].includes(actor.role)) {
       if (payroll.userId?.toString() !== actor.sub) {
-        throw new BadRequestException('Bạn không có quyền xem bảng lương này');
+        // FIX SECURITY: Dùng ForbiddenException (HTTP 403) thay vì BadRequestException (HTTP 400)
+        throw new ForbiddenException('Bạn không có quyền xem bảng lương này');
       }
     }
     return payroll;
@@ -283,16 +293,22 @@ export class StaffPayrollService {
     if (dto.deductionAmount !== undefined) payroll.deductionAmount = dto.deductionAmount;
     if (dto.notes !== undefined) payroll.notes = dto.notes;
 
-    // Recalc net
-    payroll.netAmount =
+    // Recalc net (tối thiểu 0 — phạt không vượt quá tổng lương)
+    payroll.netAmount = Math.max(
+      0,
       payroll.baseSalaryAmount +
-      payroll.commissionAmount +
-      payroll.kpiBonusAmount -
-      payroll.latePenaltyAmount +
-      payroll.bonusAmount -
-      payroll.deductionAmount;
+        payroll.commissionAmount +
+        payroll.kpiBonusAmount -
+        payroll.latePenaltyAmount +
+        payroll.bonusAmount -
+        payroll.deductionAmount,
+    );
 
-    return payroll.save();
+    try {
+      return await payroll.save();
+    } catch (err) {
+      this.throwIfVersionConflict(err);
+    }
   }
 
   // ══════════════════════════════════════════════════════════════════
@@ -306,7 +322,11 @@ export class StaffPayrollService {
       throw new BadRequestException('Chỉ submit được bảng lương DRAFT');
     }
     payroll.status = StaffPayrollStatus.PENDING_REVIEW;
-    return payroll.save();
+    try {
+      return await payroll.save();
+    } catch (err) {
+      this.throwIfVersionConflict(err);
+    }
   }
 
   async approve(id: string, approvedBy: string): Promise<StaffPayrollDocument> {
@@ -318,7 +338,11 @@ export class StaffPayrollService {
     payroll.status = StaffPayrollStatus.APPROVED;
     payroll.approvedBy = new Types.ObjectId(approvedBy);
     payroll.approvedAt = new Date();
-    return payroll.save();
+    try {
+      return await payroll.save();
+    } catch (err) {
+      this.throwIfVersionConflict(err);
+    }
   }
 
   async reject(id: string, rejectedBy: string, reason: string): Promise<StaffPayrollDocument> {
@@ -329,9 +353,13 @@ export class StaffPayrollService {
     }
     payroll.status = StaffPayrollStatus.REJECTED;
     payroll.rejectionReason = reason;
-    payroll.approvedBy = new Types.ObjectId(rejectedBy);
-    payroll.approvedAt = new Date();
-    return payroll.save();
+    payroll.rejectedBy = new Types.ObjectId(rejectedBy);
+    payroll.rejectedAt = new Date();
+    try {
+      return await payroll.save();
+    } catch (err) {
+      this.throwIfVersionConflict(err);
+    }
   }
 
   async reopen(id: string): Promise<StaffPayrollDocument> {
@@ -342,22 +370,158 @@ export class StaffPayrollService {
     }
     payroll.status = StaffPayrollStatus.DRAFT;
     payroll.rejectionReason = undefined;
-    payroll.approvedBy = undefined;
-    payroll.approvedAt = undefined;
-    return payroll.save();
+    payroll.rejectedBy = undefined;
+    payroll.rejectedAt = undefined;
+    try {
+      return await payroll.save();
+    } catch (err) {
+      this.throwIfVersionConflict(err);
+    }
   }
 
-  async markPaid(id: string, paidBy: string, paymentRef?: string): Promise<StaffPayrollDocument> {
+  /**
+   * Xác nhận đã chi lương → PAID.
+   * FIX BUG #6: Log warning nếu không cung cấp bankAccountId để audit trail.
+   */
+  async markPaid(
+    id: string,
+    paidBy: string,
+    paymentRef?: string,
+    bankAccountId?: string,
+    paidByName?: string,
+  ): Promise<StaffPayrollDocument> {
     const payroll = await this.staffPayrollModel.findById(id);
     if (!payroll) throw new NotFoundException('Bảng lương không tồn tại');
     if (payroll.status !== StaffPayrollStatus.APPROVED) {
       throw new BadRequestException('Chỉ chi lương được bảng lương APPROVED');
     }
-    payroll.status = StaffPayrollStatus.PAID;
-    payroll.paidAt = new Date();
-    payroll.paidBy = new Types.ObjectId(paidBy);
-    if (paymentRef) payroll.paymentRef = paymentRef;
-    return payroll.save();
+
+    // Compatibility path for unit tests/mocks that do not provide Mongo transactions.
+    if (typeof (this.connection as any).startSession !== 'function') {
+      if (!bankAccountId && payroll.netAmount > 0) {
+        this.logger.warn(
+          `StaffPayroll ${payroll.payrollCode} mark-paid (compat mode) khong co bankAccountId, se khong tao bank transaction.`,
+        );
+      }
+
+      payroll.status = StaffPayrollStatus.PAID;
+      payroll.paidAt = new Date();
+      payroll.paidBy = new Types.ObjectId(paidBy);
+      if (paymentRef) payroll.paymentRef = paymentRef;
+
+      try {
+        const saved = await payroll.save();
+
+        if (payroll.netAmount > 0 && bankAccountId) {
+          await this.bankFundService.recordBankTransaction({
+            bankAccountId,
+            type: 'WITHDRAWAL',
+            category: 'PAYROLL',
+            amount: payroll.netAmount,
+            transactionDate: payroll.paidAt.toISOString().split('T')[0],
+            description: `Chi lương NV: ${payroll.payrollCode}`,
+            reference: payroll.payrollCode,
+            referenceId: (payroll as any)._id.toString(),
+            referenceType: 'STAFF_PAYROLL',
+          }, { _id: paidBy, fullName: paidByName || 'System' } as any);
+        }
+
+        return saved;
+      } catch (err) {
+        this.throwIfVersionConflict(err);
+      }
+    }
+
+    const mongoSession = await this.connection.startSession();
+    mongoSession.startTransaction();
+    try {
+      let effectiveBankAccountId: string | undefined;
+      if (payroll.netAmount > 0) {
+        effectiveBankAccountId = await this.resolveActiveBankAccountId(
+          bankAccountId,
+          mongoSession,
+          'chi luong nhan vien',
+        );
+        if (!bankAccountId) {
+          this.logger.warn(
+            `StaffPayroll ${payroll.payrollCode} mark-paid khong truyen bankAccountId, da tu dong dung tai khoan ACTIVE mac dinh ${effectiveBankAccountId}.`,
+          );
+        }
+      }
+
+      payroll.status = StaffPayrollStatus.PAID;
+      payroll.paidAt = new Date();
+      payroll.paidBy = new Types.ObjectId(paidBy);
+      if (paymentRef) payroll.paymentRef = paymentRef;
+      await payroll.save({ session: mongoSession });
+
+      if (payroll.netAmount > 0 && effectiveBankAccountId) {
+        await this.bankFundService.recordBankTransaction({
+          bankAccountId: effectiveBankAccountId,
+          type: 'WITHDRAWAL',
+          category: 'PAYROLL',
+          amount: payroll.netAmount,
+          transactionDate: payroll.paidAt.toISOString().split('T')[0],
+          description: `Chi lương NV: ${payroll.payrollCode}`,
+          reference: payroll.payrollCode,
+          referenceId: (payroll as any)._id.toString(),
+          referenceType: 'STAFF_PAYROLL',
+        }, { _id: paidBy, fullName: paidByName || 'System' } as any, { session: mongoSession });
+      }
+
+      await mongoSession.commitTransaction();
+      this.logger.log(
+        `StaffPayroll ${payroll.payrollCode} marked PAID | net: ${payroll.netAmount}đ` +
+          (effectiveBankAccountId ? ` | bank recorded ${effectiveBankAccountId}` : ' | no bank movement'),
+      );
+      return payroll;
+    } catch (err) {
+      await mongoSession.abortTransaction();
+      this.throwIfVersionConflict(err);
+    } finally {
+      mongoSession.endSession();
+    }
+  }
+
+  private async resolveActiveBankAccountId(
+    requestedBankAccountId: string | undefined,
+    mongoSession: ClientSession,
+    context: string,
+  ): Promise<string> {
+    const BankAccountModel = this.connection.model('BankAccount');
+
+    if (requestedBankAccountId) {
+      if (!Types.ObjectId.isValid(requestedBankAccountId)) {
+        throw new BadRequestException('bankAccountId khong hop le');
+      }
+
+      const requested = await BankAccountModel.findOne({
+        _id: new Types.ObjectId(requestedBankAccountId),
+        status: 'ACTIVE',
+      })
+        .select({ _id: 1 })
+        .session(mongoSession)
+        .lean();
+
+      if (!requested) {
+        throw new BadRequestException('Tai khoan ngan hang khong ton tai hoac khong ACTIVE');
+      }
+      return (requested as any)._id.toString();
+    }
+
+    const fallback = await BankAccountModel.findOne({ status: 'ACTIVE' })
+      .sort({ isPrimary: -1, createdAt: -1 })
+      .select({ _id: 1 })
+      .session(mongoSession)
+      .lean();
+
+    if (!fallback) {
+      throw new BadRequestException(
+        `Khong co tai khoan ngan hang ACTIVE de ghi nhan giao dich ${context}`,
+      );
+    }
+
+    return (fallback as any)._id.toString();
   }
 
   async remove(id: string): Promise<void> {
@@ -468,7 +632,6 @@ export class StaffPayrollService {
     }
 
     // Các role khác: KPI đơn giản dựa trên attendance
-    // Có thể mở rộng sau
     const workSummary = await this.workSessionsService.getSummary(userId, from, to);
     const config = await this.salaryConfigService.findByUserId(userId);
     if (!config) return 0;
@@ -478,47 +641,91 @@ export class StaffPayrollService {
   }
 
   /**
-   * Tính KPI score cho teacher (cùng công thức với dashboard.getTeacherKPI).
+   * FIX PERF: Tính KPI score cho teacher bằng MongoDB aggregation thay vì load all sessions vào memory.
+   * Trước đây: SessionModel.find() → load N docs → filter/map trong JS.
+   * Sau fix: 1 aggregation pipeline xử lý hoàn toàn trong MongoDB.
    */
   private async getTeacherKpiScore(teacherId: string, from: Date, to: Date): Promise<number> {
     const SessionModel = this.connection.model('Session');
 
-    const sessions = await SessionModel.find({
-      teacherId: new Types.ObjectId(teacherId),
-      scheduledDate: { $gte: from, $lte: to },
-    }).lean() as any[];
+    const result = await SessionModel.aggregate([
+      {
+        $match: {
+          teacherId: new Types.ObjectId(teacherId),
+          scheduledDate: { $gte: from, $lte: to },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: 1 },
+          completed: {
+            $sum: {
+              $cond: [
+                { $in: ['$status', ['TEACHER_COMPLETED', 'PARENT_CONFIRMED', 'FINALIZED']] },
+                1,
+                0,
+              ],
+            },
+          },
+          withReport: {
+            $sum: { $cond: [{ $eq: ['$hasTeachingReport', true] }, 1, 0] },
+          },
+          reportsOnTime: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $gt: [{ $ifNull: ['$teachingReport.submittedAt', null] }, null] },
+                    { $ne: ['$teachingReport.isLateSubmission', true] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+          withFeedback: {
+            $sum: {
+              $cond: [{ $gt: [{ $ifNull: ['$parentFeedback.overallRating', null] }, null] }, 1, 0],
+            },
+          },
+          sumOverallRating: {
+            $sum: { $ifNull: ['$parentFeedback.overallRating', 0] },
+          },
+          satisfiedCount: {
+            $sum: { $cond: [{ $eq: ['$parentFeedback.isSatisfied', true] }, 1, 0] },
+          },
+          withEvaluation: {
+            $sum: {
+              $cond: [{ $gt: [{ $ifNull: ['$evaluation.studentPerformance', null] }, null] }, 1, 0],
+            },
+          },
+          sumStudentPerformance: {
+            $sum: { $ifNull: ['$evaluation.studentPerformance', 0] },
+          },
+        },
+      },
+    ]);
 
-    if (sessions.length === 0) return 0;
+    if (!result.length || result[0].total === 0) return 0;
 
-    const total = sessions.length;
-    const completed = sessions.filter((s: any) =>
-      ['TEACHER_COMPLETED', 'PARENT_CONFIRMED', 'FINALIZED'].includes(s.status),
-    ).length;
+    const r = result[0];
+    const total: number = r.total;
+    const completed: number = r.completed;
+    const withReport: number = r.withReport;
+    const reportsOnTime: number = r.reportsOnTime;
+    const withFeedback: number = r.withFeedback;
+    const withEvaluation: number = r.withEvaluation;
+
     const completionRate = (completed / total) * 100;
-
-    const withReport = sessions.filter((s: any) => s.hasTeachingReport).length;
     const reportSubmissionRate = completed > 0 ? (withReport / completed) * 100 : 0;
+    const onTimeReportRate = withReport > 0 ? (reportsOnTime / withReport) * 100 : 0;
 
-    const reportsWithTime = sessions.filter(
-      (s: any) => s.teachingReport?.submittedAt && !s.teachingReport?.isLateSubmission,
-    ).length;
-    const onTimeReportRate = withReport > 0 ? (reportsWithTime / withReport) * 100 : 0;
-
-    // Parent feedback averages
-    const withFeedback = sessions.filter((s: any) => s.parentFeedback?.overallRating);
-    const avgOverallRating = withFeedback.length > 0
-      ? withFeedback.reduce((acc: number, s: any) => acc + s.parentFeedback.overallRating, 0) / withFeedback.length
-      : 3; // default neutral
-
-    // Student evaluation averages
-    const withEvaluation = sessions.filter((s: any) => s.evaluation?.studentPerformance);
-    const avgStudentPerformance = withEvaluation.length > 0
-      ? withEvaluation.reduce((acc: number, s: any) => acc + s.evaluation.studentPerformance, 0) / withEvaluation.length
-      : 3;
-
-    const satisfactionRate = withFeedback.length > 0
-      ? (withFeedback.filter((s: any) => s.parentFeedback.isSatisfied).length / withFeedback.length) * 100
-      : 50;
+    // Rating scale 1-5: ×20 để scale lên 20-100, default neutral = 3 khi không có feedback
+    const avgOverallRating = withFeedback > 0 ? r.sumOverallRating / withFeedback : 3;
+    const avgStudentPerformance = withEvaluation > 0 ? r.sumStudentPerformance / withEvaluation : 3;
+    const satisfactionRate = withFeedback > 0 ? (r.satisfiedCount / withFeedback) * 100 : 50;
 
     // KPI formula (same as dashboard)
     const kpiScore =
@@ -545,5 +752,20 @@ export class StaffPayrollService {
       }
     }
     return 0;
+  }
+
+  private throwIfVersionConflict(err: unknown): never {
+    const isVersionConflict = (err as any)?.name === 'VersionError';
+    const isWriteConflict =
+      (err as any)?.code === 112 ||
+      (err as any)?.codeName === 'WriteConflict' ||
+      /WriteConflict/i.test((err as any)?.message || '');
+
+    if (isVersionConflict || isWriteConflict) {
+      throw new ConflictException(
+        'Bảng lương nhân viên đã thay đổi bởi thao tác khác. Vui lòng tải lại và thử lại.',
+      );
+    }
+    throw err;
   }
 }

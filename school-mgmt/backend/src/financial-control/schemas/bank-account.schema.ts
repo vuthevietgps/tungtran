@@ -49,7 +49,6 @@ export class BankAccount {
 }
 
 export const BankAccountSchema = SchemaFactory.createForClass(BankAccount);
-
-BankAccountSchema.index({ accountCode: 1 }, { unique: true });
 BankAccountSchema.index({ status: 1 });
 BankAccountSchema.index({ bankName: 1 });
+

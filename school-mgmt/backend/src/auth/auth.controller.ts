@@ -9,6 +9,12 @@ import { UserDocument } from '../users/schemas/user.schema';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { WorkSessionsService } from '../work-sessions/work-sessions.service';
 
+const loginThrottleTtl = Number(process.env.AUTH_LOGIN_THROTTLE_TTL ?? 60000);
+const loginThrottleLimit = Number(
+  process.env.AUTH_LOGIN_THROTTLE_LIMIT ??
+    (process.env.NODE_ENV === 'production' ? 5 : 20),
+);
+
 @Controller('auth')
 export class AuthController {
   constructor(
@@ -16,29 +22,30 @@ export class AuthController {
     private workSessionsService: WorkSessionsService,
   ) {}
 
-  @Throttle({ default: { ttl: 60000, limit: 5 } }) // Strict: 5 lần/phút cho login
+  @Throttle({ default: { ttl: loginThrottleTtl, limit: loginThrottleLimit } })
   @UseGuards(LocalAuthGuard)
   @Post('login')
-  async login(@Req() req: Request & { user: UserDocument }, @Res({ passthrough: true }) res: Response) {
+  async login(
+    @Req() req: Request & { user: UserDocument },
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const result = await this.authService.login(req.user);
 
-    // Set httpOnly cookie (not accessible from JavaScript - XSS protection)
     res.cookie('access_token', result.access_token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production', // HTTPS only in production
+      secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-      path: '/', // Ensure cookie is sent with all API requests
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      path: '/',
     });
 
-    // Return user info only (no token in response body)
     return {
       user: {
         _id: req.user._id,
         email: req.user.email,
         role: req.user.role,
         fullName: req.user.fullName,
-      }
+      },
     };
   }
 
@@ -48,11 +55,10 @@ export class AuthController {
     @Req() req: AuthenticatedRequest,
     @Res({ passthrough: true }) res: Response,
   ) {
-    // Ghi nhận chấm công đăng xuất
     try {
       await this.workSessionsService.recordLogout(req.user.sub);
-    } catch (err) {
-      // Log but don't block logout
+    } catch (_err) {
+      // Ignore attendance logging errors on logout.
     }
 
     res.clearCookie('access_token', {

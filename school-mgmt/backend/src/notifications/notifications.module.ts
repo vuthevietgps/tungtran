@@ -1,6 +1,5 @@
 import { Module, Global } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { ScheduleModule } from '@nestjs/schedule';
 import { Notification, NotificationSchema } from './schemas/notification.schema';
 import { NotificationsService } from './notifications.service';
 import { ExternalNotificationService } from './external-notification.service';
@@ -10,7 +9,6 @@ import { User, UserSchema } from '../users/schemas/user.schema';
 @Global()
 @Module({
   imports: [
-    ScheduleModule.forRoot(),
     MongooseModule.forFeature([
       { name: Notification.name, schema: NotificationSchema },
       { name: User.name, schema: UserSchema },

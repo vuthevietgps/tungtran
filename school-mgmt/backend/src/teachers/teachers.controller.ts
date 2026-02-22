@@ -19,6 +19,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '../common/interfaces/role.enum';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 import { TeacherStatus } from './schemas/teacher-profile.schema';
+import { ParseMongoIdPipe } from '../common/pipes/parse-mongo-id.pipe';
 
 @Controller('teachers')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -64,44 +65,44 @@ export class TeachersController {
 
   @Get(':id')
   @Roles(Role.OPS, Role.DIRECTOR, Role.ACCOUNTING, Role.TEACHER, Role.SALE)
-  findOne(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+  findOne(@Param('id', ParseMongoIdPipe) id: string, @Req() req: AuthenticatedRequest) {
     return this.teachersService.findOne(id, req.user);
   }
 
   /** Profile chi tiết với thống kê lớp, buổi học, lương */
   @Get(':id/profile')
   @Roles(Role.OPS, Role.DIRECTOR, Role.ACCOUNTING, Role.TEACHER)
-  getFullProfile(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+  getFullProfile(@Param('id', ParseMongoIdPipe) id: string, @Req() req: AuthenticatedRequest) {
     return this.teachersService.getFullProfile(id, req.user);
   }
 
   @Patch(':id')
   @Roles(Role.OPS, Role.DIRECTOR, Role.TEACHER)
-  update(@Param('id') id: string, @Body() dto: UpdateTeacherProfileDto, @Req() req: AuthenticatedRequest) {
+  update(@Param('id', ParseMongoIdPipe) id: string, @Body() dto: UpdateTeacherProfileDto, @Req() req: AuthenticatedRequest) {
     return this.teachersService.update(id, dto, req.user);
   }
 
   @Post(':id/approve')
   @Roles(Role.OPS, Role.DIRECTOR)
-  approve(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+  approve(@Param('id', ParseMongoIdPipe) id: string, @Req() req: AuthenticatedRequest) {
     return this.teachersService.approve(id, req.user);
   }
 
   @Post(':id/activate')
   @Roles(Role.OPS, Role.DIRECTOR)
-  activate(@Param('id') id: string) {
+  activate(@Param('id', ParseMongoIdPipe) id: string) {
     return this.teachersService.activate(id);
   }
 
   @Post(':id/suspend')
   @Roles(Role.OPS, Role.DIRECTOR)
-  suspend(@Param('id') id: string, @Body('reason') reason?: string) {
+  suspend(@Param('id', ParseMongoIdPipe) id: string, @Body('reason') reason?: string) {
     return this.teachersService.suspend(id, reason);
   }
 
   @Delete(':id')
   @Roles(Role.DIRECTOR)
-  remove(@Param('id') id: string) {
+  remove(@Param('id', ParseMongoIdPipe) id: string) {
     return this.teachersService.remove(id);
   }
 }

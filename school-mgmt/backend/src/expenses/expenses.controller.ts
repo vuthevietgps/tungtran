@@ -33,6 +33,7 @@ export class ExpensesController {
   constructor(private readonly expensesService: ExpensesService) {}
 
   @Get('stats')
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING)
   async getStats(@Query('startDate') startDate?: string, @Query('endDate') endDate?: string) {
     return this.expensesService.getStats(startDate, endDate);
   }
@@ -44,26 +45,31 @@ export class ExpensesController {
   }
 
   @Get()
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS)
   async findAll(@Query() query: QueryExpenseDto) {
     return this.expensesService.findAll(query);
   }
 
   @Get(':id')
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS)
   async findOne(@Param('id') id: string) {
     return this.expensesService.findOne(id);
   }
 
   @Get(':id/children')
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS)
   async getChildren(@Param('id') id: string) {
     return this.expensesService.getRecurringChildren(id);
   }
 
   @Post()
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS)
   async create(@Body() dto: CreateExpenseDto, @Req() req: AuthenticatedRequest) {
     return this.expensesService.create(dto, req.user);
   }
 
   @Post(':id/upload-receipt')
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS)
   @UseInterceptors(FilesInterceptor('files', 5, {
     storage: diskStorage({
       destination: './uploads/expenses',
@@ -91,11 +97,13 @@ export class ExpensesController {
   }
 
   @Patch(':id')
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS)
   async update(@Param('id') id: string, @Body() dto: UpdateExpenseDto, @Req() req: AuthenticatedRequest) {
     return this.expensesService.update(id, dto, req.user);
   }
 
   @Delete(':id')
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS)
   async delete(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     await this.expensesService.delete(id, req.user);
     return { message: 'Expense deleted successfully' };

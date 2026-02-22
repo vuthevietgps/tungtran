@@ -652,7 +652,229 @@ async function main() {
     console.log(`  ✅ ${payrollDocs.length} payrolls, ${payrollItemDocs.length} payroll items inserted`);
   }
 
-  // ═══════════ 11. TICKETS ═══════════
+  // ═══════════ 11. LOANS (100M TEST) ═══════════
+  console.log('\n💸 Seeding 100M loan test data...');
+  const bankAccCol = db.collection('bankaccounts');
+  const bankTxCol = db.collection('banktransactions');
+  const loanCol = db.collection('loans');
+  const loanPayCol = db.collection('loanpayments');
+
+  const seedLoanCode = 'LOAN-TEST-100M';
+
+  let bankAccount = await bankAccCol.findOne(
+    { status: 'ACTIVE' },
+    { sort: { isPrimary: -1, createdAt: -1 } },
+  );
+
+  if (!bankAccount) {
+    const seedBankAccount = {
+      _id: oid(),
+      accountCode: 'BA-SEED-LOAN-001',
+      bankName: 'VCB',
+      accountNumber: '1000000001',
+      accountHolder: 'School Demo',
+      branch: 'HCM',
+      currentBalance: 500_000_000,
+      openingBalance: 500_000_000,
+      status: 'ACTIVE',
+      isPrimary: true,
+      createdById: ACCOUNTING,
+      createdByName: 'Ke toan Demo',
+      createdAt: daysAgo(120),
+      updatedAt: now,
+    };
+    await bankAccCol.updateOne(
+      { accountCode: seedBankAccount.accountCode },
+      { $setOnInsert: seedBankAccount },
+      { upsert: true },
+    );
+    bankAccount = await bankAccCol.findOne({ accountCode: seedBankAccount.accountCode });
+  }
+
+  if (!bankAccount) {
+    throw new Error('Cannot resolve ACTIVE bank account for loan seed');
+  }
+
+  const startDate = daysAgo(100);
+  const endDate = new Date(startDate);
+  endDate.setMonth(endDate.getMonth() + 10);
+
+  const loanDoc = {
+    _id: oid(),
+    loanCode: seedLoanCode,
+    lenderName: 'Ngan hang test 100M',
+    lenderType: 'BANK',
+    loanType: 'WORKING_CAPITAL',
+    principal: 100_000_000,
+    interestRate: 12,
+    interestType: 'FIXED',
+    term: 10,
+    startDate,
+    endDate,
+    paymentFrequency: 'MONTHLY',
+    status: 'ACTIVE',
+    bankAccountId: bankAccount._id,
+    totalPaid: 16_900_000,
+    remainingBalance: 85_000_000,
+    collateral: 'Hop dong doanh thu demo',
+    notes: 'Seed loan 100M for full-system operation test',
+    createdById: DIRECTOR,
+    createdByName: 'Giam doc Demo',
+    approvedById: ACCOUNTING,
+    approvedByName: 'Ke toan Demo',
+    approvedAt: daysAgo(99),
+    createdAt: daysAgo(100),
+    updatedAt: now,
+  };
+
+  await loanCol.updateOne(
+    { loanCode: seedLoanCode },
+    { $setOnInsert: loanDoc },
+    { upsert: true },
+  );
+
+  const seededLoan = await loanCol.findOne({ loanCode: seedLoanCode });
+  if (!seededLoan) {
+    throw new Error('Cannot find seeded 100M loan after upsert');
+  }
+
+  const paymentPlan = [
+    { paymentNumber: 1, status: 'PAID', principalAmount: 10_000_000, interestAmount: 1_000_000, paidAmount: 11_000_000, paidPrincipal: 10_000_000, paidInterest: 1_000_000, paidDate: daysAgo(69) },
+    { paymentNumber: 2, status: 'PARTIAL', principalAmount: 10_000_000, interestAmount: 900_000, paidAmount: 5_900_000, paidPrincipal: 5_000_000, paidInterest: 900_000, paidDate: daysAgo(38) },
+    { paymentNumber: 3, status: 'OVERDUE', principalAmount: 10_000_000, interestAmount: 800_000, paidAmount: 0, paidPrincipal: 0, paidInterest: 0, paidDate: null },
+    { paymentNumber: 4, status: 'SCHEDULED', principalAmount: 10_000_000, interestAmount: 700_000, paidAmount: 0, paidPrincipal: 0, paidInterest: 0, paidDate: null },
+    { paymentNumber: 5, status: 'SCHEDULED', principalAmount: 10_000_000, interestAmount: 600_000, paidAmount: 0, paidPrincipal: 0, paidInterest: 0, paidDate: null },
+    { paymentNumber: 6, status: 'SCHEDULED', principalAmount: 10_000_000, interestAmount: 500_000, paidAmount: 0, paidPrincipal: 0, paidInterest: 0, paidDate: null },
+    { paymentNumber: 7, status: 'SCHEDULED', principalAmount: 10_000_000, interestAmount: 400_000, paidAmount: 0, paidPrincipal: 0, paidInterest: 0, paidDate: null },
+    { paymentNumber: 8, status: 'SCHEDULED', principalAmount: 10_000_000, interestAmount: 300_000, paidAmount: 0, paidPrincipal: 0, paidInterest: 0, paidDate: null },
+    { paymentNumber: 9, status: 'SCHEDULED', principalAmount: 10_000_000, interestAmount: 200_000, paidAmount: 0, paidPrincipal: 0, paidInterest: 0, paidDate: null },
+    { paymentNumber: 10, status: 'SCHEDULED', principalAmount: 10_000_000, interestAmount: 100_000, paidAmount: 0, paidPrincipal: 0, paidInterest: 0, paidDate: null },
+  ];
+
+  for (const p of paymentPlan) {
+    const dueDate = new Date(startDate);
+    dueDate.setMonth(dueDate.getMonth() + p.paymentNumber);
+    const totalAmount = p.principalAmount + p.interestAmount;
+
+    const paymentDoc = {
+      _id: oid(),
+      paymentCode: `LP-${seedLoanCode}-${String(p.paymentNumber).padStart(3, '0')}`,
+      loanId: seededLoan._id,
+      paymentNumber: p.paymentNumber,
+      dueDate,
+      paidDate: p.paidDate,
+      principalAmount: p.principalAmount,
+      interestAmount: p.interestAmount,
+      totalAmount,
+      paidAmount: p.paidAmount,
+      paidPrincipal: p.paidPrincipal,
+      paidInterest: p.paidInterest,
+      status: p.status,
+      paymentMethod: p.paidAmount > 0 ? 'BANK_TRANSFER' : undefined,
+      reference: p.paidAmount > 0 ? `LOAN100M-PAY-${String(p.paymentNumber).padStart(3, '0')}` : undefined,
+      notes: p.status === 'OVERDUE' ? 'Ky den han chua thanh toan' : undefined,
+      paidById: p.paidAmount > 0 ? ACCOUNTING : undefined,
+      paidByName: p.paidAmount > 0 ? 'Ke toan Demo' : undefined,
+      createdAt: dueDate,
+      updatedAt: now,
+    };
+
+    await loanPayCol.updateOne(
+      { paymentCode: paymentDoc.paymentCode },
+      { $setOnInsert: paymentDoc },
+      { upsert: true },
+    );
+  }
+
+  const openingBalance = Number(bankAccount.currentBalance || 0);
+  const txDocs = [
+    {
+      transactionCode: 'BT-SEED-LOAN100M-001',
+      bankAccountId: bankAccount._id,
+      type: 'DEPOSIT',
+      category: 'LOAN_DISBURSEMENT',
+      amount: 100_000_000,
+      balanceBefore: openingBalance,
+      balanceAfter: openingBalance + 100_000_000,
+      transactionDate: startDate,
+      description: 'Giai ngan khoan vay test 100M',
+      reference: seedLoanCode,
+      referenceId: seededLoan._id,
+      referenceType: 'LOAN',
+      recordedById: ACCOUNTING,
+      recordedByName: 'Ke toan Demo',
+      isReconciled: true,
+      reconciledAt: now,
+      reconciledByName: 'Ke toan Demo',
+      createdAt: startDate,
+      updatedAt: now,
+    },
+    {
+      transactionCode: 'BT-SEED-LOAN100M-002',
+      bankAccountId: bankAccount._id,
+      type: 'WITHDRAWAL',
+      category: 'LOAN_REPAYMENT',
+      amount: 11_000_000,
+      balanceBefore: openingBalance + 100_000_000,
+      balanceAfter: openingBalance + 89_000_000,
+      transactionDate: daysAgo(69),
+      description: 'Tra no ky 1 - LOAN-TEST-100M',
+      reference: seedLoanCode,
+      referenceId: seededLoan._id,
+      referenceType: 'LOAN',
+      recordedById: ACCOUNTING,
+      recordedByName: 'Ke toan Demo',
+      isReconciled: true,
+      reconciledAt: now,
+      reconciledByName: 'Ke toan Demo',
+      createdAt: daysAgo(69),
+      updatedAt: now,
+    },
+    {
+      transactionCode: 'BT-SEED-LOAN100M-003',
+      bankAccountId: bankAccount._id,
+      type: 'WITHDRAWAL',
+      category: 'LOAN_REPAYMENT',
+      amount: 5_900_000,
+      balanceBefore: openingBalance + 89_000_000,
+      balanceAfter: openingBalance + 83_100_000,
+      transactionDate: daysAgo(38),
+      description: 'Tra no ky 2 (partial) - LOAN-TEST-100M',
+      reference: seedLoanCode,
+      referenceId: seededLoan._id,
+      referenceType: 'LOAN',
+      recordedById: ACCOUNTING,
+      recordedByName: 'Ke toan Demo',
+      isReconciled: true,
+      reconciledAt: now,
+      reconciledByName: 'Ke toan Demo',
+      createdAt: daysAgo(38),
+      updatedAt: now,
+    },
+  ];
+
+  let netSeedDelta = 0;
+  for (const tx of txDocs) {
+    const upsertTx = await bankTxCol.updateOne(
+      { transactionCode: tx.transactionCode },
+      { $setOnInsert: { _id: oid(), ...tx } },
+      { upsert: true },
+    );
+    if (upsertTx.upsertedCount > 0) {
+      netSeedDelta += tx.type === 'WITHDRAWAL' ? -tx.amount : tx.amount;
+    }
+  }
+
+  if (netSeedDelta !== 0) {
+    await bankAccCol.updateOne(
+      { _id: bankAccount._id },
+      { $inc: { currentBalance: netSeedDelta }, $set: { updatedAt: now } },
+    );
+  }
+
+  console.log('  ✅ Loan test 100M + payments + bank transactions upserted');
+
+  // 12. TICKETS
   console.log('\n🎫 Seeding tickets...');
   const tkCol = db.collection('tickets');
   const existingTk = await tkCol.countDocuments({});
@@ -710,6 +932,10 @@ async function main() {
     products: await db.collection('products').countDocuments({}),
     classrooms: await db.collection('classrooms').countDocuments({}),
     sessions: await db.collection('sessions').countDocuments({}),
+    bankaccounts: await db.collection('bankaccounts').countDocuments({}),
+    banktransactions: await db.collection('banktransactions').countDocuments({}),
+    loans: await db.collection('loans').countDocuments({}),
+    loanpayments: await db.collection('loanpayments').countDocuments({}),
     wallets: await db.collection('wallets').countDocuments({}),
     ledgerentries: await db.collection('ledgerentries').countDocuments({}),
     invoices: await db.collection('invoices').countDocuments({}),
@@ -738,3 +964,4 @@ main().catch((err) => {
   console.error('❌ Seed failed:', err);
   process.exit(1);
 });
+

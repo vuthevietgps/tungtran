@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards, UseInterceptors, UploadedFile, Req } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards, UseInterceptors, UploadedFile, Req } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { StudentsService } from './students.service';
 import { CreateStudentDto } from './dto/create-student.dto';
@@ -55,8 +55,12 @@ export class StudentsController {
 
   @Patch(':id')
   @Roles(Role.DIRECTOR, Role.SALE, Role.OPS)
-  update(@Param('id', ParseMongoIdPipe) id: string, @Body() updateStudentDto: UpdateStudentDto) {
-    return this.studentsService.update(id, updateStudentDto);
+  update(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Body() updateStudentDto: UpdateStudentDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.studentsService.update(id, updateStudentDto, req.user);
   }
 
   // clear-all route removed — bulk deletion is permanently disabled
@@ -72,7 +76,7 @@ export class StudentsController {
   @Roles(Role.DIRECTOR, Role.SALE, Role.OPS)
   async uploadFace(@UploadedFile() file: Express.Multer.File) {
     if (!file) {
-      throw new Error('No file uploaded');
+      throw new BadRequestException('No file uploaded');
     }
     return { url: `/uploads/${file.filename}` };
   }

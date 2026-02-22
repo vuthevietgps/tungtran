@@ -150,8 +150,8 @@ export class TeacherProfile {
 export const TeacherProfileSchema = SchemaFactory.createForClass(TeacherProfile);
 
 // Indexes
-TeacherProfileSchema.index({ userId: 1 }, { unique: true });
 TeacherProfileSchema.index({ status: 1 });
 TeacherProfileSchema.index({ subjects: 1 });
 TeacherProfileSchema.index({ grades: 1 });
 TeacherProfileSchema.index({ rating: -1 });
+

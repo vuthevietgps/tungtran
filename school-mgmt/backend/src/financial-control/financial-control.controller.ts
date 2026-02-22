@@ -44,7 +44,7 @@ export class FinancialControlController {
   }
 
   // ─── Bank Reconciliation ────────────────────────────────────
-  @Get('reconciliation')
+  @Get('bank-reconciliation')
   getReconciliation(
     @Query('bankAccountId') bankAccountId: string,
     @Query('fromDate') fromDate: string,
@@ -178,8 +178,9 @@ export class FinancialControlController {
   getProfitAndLoss(
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
+    @Query('basis') basis?: string,
   ) {
-    return this.service.getProfitAndLoss(startDate, endDate);
+    return this.service.getProfitAndLoss(startDate, endDate, basis);
   }
 
   // ─── Reconciliation ────────────────────────────────────────────

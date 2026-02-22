@@ -13,161 +13,199 @@ import { AuthService } from '../services/auth.service';
   template: `
   <header class="page-header">
     <div>
-      <h2>Quản lý lớp học</h2>
-      <p>Tạo lớp, chỉ định giáo viên & học viên, thiết lập giá/buổi và lương/buổi.</p>
+      <h2>Quan ly lop hoc</h2>
+      <p>Tao lop, gan giao vien, hoc vien va cau hinh gia tien theo loai lop.</p>
     </div>
-    <button class="primary" (click)="openModal()" *ngIf="canManage()">+ Thêm lớp học</button>
+    <button class="primary" (click)="openModal()" *ngIf="canManage()">+ Them lop hoc</button>
   </header>
 
   <table class="data" *ngIf="classes().length; else empty">
     <thead>
       <tr>
-        <th>Mã lớp</th>
-        <th>Tên lớp</th>
-        <th>Giáo viên</th>
-        <th>Học viên</th>
-        <th>Giá cơ sở (HS)</th>
-        <th>Lương cơ sở (GV)</th>
-        <th>TL cơ sở</th>
-        <th>TL buổi học</th>
-        <th>Giá thực/buổi</th>
-        <th>Lương thực/buổi</th>
-        <th>Lợi nhuận/buổi</th>
-        <th>Hành động</th>
+        <th>Ma lop</th>
+        <th>Ten lop</th>
+        <th>Loai</th>
+        <th>Giao vien</th>
+        <th>Hoc vien</th>
+        <th>Gia co so (HS)</th>
+        <th>Luong co so (GV)</th>
+        <th>TL co so</th>
+        <th>TL buoi hoc</th>
+        <th>Gia thuc/buoi</th>
+        <th>Luong thuc/buoi</th>
+        <th>Loi nhuan/buoi</th>
+        <th>Hanh dong</th>
       </tr>
     </thead>
     <tbody>
       <tr *ngFor="let c of classes()">
         <td>{{c.code}}</td>
         <td>{{c.name}}</td>
-        <td>{{c.teacher?.fullName || '—'}}</td>
+        <td>
+          <span class="mode-badge" [class.offline]="isOfflineClass(c)">
+            {{isOfflineClass(c) ? 'OFFLINE' : 'ONLINE'}}
+          </span>
+        </td>
+        <td>{{c.teacher?.fullName || '-'}}</td>
         <td>
           <span class="chip" *ngFor="let s of c.students">{{s.fullName}}</span>
-          <span *ngIf="!c.students?.length">Chưa có</span>
+          <span *ngIf="!c.students?.length">Chua co</span>
         </td>
         <td>{{formatCurrency(c.pricePerSession)}}</td>
-        <td>{{formatCurrency(c.teacherPayPerSession)}}</td>
+        <td>{{formatTeacherBase(c)}}</td>
         <td>{{c.baseDuration || 60}}p</td>
         <td>{{c.sessionDuration || 60}}p</td>
         <td><strong>{{formatCurrency(c.actualPricePerSession ?? c.pricePerSession)}}</strong></td>
-        <td>{{formatCurrency(c.actualTeacherPayPerSession ?? c.teacherPayPerSession)}}</td>
-        <td [class]="getProfitClass(getProfit(c))">
-          {{formatCurrency(getProfit(c))}}
-        </td>
+        <td>{{formatTeacherActual(c)}}</td>
+        <td [class]="getProfitClass(getProfit(c))">{{formatCurrency(getProfit(c))}}</td>
         <td class="actions-cell">
           <ng-container *ngIf="canManage()">
-            <button class="ghost" (click)="edit(c)">Sửa</button>
-            <button class="danger" (click)="remove(c)" *ngIf="isDirector()">Xóa</button>
+            <button class="ghost" (click)="edit(c)">Sua</button>
+            <button class="danger" (click)="remove(c)" *ngIf="isDirector()">Xoa</button>
           </ng-container>
           <ng-container *ngIf="isSale() && canSaleAssign(c)">
-            <button class="ghost" (click)="edit(c)">Chọn học viên</button>
+            <button class="ghost" (click)="edit(c)">Chon hoc vien</button>
           </ng-container>
         </td>
       </tr>
     </tbody>
   </table>
-  <ng-template #empty><p>Chưa có lớp học.</p></ng-template>
+  <ng-template #empty><p>Chua co lop hoc.</p></ng-template>
 
   <div class="modal-backdrop" *ngIf="showModal()">
     <div class="modal">
-      <h3>{{ editingId ? 'Chỉnh sửa lớp học' : 'Thêm lớp học' }}</h3>
+      <h3>{{ editingId ? 'Chinh sua lop hoc' : 'Them lop hoc' }}</h3>
       <form (ngSubmit)="submit()" #f="ngForm">
-        <label>Tên lớp
+        <label>Ten lop
           <input name="name" [(ngModel)]="form.name" required [readonly]="isSale()" />
         </label>
-        <label>Mã lớp
+        <label>Ma lop
           <input name="code" [(ngModel)]="form.code" required [readonly]="isSale()" />
         </label>
-        <label>Giáo viên phụ trách
+        <label>Giao vien phu trach
           <select name="teacherId" [(ngModel)]="form.teacherId" required [disabled]="isSale()">
-            <option value="" disabled [selected]="!form.teacherId">-- Chọn giáo viên --</option>
+            <option value="" disabled [selected]="!form.teacherId">-- Chon giao vien --</option>
             <option *ngFor="let t of teachers()" [value]="t._id">{{t.fullName}} ({{t.email}})</option>
           </select>
         </label>
-        <label *ngIf="!isOps()">Nhân viên Sale (tùy chọn)
+        <label *ngIf="!isOps()">Nhan vien Sale (tuy chon)
           <select name="saleId" [(ngModel)]="form.saleId" [disabled]="isSale()">
-            <option value="">-- Không chọn --</option>
+            <option value="">-- Khong chon --</option>
             <option *ngFor="let s of sales()" [value]="s._id">{{s.fullName}} ({{s.email}})</option>
           </select>
         </label>
-        
+
+        <label *ngIf="canManage()">Loai lop
+          <select name="classMode" [(ngModel)]="form.classMode">
+            <option value="ONLINE">ONLINE</option>
+            <option value="OFFLINE">OFFLINE</option>
+          </select>
+        </label>
+
         <div class="financial-info" *ngIf="canManage()">
-          <h4>💰 Thiết lập giá theo buổi</h4>
+          <h4>Thiet lap gia theo buoi</h4>
           <div class="pricing-grid">
-            <label>Giá thu HS / buổi (VNĐ)
+            <label>{{ form.classMode === 'OFFLINE' ? 'Don gia thu / HS / buoi (VND)' : 'Gia thu HS / buoi (VND)' }}
               <input name="pricePerSession" [(ngModel)]="form.pricePerSession" type="number" min="0" step="10000" />
             </label>
-            <label>Lương GV / buổi (VNĐ)
+            <label *ngIf="form.classMode === 'ONLINE'">Luong GV / buoi (VND)
               <input name="teacherPayPerSession" [(ngModel)]="form.teacherPayPerSession" type="number" min="0" step="10000" />
             </label>
-            <label>Thời lượng cơ sở (phút)
+            <label *ngIf="form.classMode === 'OFFLINE'">Luong GV / HS / buoi (VND)
+              <input name="teacherPayPerStudent" [(ngModel)]="form.teacherPayPerStudent" type="number" min="0" step="10000" />
+            </label>
+            <label>Thoi luong co so (phut)
               <select name="baseDuration" [(ngModel)]="form.baseDuration">
-                <option *ngFor="let d of standardDurations" [ngValue]="d">{{d}} phút</option>
+                <option *ngFor="let d of standardDurations" [ngValue]="d">{{d}} phut</option>
               </select>
             </label>
-            <label>Thời lượng buổi học (phút)
+            <label>Thoi luong buoi hoc (phut)
               <input name="sessionDuration" [(ngModel)]="form.sessionDuration" type="number" min="15" step="5" />
             </label>
           </div>
 
+          <p class="mode-hint" *ngIf="form.classMode === 'OFFLINE'">
+            OFFLINE: Luong GV = max(200,000, so HS diem danh x don gia GV/HS). Don gia thu HS va don gia tra GV la 2 gia tri tach rieng.
+          </p>
+
           <div class="price-reference" *ngIf="form.pricePerSession">
-            <h5>📊 Bảng giá tham chiếu theo thời lượng</h5>
+            <h5>Bang gia tham chieu theo thoi luong</h5>
             <table class="ref-table">
-              <thead><tr><th>Thời lượng</th><th>Học phí HS</th><th>Lương GV</th><th>Lợi nhuận</th></tr></thead>
+              <thead>
+                <tr>
+                  <th>Thoi luong</th>
+                  <th>Hoc phi HS</th>
+                  <th>{{form.classMode === 'OFFLINE' ? 'Luong GV/HS' : 'Luong GV'}}</th>
+                  <th>Loi nhuan</th>
+                </tr>
+              </thead>
               <tbody>
                 <tr *ngFor="let d of standardDurations" [class.active-row]="d === form.sessionDuration">
-                  <td>{{d}} phút <span class="badge" *ngIf="d === form.baseDuration">cơ sở</span></td>
+                  <td>{{d}} phut <span class="badge" *ngIf="d === form.baseDuration">co so</span></td>
                   <td>{{formatCurrency(calcProportional(form.pricePerSession, d))}}</td>
-                  <td>{{formatCurrency(calcProportional(form.teacherPayPerSession, d))}}</td>
-                  <td [class]="getProfitClass(calcProportional(form.pricePerSession, d) - calcProportional(form.teacherPayPerSession, d))">
-                    {{formatCurrency(calcProportional(form.pricePerSession, d) - calcProportional(form.teacherPayPerSession, d))}}
+                  <td>{{formatCurrency(calcProportional(teacherBaseForForm(), d))}}</td>
+                  <td [class]="getProfitClass(calcProportional(form.pricePerSession, d) - calcProportional(teacherBaseForForm(), d))">
+                    {{formatCurrency(calcProportional(form.pricePerSession, d) - calcProportional(teacherBaseForForm(), d))}}
                   </td>
                 </tr>
               </tbody>
             </table>
           </div>
 
-          <div class="financial-summary" *ngIf="form.pricePerSession || form.teacherPayPerSession">
-            <p><strong>Số học viên:</strong> {{selectedStudents().length}}</p>
-            <p><strong>Giá cơ sở ({{form.baseDuration}}p):</strong> {{formatCurrency(form.pricePerSession)}}</p>
-            <p><strong>Giá thực tế ({{form.sessionDuration}}p):</strong> {{formatCurrency(calcProportional(form.pricePerSession, form.sessionDuration))}}</p>
-            <p><strong>Lương GV thực tế ({{form.sessionDuration}}p):</strong> {{formatCurrency(calcProportional(form.teacherPayPerSession, form.sessionDuration))}}</p>
-            <p [class]="getProfitClass(calcProportional(form.pricePerSession, form.sessionDuration) - calcProportional(form.teacherPayPerSession, form.sessionDuration))">
-              <strong>Lợi nhuận/buổi:</strong> {{formatCurrency(calcProportional(form.pricePerSession, form.sessionDuration) - calcProportional(form.teacherPayPerSession, form.sessionDuration))}}
-            </p>
+          <div class="financial-summary" *ngIf="form.pricePerSession || teacherBaseForForm()">
+            <ng-container *ngIf="form.classMode === 'ONLINE'; else offlineSummary">
+              <p><strong>So hoc vien:</strong> {{selectedStudents().length}}</p>
+              <p><strong>Gia co so ({{form.baseDuration}}p):</strong> {{formatCurrency(form.pricePerSession)}}</p>
+              <p><strong>Gia thuc te ({{form.sessionDuration}}p):</strong> {{formatCurrency(calcProportional(form.pricePerSession, form.sessionDuration))}}</p>
+              <p><strong>Luong GV thuc te ({{form.sessionDuration}}p):</strong> {{formatCurrency(calcProportional(form.teacherPayPerSession, form.sessionDuration))}}</p>
+              <p [class]="getProfitClass(calcProportional(form.pricePerSession, form.sessionDuration) - calcProportional(form.teacherPayPerSession, form.sessionDuration))">
+                <strong>Loi nhuan/buoi:</strong> {{formatCurrency(calcProportional(form.pricePerSession, form.sessionDuration) - calcProportional(form.teacherPayPerSession, form.sessionDuration))}}
+              </p>
+            </ng-container>
+            <ng-template #offlineSummary>
+              <p><strong>Si so hien tai:</strong> {{selectedStudents().length}}</p>
+              <p><strong>Don gia thu / HS ({{form.sessionDuration}}p):</strong> {{formatCurrency(calcProportional(form.pricePerSession, form.sessionDuration))}}</p>
+              <p><strong>Don gia tra GV / HS:</strong> {{formatCurrency(teacherBaseForForm())}}</p>
+              <p><strong>Tong thu uoc tinh (neu di hoc du):</strong> {{formatCurrency(getOfflineEstimatedRevenue())}}</p>
+              <p><strong>Luong GV uoc tinh:</strong> {{formatCurrency(getOfflineTeacherPayoutEstimate())}}</p>
+              <p [class]="getProfitClass(getOfflineEstimatedRevenue() - getOfflineTeacherPayoutEstimate())">
+                <strong>Loi nhuan uoc tinh:</strong> {{formatCurrency(getOfflineEstimatedRevenue() - getOfflineTeacherPayoutEstimate())}}
+              </p>
+            </ng-template>
           </div>
         </div>
-        
+
         <section class="student-picker">
           <div class="student-column">
             <div class="column-header">
-              <strong>Danh sách học viên</strong>
-              <input [(ngModel)]="studentSearch" placeholder="Tìm kiếm học viên" name="studentSearch" />
+              <strong>Danh sach hoc vien</strong>
+              <input [(ngModel)]="studentSearch" placeholder="Tim kiem hoc vien" name="studentSearch" />
             </div>
             <div class="student-list">
               <div class="student-row" *ngFor="let st of availableStudents()">
                 <span>{{st.fullName}}</span>
-                <button type="button" (click)="addStudent(st)">Thêm</button>
+                <button type="button" (click)="addStudent(st)">Them</button>
               </div>
-              <p *ngIf="!availableStudents().length" class="muted">Không tìm thấy học viên phù hợp</p>
+              <p *ngIf="!availableStudents().length" class="muted">Khong tim thay hoc vien phu hop</p>
             </div>
           </div>
           <div class="student-column">
             <div class="column-header">
-              <strong>Học viên trong lớp</strong>
+              <strong>Hoc vien trong lop</strong>
             </div>
             <div class="student-list">
               <div class="student-row" *ngFor="let st of selectedStudents()">
                 <span>{{st.fullName}}</span>
-                <button type="button" class="remove" (click)="removeStudent(st._id)">✕</button>
+                <button type="button" class="remove" (click)="removeStudent(st._id)">x</button>
               </div>
-              <p *ngIf="!selectedStudents().length" class="muted">Chưa chọn học viên nào</p>
+              <p *ngIf="!selectedStudents().length" class="muted">Chua chon hoc vien nao</p>
             </div>
           </div>
         </section>
+
         <div class="actions">
           <button type="submit" class="primary">{{ submitLabel }}</button>
-          <button type="button" (click)="closeModal()">Huỷ</button>
+          <button type="button" (click)="closeModal()">Huy</button>
         </div>
         <p class="error" *ngIf="error()">{{error()}}</p>
       </form>
@@ -188,7 +226,7 @@ import { AuthService } from '../services/auth.service';
     .actions { display:flex; gap:8px; justify-content:flex-end; }
     .actions-cell { white-space:nowrap; width:140px; }
     .modal-backdrop { position:fixed; inset:0; background:rgba(15,23,42,.55); display:flex; align-items:center; justify-content:center; z-index:100; }
-    .modal { background:#fff; padding:20px; border-radius:8px; width:520px; max-height:90vh; overflow:auto; box-shadow:0 12px 32px rgba(15,23,42,.2); }
+    .modal { background:#fff; padding:20px; border-radius:8px; width:640px; max-height:90vh; overflow:auto; box-shadow:0 12px 32px rgba(15,23,42,.2); }
     .modal form { display:flex; flex-direction:column; gap:12px; }
     .error { color:#dc2626; }
     .student-picker { display:flex; gap:16px; }
@@ -213,9 +251,21 @@ import { AuthService } from '../services/auth.service';
     .badge { display:inline-block; background:#2563eb; color:#fff; font-size:10px; padding:1px 6px; border-radius:99px; margin-left:4px; font-weight:500; }
     .financial-summary { background:#f1f5f9; padding:12px; border-radius:6px; margin-top:12px; }
     .financial-summary p { margin:4px 0; font-size:14px; }
+    .mode-hint { margin:10px 0 0 0; font-size:12px; color:#475569; }
+    .mode-badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700; background:#dbeafe; color:#1d4ed8; letter-spacing:.3px; }
+    .mode-badge.offline { background:#fee2e2; color:#b91c1c; }
     .profit-positive { color:#059669; font-weight:600; }
     .profit-negative { color:#dc2626; font-weight:600; }
     .profit-zero { color:#6b7280; }
+
+    @media (max-width: 1024px) {
+      .pricing-grid { grid-template-columns:1fr 1fr; }
+    }
+
+    @media (max-width: 768px) {
+      .student-picker { flex-direction:column; }
+      .modal { width:94vw; }
+    }
   `]
 })
 export class ClassesComponent {
@@ -228,7 +278,7 @@ export class ClassesComponent {
   error = signal('');
   editingId: string | null = null;
   form = this.blankForm();
-  submitLabel = 'Lưu';
+  submitLabel = 'Luu';
   standardDurations = [30, 40, 50, 60, 70, 80, 90, 120];
 
   constructor(
@@ -242,18 +292,20 @@ export class ClassesComponent {
   }
 
   blankForm() {
-    return { 
-      name: '', 
-      code: '', 
-      teacherId: '', 
-      saleId: '', 
+    return {
+      name: '',
+      code: '',
+      teacherId: '',
+      saleId: '',
+      classMode: 'ONLINE' as 'ONLINE' | 'OFFLINE',
       studentIds: [] as string[],
       pricePerSession: 0,
       teacherPayPerSession: 0,
+      teacherPayPerStudent: 0,
       baseDuration: 60,
       sessionDuration: 60,
       revenuePerStudent: 0,
-      teacherSalaryCost: 0
+      teacherSalaryCost: 0,
     };
   }
 
@@ -275,26 +327,26 @@ export class ClassesComponent {
     this.editingId = null;
     this.error.set('');
     this.studentSearch = '';
-    this.submitLabel = 'Lưu';
+    this.submitLabel = 'Luu';
     this.showModal.set(true);
   }
 
   closeModal() {
     this.showModal.set(false);
     this.editingId = null;
-    this.submitLabel = 'Lưu';
+    this.submitLabel = 'Luu';
   }
 
   async submit() {
     if (this.isSale()) {
       if (!this.editingId) return;
       if (!this.form.studentIds.length) {
-        this.error.set('Vui lòng chọn ít nhất một học viên');
+        this.error.set('Vui long chon it nhat mot hoc vien');
         return;
       }
       const okSale = await this.classService.assignStudents(this.editingId, this.form.studentIds);
       if (!okSale) {
-        this.error.set('Không thể thêm học viên');
+        this.error.set('Khong the them hoc vien');
         return;
       }
       this.closeModal();
@@ -303,29 +355,42 @@ export class ClassesComponent {
     }
 
     if (!this.form.teacherId) {
-      this.error.set('Vui lòng chọn giáo viên');
+      this.error.set('Vui long chon giao vien');
       return;
     }
+
+    const teacherPayPerSession = this.form.classMode === 'ONLINE'
+      ? (this.form.teacherPayPerSession || 0)
+      : 0;
+    const teacherPayPerStudent = this.form.classMode === 'OFFLINE'
+      ? (this.form.teacherPayPerStudent || 0)
+      : 0;
+
     const payload = {
       name: this.form.name.trim(),
       code: this.form.code.trim(),
       teacherId: this.form.teacherId,
       saleId: this.form.saleId || undefined,
+      classMode: this.form.classMode || 'ONLINE',
       studentIds: [...this.form.studentIds],
       pricePerSession: this.form.pricePerSession || 0,
-      teacherPayPerSession: this.form.teacherPayPerSession || 0,
+      teacherPayPerSession,
+      teacherPayPerStudent,
       baseDuration: this.form.baseDuration || 60,
       sessionDuration: this.form.sessionDuration || 60,
       revenuePerStudent: this.form.revenuePerStudent || 0,
       teacherSalaryCost: this.form.teacherSalaryCost || 0,
     };
+
     const ok = this.editingId
       ? await this.classService.update(this.editingId, payload)
       : await this.classService.create(payload);
+
     if (!ok) {
-      this.error.set('Không thể lưu lớp học');
+      this.error.set('Khong the luu lop hoc');
       return;
     }
+
     this.closeModal();
     this.reload();
   }
@@ -335,30 +400,34 @@ export class ClassesComponent {
     this.editingId = classItem._id;
     const classStudentIds = classItem.students?.map((s) => s._id) || [];
     const myStudents = new Set(this.students().map((s) => s._id));
+
     this.form = {
       name: classItem.name,
       code: classItem.code,
       teacherId: classItem.teacher?._id || '',
       saleId: classItem.sale?._id || '',
+      classMode: classItem.classMode || 'ONLINE',
       studentIds: this.isSale() ? classStudentIds.filter((id) => myStudents.has(id)) : classStudentIds,
       pricePerSession: classItem.pricePerSession || 0,
       teacherPayPerSession: classItem.teacherPayPerSession || 0,
+      teacherPayPerStudent: classItem.teacherPayPerStudent || 0,
       baseDuration: classItem.baseDuration || 60,
       sessionDuration: classItem.sessionDuration || 60,
       revenuePerStudent: classItem.revenuePerStudent || 0,
       teacherSalaryCost: classItem.teacherSalaryCost || 0,
     };
+
     this.error.set('');
     this.studentSearch = '';
-    this.submitLabel = this.isSale() ? 'Thêm học viên' : 'Cập nhật';
+    this.submitLabel = this.isSale() ? 'Them hoc vien' : 'Cap nhat';
     this.showModal.set(true);
   }
 
   async remove(classItem: ClassItem) {
-    if (!confirm(`Xóa lớp ${classItem.name}?`)) return;
+    if (!confirm(`Xoa lop ${classItem.name}?`)) return;
     const ok = await this.classService.remove(classItem._id);
     if (!ok) {
-      alert('Không thể xóa lớp');
+      alert('Khong the xoa lop');
       return;
     }
     this.reload();
@@ -409,11 +478,33 @@ export class ClassesComponent {
     return current?.role === 'SALE' && classItem.sale?._id === current.sub;
   }
 
+  isOfflineClass(c: ClassItem): boolean {
+    return (c.classMode || 'ONLINE') === 'OFFLINE';
+  }
+
+  teacherBaseForForm(): number {
+    return this.form.classMode === 'OFFLINE'
+      ? (this.form.teacherPayPerStudent || 0)
+      : (this.form.teacherPayPerSession || 0);
+  }
+
+  formatTeacherBase(c: ClassItem): string {
+    if (this.isOfflineClass(c)) {
+      return `${this.formatCurrency(c.teacherPayPerStudent)} / HS`;
+    }
+    return this.formatCurrency(c.teacherPayPerSession);
+  }
+
+  formatTeacherActual(c: ClassItem): string {
+    if (this.isOfflineClass(c)) return 'Theo diem danh (min 200k)';
+    return this.formatCurrency(c.actualTeacherPayPerSession ?? c.teacherPayPerSession);
+  }
+
   formatCurrency(amount?: number): string {
-    if (!amount && amount !== 0) return '—';
+    if (!amount && amount !== 0) return '-';
     return new Intl.NumberFormat('vi-VN', {
       style: 'currency',
-      currency: 'VND'
+      currency: 'VND',
     }).format(amount);
   }
 
@@ -424,15 +515,33 @@ export class ClassesComponent {
     return 'profit-zero';
   }
 
-  /** Tính giá tỷ lệ theo thời lượng */
   calcProportional(basePrice: number | undefined, targetDuration: number): number {
     if (!basePrice) return 0;
     const base = this.form.baseDuration || 60;
     return Math.round(basePrice * (targetDuration / base));
   }
 
-  /** Lợi nhuận thực tế (sau tỷ lệ) của 1 lớp */
+  getOfflineEstimatedRevenue(): number {
+    const perStudentCharge = this.calcProportional(this.form.pricePerSession, this.form.sessionDuration || 60);
+    return perStudentCharge * this.selectedStudents().length;
+  }
+
+  getOfflineTeacherPayoutEstimate(): number {
+    const attendedCount = this.selectedStudents().length;
+    if (attendedCount <= 0) return 0;
+    return Math.max(200_000, Math.round(attendedCount * (this.form.teacherPayPerStudent || 0)));
+  }
+
   getProfit(c: ClassItem): number {
+    if (typeof c.profit === 'number') return c.profit;
+
+    if (this.isOfflineClass(c)) {
+      const studentCount = c.studentCount ?? c.students?.length ?? 0;
+      const pricePerStudent = c.actualPricePerSession ?? c.pricePerSession ?? 0;
+      const teacherPerStudent = c.teacherPayPerStudent ?? 0;
+      return (pricePerStudent * studentCount) - (teacherPerStudent * studentCount);
+    }
+
     const price = c.actualPricePerSession ?? c.pricePerSession ?? 0;
     const pay = c.actualTeacherPayPerSession ?? c.teacherPayPerSession ?? 0;
     return price - pay;

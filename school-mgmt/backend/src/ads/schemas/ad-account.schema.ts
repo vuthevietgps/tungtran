@@ -46,8 +46,7 @@ export class AdAccount {
 }
 
 export const AdAccountSchema = SchemaFactory.createForClass(AdAccount);
-
-AdAccountSchema.index({ accountCode: 1 }, { unique: true });
 AdAccountSchema.index({ platform: 1 });
 AdAccountSchema.index({ status: 1 });
 AdAccountSchema.index({ createdAt: -1 });
+

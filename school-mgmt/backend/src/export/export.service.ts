@@ -9,6 +9,7 @@ import { Session, SessionDocument } from '../sessions/schemas/session.schema';
 import { LedgerEntry, LedgerEntryDocument } from '../wallets/schemas/ledger-entry.schema';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { AuditAction, AuditModule } from '../audit-log/schemas/audit-log.schema';
+import { buildDateFilter } from '../common/utils/date.utils';
 
 @Injectable()
 export class ExportService {
@@ -156,17 +157,13 @@ export class ExportService {
   /** Export attendance as CSV */
   async exportAttendanceCsv(query: { fromDate?: string; toDate?: string }, user: any): Promise<string> {
     const filter: any = {};
-    if (query.fromDate || query.toDate) {
-      filter.date = {};
-      if (query.fromDate) filter.date.$gte = new Date(query.fromDate);
-      if (query.toDate) filter.date.$lte = new Date(query.toDate);
-    }
+    const dateFilter = buildDateFilter(query.fromDate, query.toDate);
+    if (dateFilter) filter.date = dateFilter;
 
     const data = await this.attendanceModel
       .find(filter)
       .populate('studentId', 'fullName')
-      .populate('sessionId', 'sessionDate')
-      .populate('classId', 'className')
+      .populate('classId', 'name code')
       .sort({ date: -1 })
       .lean();
 
@@ -174,10 +171,10 @@ export class ExportService {
     const rows = data.map((a: any) => {
       return [
         a.date ? new Date(a.date).toLocaleDateString('vi-VN') : '',
-        a.classId?.className || '',
+        a.classId?.name || '',
         a.studentId?.fullName || '',
         a.status || '',
-        (a.note || '').replace(/,/g, ';'),
+        (a.notes || a.note || '').replace(/,/g, ';'),
       ].join(',');
     });
 

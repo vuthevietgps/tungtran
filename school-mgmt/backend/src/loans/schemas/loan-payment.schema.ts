@@ -36,6 +36,16 @@ export class LoanPayment {
   @Prop({ required: true, min: 0 })
   totalAmount!: number;
 
+  // Cumulative paid values for this installment (support partial payments safely).
+  @Prop({ default: 0, min: 0 })
+  paidAmount!: number;
+
+  @Prop({ default: 0, min: 0 })
+  paidPrincipal!: number;
+
+  @Prop({ default: 0, min: 0 })
+  paidInterest!: number;
+
   @Prop({ type: String, enum: Object.values(LoanPaymentStatus), default: LoanPaymentStatus.SCHEDULED })
   status!: string;
 
@@ -56,8 +66,7 @@ export class LoanPayment {
 }
 
 export const LoanPaymentSchema = SchemaFactory.createForClass(LoanPayment);
-
-LoanPaymentSchema.index({ paymentCode: 1 }, { unique: true });
-LoanPaymentSchema.index({ loanId: 1, paymentNumber: 1 });
+LoanPaymentSchema.index({ loanId: 1, paymentNumber: 1 }, { unique: true });
 LoanPaymentSchema.index({ dueDate: 1 });
 LoanPaymentSchema.index({ status: 1 });
+

@@ -86,7 +86,7 @@ import { DashboardService } from '../../services/dashboard.service';
               <td><strong>{{ c.name }}</strong></td>
               <td>{{ c.subject }}</td>
               <td>{{ c.grade }}</td>
-              <td>{{ c.studentIds?.length || 0 }}</td>
+              <td>{{ c.students?.length || c.studentIds?.length || 0 }}</td>
             </tr>
           </tbody>
         </table>
@@ -100,8 +100,8 @@ import { DashboardService } from '../../services/dashboard.service';
           <thead><tr><th>Ngày giờ</th><th>Học sinh</th><th>Lớp</th><th>Trạng thái</th></tr></thead>
           <tbody>
             <tr *ngFor="let s of data()!.upcoming">
-              <td>{{ s.sessionDate | date:'dd/MM/yyyy HH:mm' }}</td>
-              <td>{{ s.studentId?.name || 'N/A' }}</td>
+              <td>{{ (s.scheduledDate || s.sessionDate) | date:'dd/MM/yyyy HH:mm' }}</td>
+              <td>{{ s.studentId?.fullName || s.studentId?.name || 'N/A' }}</td>
               <td>{{ s.classId?.name || 'N/A' }}</td>
               <td><span class="badge" [attr.data-status]="s.status">{{ s.status }}</span></td>
             </tr>

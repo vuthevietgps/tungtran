@@ -8,7 +8,8 @@ import { environment } from '../../environments/environment';
 interface AttendanceReportItem {
   _id: string;
   date: string;
-  attendedAt: string;
+  attendedAt?: string;
+  updatedAt?: string;
   status: string;
   imageUrl?: string;
   studentId: {
@@ -98,7 +99,7 @@ interface AttendanceReportItem {
           <tbody>
             <tr *ngFor="let item of reportData()">
               <td>{{ formatDate(item.date) }}</td>
-              <td>{{ formatDateTime(item.attendedAt) }}</td>
+              <td>{{ formatDateTime(item.attendedAt || item.updatedAt || item.date) }}</td>
               <td>
                 <div class="class-info">
                   <strong>{{ item.classId.code }}</strong><br />
@@ -352,8 +353,8 @@ export class AttendanceReportComponent implements OnInit {
     const lastWeek = new Date();
     lastWeek.setDate(today.getDate() - 7);
 
-    this.endDate = today.toISOString().split('T')[0];
-    this.startDate = lastWeek.toISOString().split('T')[0];
+    this.endDate = this.formatLocalDateInput(today);
+    this.startDate = this.formatLocalDateInput(lastWeek);
 
     this.loadClasses();
   }
@@ -394,8 +395,6 @@ export class AttendanceReportComponent implements OnInit {
         this.selectedClassId || undefined
       );
 
-      console.log('Report data:', data);
-      console.log('First student:', data[0]?.studentId);
       this.reportData.set(data);
     } catch (error: any) {
       this.error.set(error.message || 'Không thể tải báo cáo');
@@ -419,7 +418,8 @@ export class AttendanceReportComponent implements OnInit {
     this.modalImage.set('');
   }
 
-  formatDate(dateStr: string): string {
+  formatDate(dateStr?: string | null): string {
+    if (!dateStr) return '-';
     return new Date(dateStr).toLocaleDateString('vi-VN', {
       year: 'numeric',
       month: '2-digit',
@@ -427,7 +427,8 @@ export class AttendanceReportComponent implements OnInit {
     });
   }
 
-  formatDateTime(dateStr: string): string {
+  formatDateTime(dateStr?: string | null): string {
+    if (!dateStr) return '-';
     return new Date(dateStr).toLocaleString('vi-VN', {
       year: 'numeric',
       month: '2-digit',
@@ -436,5 +437,12 @@ export class AttendanceReportComponent implements OnInit {
       minute: '2-digit',
       second: '2-digit'
     });
+  }
+
+  private formatLocalDateInput(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   }
 }

@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { ScheduleModule } from '@nestjs/schedule';
 import { AdsController } from './ads.controller';
 import { AdsService } from './ads.service';
 import { AdAccount, AdAccountSchema } from './schemas/ad-account.schema';
@@ -15,7 +14,6 @@ import { Student, StudentSchema } from '../students/schemas/student.schema';
 
 @Module({
   imports: [
-    ScheduleModule.forRoot(),
     MongooseModule.forFeature([
       { name: AdAccount.name, schema: AdAccountSchema },
       { name: AdGroup.name, schema: AdGroupSchema },

@@ -11,14 +11,16 @@ import { AuthService } from '../services/auth.service';
   template: `
   <section class="login-wrapper">
     <form (ngSubmit)="submit()" class="login-card">
-      <h2>Đăng nhập</h2>
+      <h2>Dang nhap</h2>
       <label>Email
-        <input type="email" [(ngModel)]="email" name="email" required />
+        <input type="email" [(ngModel)]="email" name="email" required [disabled]="loading()" />
       </label>
-      <label>Mật khẩu
-        <input type="password" [(ngModel)]="password" name="password" required />
+      <label>Mat khau
+        <input type="password" [(ngModel)]="password" name="password" required [disabled]="loading()" />
       </label>
-      <button type="submit">Đăng nhập</button>
+      <button type="submit" [disabled]="loading()">
+        {{ loading() ? 'Dang xu ly...' : 'Dang nhap' }}
+      </button>
       <p class="error" *ngIf="error()">{{error()}}</p>
     </form>
   </section>
@@ -30,22 +32,37 @@ import { AuthService } from '../services/auth.service';
     input { padding:8px; border:1px solid #cbd5f5; border-radius:6px; }
     button { padding:10px; border:none; border-radius:6px; background:#2563eb; color:#fff; font-weight:600; cursor:pointer; }
     button:hover { background:#1d4ed8; }
+    button:disabled { opacity:.7; cursor:not-allowed; }
     .error { color:#dc2626; font-size:13px; margin:0; }
-  `]
+  `],
 })
 export class LoginComponent {
   email = '';
   password = '';
   error = signal('');
+  loading = signal(false);
 
   constructor(private auth: AuthService, private router: Router) {}
 
   async submit() {
-    const ok = await this.auth.login(this.email, this.password);
-    if (!ok) {
-      this.error.set('Sai email hoặc mật khẩu');
+    if (this.loading()) return;
+
+    this.error.set('');
+    this.loading.set(true);
+    const result = await this.auth.login(this.email, this.password);
+    this.loading.set(false);
+
+    if (!result.ok) {
+      if (result.status === 429) {
+        this.error.set('Ban da thu qua nhieu lan. Vui long doi 1 phut.');
+      } else if (result.status === 401) {
+        this.error.set('Sai email hoac mat khau');
+      } else {
+        this.error.set(result.message || 'Dang nhap that bai');
+      }
       return;
     }
+
     this.router.navigate(['/app/dashboard']);
   }
 }

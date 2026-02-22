@@ -13,20 +13,22 @@ export interface ClassItem {
   _id: string;
   name: string;
   code: string;
+  classMode?: 'ONLINE' | 'OFFLINE';
   teacher?: ClassMember | null;
   sale?: ClassMember | null;
   students?: (ClassMember & { studentCode?: string })[];
-  // Per-session pricing (new model)
-  pricePerSession?: number;        // Giá thu HS mỗi buổi (VNĐ) — cho baseDuration
-  teacherPayPerSession?: number;   // Lương GV mỗi buổi (VNĐ) — cho baseDuration
-  baseDuration?: number;           // Thời lượng cơ sở tính giá (phút), mặc định 60
-  sessionDuration?: number;        // Thời lượng thực tế mỗi buổi (phút)
-  actualPricePerSession?: number;  // Giá thu thực tế sau tỷ lệ
-  actualTeacherPayPerSession?: number; // Lương GV thực tế sau tỷ lệ
-  // Legacy fields
+
+  pricePerSession?: number;
+  teacherPayPerSession?: number;
+  teacherPayPerStudent?: number;
+  baseDuration?: number;
+  sessionDuration?: number;
+  actualPricePerSession?: number;
+  actualTeacherPayPerSession?: number;
+
   revenuePerStudent?: number;
   teacherSalaryCost?: number;
-  // Computed
+
   totalRevenue?: number;
   totalCost?: number;
   profit?: number;
@@ -42,9 +44,11 @@ export interface ClassPayload {
   code: string;
   teacherId: string;
   saleId?: string;
+  classMode?: 'ONLINE' | 'OFFLINE';
   studentIds: string[];
   pricePerSession?: number;
   teacherPayPerSession?: number;
+  teacherPayPerStudent?: number;
   baseDuration?: number;
   sessionDuration?: number;
   revenuePerStudent?: number;
@@ -97,3 +101,4 @@ export class ClassService {
     return true;
   }
 }
+

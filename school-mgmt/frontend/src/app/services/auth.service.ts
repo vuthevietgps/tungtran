@@ -1,6 +1,6 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
 
@@ -10,6 +10,12 @@ export interface AuthPayload {
   email: string;
   role: string;
   fullName: string;
+}
+
+export interface LoginResult {
+  ok: boolean;
+  status?: number;
+  message?: string;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -48,7 +54,7 @@ export class AuthService {
     }
   }
 
-  async login(email: string, password: string): Promise<boolean> {
+  async login(email: string, password: string): Promise<LoginResult> {
     try {
       const data = await firstValueFrom(
         this.http.post<{ user: AuthPayload }>(
@@ -58,9 +64,16 @@ export class AuthService {
         ),
       );
       this.userSignal.set(data.user);
-      return true;
-    } catch {
-      return false;
+      return { ok: true };
+    } catch (err) {
+      const httpError = err as HttpErrorResponse;
+      const rawMessage = httpError?.error?.message;
+      const message = typeof rawMessage === 'string' ? rawMessage : undefined;
+      return {
+        ok: false,
+        status: httpError?.status,
+        message,
+      };
     }
   }
 

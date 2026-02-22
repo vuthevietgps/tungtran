@@ -13,6 +13,12 @@ import { AttendanceService } from './attendance.service';
 import { CreateAttendanceDto, BulkAttendanceDto } from './dto/create-attendance.dto';
 import { UpdateAttendanceDto } from './dto/update-attendance.dto';
 import { GenerateAttendanceLinkDto, StudentAttendanceDto } from './dto/generate-link.dto';
+import {
+  AttendanceByClassQueryDto,
+  AttendanceStatsQueryDto,
+  AttendanceReportQueryDto,
+  ParentAttendanceQueryDto,
+} from './dto/attendance-query.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -28,14 +34,14 @@ export class AttendanceController {
 
   // Điểm danh một học sinh
   @Post('mark')
-  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER)
+  @Roles(Role.DIRECTOR, Role.OPS)
   markAttendance(@Body() dto: CreateAttendanceDto, @Req() req: AuthenticatedRequest) {
     return this.attendanceService.markAttendance(dto, req.user);
   }
 
   // Điểm danh nhiều học sinh cùng lúc
   @Post('bulk-mark')
-  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER)
+  @Roles(Role.DIRECTOR, Role.OPS)
   bulkMarkAttendance(@Body() dto: BulkAttendanceDto, @Req() req: AuthenticatedRequest) {
     return this.attendanceService.bulkMarkAttendance(dto, req.user);
   }
@@ -45,10 +51,10 @@ export class AttendanceController {
   @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER)
   getAttendanceByClass(
     @Param('classId', ParseMongoIdPipe) classId: string,
-    @Query('date') date: string,
+    @Query() query: AttendanceByClassQueryDto,
     @Req() req: AuthenticatedRequest
   ) {
-    return this.attendanceService.getAttendanceByClass(classId, date, req.user);
+    return this.attendanceService.getAttendanceByClass(classId, query.date, req.user);
   }
 
   // Lấy lịch sử điểm danh của một học sinh
@@ -56,14 +62,15 @@ export class AttendanceController {
   @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER)
   getStudentAttendanceHistory(
     @Param('studentId', ParseMongoIdPipe) studentId: string,
-    @Query('classId', ParseMongoIdPipe) classId?: string
+    @Query('classId') classId?: string,
+    @Req() req?: AuthenticatedRequest,
   ) {
-    return this.attendanceService.getStudentAttendanceHistory(studentId, classId);
+    return this.attendanceService.getStudentAttendanceHistory(studentId, classId, req?.user);
   }
 
   // Cập nhật trạng thái điểm danh
   @Patch(':id')
-  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER)
+  @Roles(Role.DIRECTOR, Role.OPS)
   updateAttendance(
     @Param('id', ParseMongoIdPipe) id: string,
     @Body() dto: UpdateAttendanceDto,
@@ -77,11 +84,15 @@ export class AttendanceController {
   @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER)
   getAttendanceStats(
     @Param('classId', ParseMongoIdPipe) classId: string,
-    @Query('startDate') startDate: string,
-    @Query('endDate') endDate: string,
+    @Query() query: AttendanceStatsQueryDto,
     @Req() req: AuthenticatedRequest
   ) {
-    return this.attendanceService.getAttendanceStats(classId, startDate, endDate, req.user);
+    return this.attendanceService.getAttendanceStats(
+      classId,
+      query.startDate,
+      query.endDate,
+      req.user,
+    );
   }
 
   @Get('teacher/classes')
@@ -98,7 +109,7 @@ export class AttendanceController {
 
   // Tạo link điểm danh cho học sinh
   @Post('generate-link')
-  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER)
+  @Roles(Role.DIRECTOR, Role.OPS)
   generateAttendanceLink(@Body() dto: GenerateAttendanceLinkDto, @Req() req: AuthenticatedRequest) {
     return this.attendanceService.generateAttendanceLink(dto, req.user);
   }
@@ -110,28 +121,42 @@ export class AttendanceController {
   @Roles(Role.PARENT)
   getChildrenAttendance(
     @Req() req: AuthenticatedRequest,
-    @Query('fromDate') fromDate?: string,
-    @Query('toDate') toDate?: string,
+    @Query() query: ParentAttendanceQueryDto,
   ) {
-    return this.attendanceService.getChildrenAttendance(req.user.sub, fromDate, toDate);
+    return this.attendanceService.getChildrenAttendance(
+      req.user.sub,
+      query.fromDate,
+      query.toDate,
+    );
   }
 
   /** PH xem thống kê điểm danh tổng hợp của tất cả con */
   @Get('my-children/stats')
   @Roles(Role.PARENT)
-  getChildrenAttendanceStats(@Req() req: AuthenticatedRequest) {
-    return this.attendanceService.getChildrenAttendanceStats(req.user.sub);
+  getChildrenAttendanceStats(
+    @Req() req: AuthenticatedRequest,
+    @Query() query: ParentAttendanceQueryDto,
+  ) {
+    return this.attendanceService.getChildrenAttendanceStats(
+      req.user.sub,
+      query.fromDate,
+      query.toDate,
+    );
   }
 
   // Lấy báo cáo điểm danh tổng hợp
   @Get('report')
   @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER)
   getAttendanceReport(
-    @Query('startDate') startDate: string,
-    @Query('endDate') endDate: string,
-    @Query('classId') classId?: string
+    @Query() query: AttendanceReportQueryDto,
+    @Req() req?: AuthenticatedRequest,
   ) {
-    return this.attendanceService.getAttendanceReport(startDate, endDate, classId);
+    return this.attendanceService.getAttendanceReport(
+      query.startDate,
+      query.endDate,
+      query.classId,
+      req?.user,
+    );
   }
 }
 

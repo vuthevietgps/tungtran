@@ -2,13 +2,15 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, FilterQuery } from 'mongoose';
 import { Order, OrderDocument, OrderStatus } from './schemas/order.schema';
-import { Lead, LeadDocument } from '../leads/schemas/lead.schema';
+import { Lead, LeadDocument, LeadStatus } from '../leads/schemas/lead.schema';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { QueryOrderDto } from './dto/query-order.dto';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { AuditAction } from '../audit-log/schemas/audit-log.schema';
 import { EnrollmentService, EnrollmentResult } from './enrollment.service';
+import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
+import { Role } from '../common/interfaces/role.enum';
 
 @Injectable()
 export class OrdersService {
@@ -18,6 +20,19 @@ export class OrdersService {
     private auditLogService: AuditLogService,
     private enrollmentService: EnrollmentService,
   ) {}
+
+  private getActorId(user: JwtPayload): string {
+    return user?.sub ?? user?._id ?? (user as any)?.userId;
+  }
+
+  private assertSaleOrderAccess(order: any, user: JwtPayload): void {
+    if (user.role !== Role.SALE) return;
+    const actorId = this.getActorId(user);
+    const ownerSaleId = order?.saleId?.toString?.();
+    if (!actorId || !ownerSaleId || ownerSaleId !== actorId) {
+      throw new NotFoundException('Don hang khong ton tai');
+    }
+  }
 
   private async generateOrderCode(): Promise<string> {
     const year = new Date().getFullYear();
@@ -34,17 +49,40 @@ export class OrdersService {
     return `${prefix}${String(nextNum).padStart(4, '0')}`;
   }
 
-  async create(dto: CreateOrderDto, user: any): Promise<Order> {
+  async create(dto: CreateOrderDto, user: JwtPayload): Promise<Order> {
     const orderCode = await this.generateOrderCode();
+    const actorId = this.getActorId(user);
 
     // Resolve adGroupId: Lead takes priority over direct assignment
     let adGroupId = dto.adGroupId;
     let adGroupName = dto.adGroupName;
+    let leadForConversion: LeadDocument | null = null;
     if (dto.leadId) {
-      const lead = await this.leadModel.findById(dto.leadId).lean();
-      if (lead?.adGroupId) {
-        adGroupId = lead.adGroupId.toString();
-        adGroupName = (lead as any).adGroupName || adGroupName;
+      leadForConversion = await this.leadModel.findById(dto.leadId);
+      if (!leadForConversion) {
+        throw new NotFoundException('Lead khong ton tai');
+      }
+
+      if ((leadForConversion as any).convertedOrderId) {
+        throw new BadRequestException('Lead da co don dang ky lien ket');
+      }
+      if (
+        (leadForConversion as any).status === LeadStatus.NOT_INTERESTED ||
+        (leadForConversion as any).status === LeadStatus.NO_RESPONSE
+      ) {
+        throw new BadRequestException('Khong the tao don tu lead da mat hoac khong phan hoi');
+      }
+
+      if (user.role === Role.SALE) {
+        const leadSaleId = (leadForConversion as any).saleId?.toString?.();
+        if (!leadSaleId || leadSaleId !== actorId) {
+          throw new NotFoundException('Lead khong ton tai');
+        }
+      }
+
+      if (leadForConversion.adGroupId) {
+        adGroupId = leadForConversion.adGroupId.toString();
+        adGroupName = (leadForConversion as any).adGroupName || adGroupName;
       }
     }
 
@@ -52,15 +90,21 @@ export class OrdersService {
       ...dto,
       orderCode,
       status: OrderStatus.DRAFT,
-      saleId: user.userId,
+      saleId: actorId,
       saleName: user.fullName || user.email,
       adGroupId,
       adGroupName,
     });
     const saved = await order.save();
 
+    if (leadForConversion) {
+      leadForConversion.status = LeadStatus.CONVERTED;
+      (leadForConversion as any).convertedOrderId = (saved as any)._id;
+      await leadForConversion.save();
+    }
+
     await this.auditLogService.log({
-      userId: user.userId,
+      userId: actorId,
       userEmail: user.email,
       userFullName: user.fullName,
       userRole: user.role,
@@ -68,14 +112,15 @@ export class OrdersService {
       module: 'ORDERS' as any,
       targetId: saved._id?.toString(),
       targetName: saved.orderCode,
-      description: `Tạo đơn đăng ký: ${saved.orderCode} - ${saved.studentName}`,
+      description: `Táº¡o Ä‘Æ¡n Ä‘Äƒng kÃ½: ${saved.orderCode} - ${saved.studentName}`,
     });
 
     return saved;
   }
 
-  async findAll(query: QueryOrderDto, user: any) {
+  async findAll(query: QueryOrderDto, user: JwtPayload) {
     const filter: FilterQuery<OrderDocument> = {};
+    const actorId = this.getActorId(user);
 
     if (query.status) filter.status = query.status;
     if (query.orderType) filter.orderType = query.orderType;
@@ -97,52 +142,56 @@ export class OrdersService {
     }
 
     // SALE only sees their own orders
-    if (user.role === 'SALE') {
-      filter.saleId = user.userId;
+    if (user.role === Role.SALE) {
+      filter.saleId = actorId;
     }
 
     return this.orderModel.find(filter).sort({ createdAt: -1 }).lean();
   }
 
-  async findOne(id: string): Promise<Order> {
+  async findOne(id: string, user?: JwtPayload): Promise<Order> {
     const order = await this.orderModel.findById(id).lean();
-    if (!order) throw new NotFoundException('Đơn hàng không tồn tại');
+    if (!order) throw new NotFoundException('ÄÆ¡n hÃ ng khÃ´ng tá»“n táº¡i');
+    if (user) this.assertSaleOrderAccess(order, user);
     return order as Order;
   }
 
-  async update(id: string, dto: UpdateOrderDto, user: any): Promise<Order> {
+  async update(id: string, dto: UpdateOrderDto, user: JwtPayload): Promise<Order> {
+    const actorId = this.getActorId(user);
     const order = await this.orderModel.findById(id).lean();
-    if (!order) throw new NotFoundException('Đơn hàng không tồn tại');
-
+    if (!order) throw new NotFoundException('ÄÆ¡n hÃ ng khÃ´ng tá»“n táº¡i');
+    this.assertSaleOrderAccess(order, user);
     const o = order as any;
     if (![OrderStatus.DRAFT, OrderStatus.NEEDS_INFO].includes(o.status)) {
-      throw new BadRequestException('Chỉ có thể sửa đơn ở trạng thái Nháp hoặc Cần bổ sung');
+      throw new BadRequestException('Chá»‰ cÃ³ thá»ƒ sá»­a Ä‘Æ¡n á»Ÿ tráº¡ng thÃ¡i NhÃ¡p hoáº·c Cáº§n bá»• sung');
     }
 
     const updated = await this.orderModel.findByIdAndUpdate(id, dto, { new: true }).lean();
 
     await this.auditLogService.log({
-      userId: user.userId, userEmail: user.email, userFullName: user.fullName, userRole: user.role,
+      userId: actorId, userEmail: user.email, userFullName: user.fullName, userRole: user.role,
       action: AuditAction.UPDATE, module: 'ORDERS' as any,
       targetId: id, targetName: o.orderCode,
-      description: `Cập nhật đơn ${o.orderCode}`,
+      description: `Cáº­p nháº­t Ä‘Æ¡n ${o.orderCode}`,
       newValue: dto as any,
     });
 
     return updated as Order;
   }
 
-  async submit(id: string, user: any): Promise<Order> {
+  async submit(id: string, user: JwtPayload): Promise<Order> {
+    const actorId = this.getActorId(user);
     const order = await this.orderModel.findById(id).lean();
-    if (!order) throw new NotFoundException('Đơn hàng không tồn tại');
+    if (!order) throw new NotFoundException('ÄÆ¡n hÃ ng khÃ´ng tá»“n táº¡i');
+    this.assertSaleOrderAccess(order, user);
 
     const o = order as any;
     if (![OrderStatus.DRAFT, OrderStatus.NEEDS_INFO].includes(o.status)) {
-      throw new BadRequestException('Chỉ có thể gửi duyệt đơn ở trạng thái Nháp hoặc Cần bổ sung');
+      throw new BadRequestException('Chá»‰ cÃ³ thá»ƒ gá»­i duyá»‡t Ä‘Æ¡n á»Ÿ tráº¡ng thÃ¡i NhÃ¡p hoáº·c Cáº§n bá»• sung');
     }
 
     if (!o.items || o.items.length === 0) {
-      throw new BadRequestException('Đơn hàng phải có ít nhất 1 sản phẩm');
+      throw new BadRequestException('ÄÆ¡n hÃ ng pháº£i cÃ³ Ã­t nháº¥t 1 sáº£n pháº©m');
     }
 
     const updated = await this.orderModel.findByIdAndUpdate(
@@ -150,47 +199,48 @@ export class OrdersService {
     ).lean();
 
     await this.auditLogService.log({
-      userId: user.userId, userEmail: user.email, userFullName: user.fullName, userRole: user.role,
+      userId: actorId, userEmail: user.email, userFullName: user.fullName, userRole: user.role,
       action: AuditAction.STATUS_CHANGE, module: 'ORDERS' as any,
       targetId: id, targetName: o.orderCode,
-      description: `Gửi duyệt đơn ${o.orderCode}`,
+      description: `Gá»­i duyá»‡t Ä‘Æ¡n ${o.orderCode}`,
     });
 
     return updated as Order;
   }
 
-  async approve(id: string, user: any): Promise<{ order: Order; enrollment: EnrollmentResult }> {
+  async approve(id: string, user: JwtPayload): Promise<{ order: Order; enrollment: EnrollmentResult }> {
+    const actorId = this.getActorId(user);
     const order = await this.orderModel.findById(id).lean();
-    if (!order) throw new NotFoundException('Đơn hàng không tồn tại');
+    if (!order) throw new NotFoundException('ÄÆ¡n hÃ ng khÃ´ng tá»“n táº¡i');
 
     const o = order as any;
     if (o.status !== OrderStatus.SUBMITTED) {
-      throw new BadRequestException('Chỉ có thể duyệt đơn đang chờ duyệt');
+      throw new BadRequestException('Chá»‰ cÃ³ thá»ƒ duyá»‡t Ä‘Æ¡n Ä‘ang chá» duyá»‡t');
     }
 
-    // Đánh dấu APPROVED trước
+    // ÄÃ¡nh dáº¥u APPROVED trÆ°á»›c
     await this.orderModel.findByIdAndUpdate(
       id,
       {
         status: OrderStatus.APPROVED,
-        approvedBy: user.userId,
+        approvedBy: actorId,
         approvedAt: new Date(),
       },
       { new: true },
     );
 
-    // Audit log duyệt đơn
+    // Audit log duyá»‡t Ä‘Æ¡n
     await this.auditLogService.log({
-      userId: user.userId, userEmail: user.email, userFullName: user.fullName, userRole: user.role,
+      userId: actorId, userEmail: user.email, userFullName: user.fullName, userRole: user.role,
       action: AuditAction.APPROVE, module: 'ORDERS' as any,
       targetId: id, targetName: o.orderCode,
-      description: `Duyệt đơn ${o.orderCode} - ${o.studentName}`,
+      description: `Duyá»‡t Ä‘Æ¡n ${o.orderCode} - ${o.studentName}`,
     });
 
-    // Auto-enrollment: tạo Student, Invoice, ghi log
+    // Auto-enrollment: táº¡o Student, Invoice, ghi log
     const enrollment = await this.enrollmentService.processApprovedOrder(id, user);
 
-    // Lấy lại order sau khi enrollment cập nhật
+    // Láº¥y láº¡i order sau khi enrollment cáº­p nháº­t
     const updatedOrder = await this.orderModel.findById(id).lean();
 
     return {
@@ -199,13 +249,14 @@ export class OrdersService {
     };
   }
 
-  async reject(id: string, reason: string, user: any): Promise<Order> {
+  async reject(id: string, reason: string, user: JwtPayload): Promise<Order> {
+    const actorId = this.getActorId(user);
     const order = await this.orderModel.findById(id).lean();
-    if (!order) throw new NotFoundException('Đơn hàng không tồn tại');
+    if (!order) throw new NotFoundException('ÄÆ¡n hÃ ng khÃ´ng tá»“n táº¡i');
 
     const o = order as any;
     if (o.status !== OrderStatus.SUBMITTED) {
-      throw new BadRequestException('Chỉ có thể từ chối đơn đang chờ duyệt');
+      throw new BadRequestException('Chá»‰ cÃ³ thá»ƒ tá»« chá»‘i Ä‘Æ¡n Ä‘ang chá» duyá»‡t');
     }
 
     const updated = await this.orderModel.findByIdAndUpdate(
@@ -215,22 +266,22 @@ export class OrdersService {
     ).lean();
 
     await this.auditLogService.log({
-      userId: user.userId, userEmail: user.email, userFullName: user.fullName, userRole: user.role,
+      userId: actorId, userEmail: user.email, userFullName: user.fullName, userRole: user.role,
       action: AuditAction.REJECT, module: 'ORDERS' as any,
       targetId: id, targetName: o.orderCode,
-      description: `Từ chối đơn ${o.orderCode}: ${reason}`,
+      description: `Tá»« chá»‘i Ä‘Æ¡n ${o.orderCode}: ${reason}`,
     });
 
     return updated as Order;
   }
 
-  async requestInfo(id: string, reason: string, user: any): Promise<Order> {
+  async requestInfo(id: string, reason: string, user: JwtPayload): Promise<Order> {
     const order = await this.orderModel.findById(id).lean();
-    if (!order) throw new NotFoundException('Đơn hàng không tồn tại');
+    if (!order) throw new NotFoundException('ÄÆ¡n hÃ ng khÃ´ng tá»“n táº¡i');
 
     const o = order as any;
     if (o.status !== OrderStatus.SUBMITTED) {
-      throw new BadRequestException('Chỉ yêu cầu bổ sung cho đơn đang chờ duyệt');
+      throw new BadRequestException('Chá»‰ yÃªu cáº§u bá»• sung cho Ä‘Æ¡n Ä‘ang chá» duyá»‡t');
     }
 
     const updated = await this.orderModel.findByIdAndUpdate(
@@ -242,13 +293,15 @@ export class OrdersService {
     return updated as Order;
   }
 
-  async cancel(id: string, user: any): Promise<Order> {
+  async cancel(id: string, user: JwtPayload): Promise<Order> {
+    const actorId = this.getActorId(user);
     const order = await this.orderModel.findById(id).lean();
-    if (!order) throw new NotFoundException('Đơn hàng không tồn tại');
+    if (!order) throw new NotFoundException('ÄÆ¡n hÃ ng khÃ´ng tá»“n táº¡i');
+    this.assertSaleOrderAccess(order, user);
 
     const o = order as any;
     if ([OrderStatus.COMPLETED, OrderStatus.CANCELLED].includes(o.status)) {
-      throw new BadRequestException('Không thể hủy đơn đã hoàn tất hoặc đã hủy');
+      throw new BadRequestException('KhÃ´ng thá»ƒ há»§y Ä‘Æ¡n Ä‘Ã£ hoÃ n táº¥t hoáº·c Ä‘Ã£ há»§y');
     }
 
     const updated = await this.orderModel.findByIdAndUpdate(
@@ -256,18 +309,18 @@ export class OrdersService {
     ).lean();
 
     await this.auditLogService.log({
-      userId: user.userId, userEmail: user.email, userFullName: user.fullName, userRole: user.role,
+      userId: actorId, userEmail: user.email, userFullName: user.fullName, userRole: user.role,
       action: AuditAction.STATUS_CHANGE, module: 'ORDERS' as any,
       targetId: id, targetName: o.orderCode,
-      description: `Hủy đơn ${o.orderCode}`,
+      description: `Há»§y Ä‘Æ¡n ${o.orderCode}`,
     });
 
     return updated as Order;
   }
 
-  async getPipeline(user: any) {
+  async getPipeline(user: JwtPayload) {
     const match: any = {};
-    if (user.role === 'SALE') match.saleId = user.userId;
+    if (user.role === Role.SALE) match.saleId = this.getActorId(user);
 
     const pipeline = await this.orderModel.aggregate([
       { $match: match },
@@ -291,10 +344,13 @@ export class OrdersService {
     return result;
   }
 
-  async getStats(user: any) {
+  async getStats(user: JwtPayload) {
     const thisMonthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const match: any = {};
+    if (user.role === Role.SALE) match.saleId = this.getActorId(user);
 
     const stats = await this.orderModel.aggregate([
+      { $match: match },
       {
         $facet: {
           overview: [
@@ -374,30 +430,31 @@ export class OrdersService {
     };
   }
 
-  async remove(id: string, user: any): Promise<Order> {
+  async remove(id: string, user: JwtPayload): Promise<Order> {
+    const actorId = this.getActorId(user);
     const order = await this.orderModel.findById(id).lean();
-    if (!order) throw new NotFoundException('Đơn hàng không tồn tại');
-
+    if (!order) throw new NotFoundException('ÄÆ¡n hÃ ng khÃ´ng tá»“n táº¡i');
+    this.assertSaleOrderAccess(order, user);
     const o = order as any;
     if (![OrderStatus.DRAFT, OrderStatus.CANCELLED].includes(o.status)) {
-      throw new BadRequestException('Chỉ có thể xóa đơn Nháp hoặc Đã hủy');
+      throw new BadRequestException('Chá»‰ cÃ³ thá»ƒ xÃ³a Ä‘Æ¡n NhÃ¡p hoáº·c ÄÃ£ há»§y');
     }
 
     await this.orderModel.findByIdAndDelete(id);
 
     await this.auditLogService.log({
-      userId: user.userId, userEmail: user.email, userFullName: user.fullName, userRole: user.role,
+      userId: actorId, userEmail: user.email, userFullName: user.fullName, userRole: user.role,
       action: AuditAction.DELETE, module: 'ORDERS' as any,
       targetId: id, targetName: o.orderCode,
-      description: `Xóa đơn ${o.orderCode}`,
+      description: `XÃ³a Ä‘Æ¡n ${o.orderCode}`,
     });
 
     return order as Order;
   }
 
-  // ════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // COMMISSION REPORT (Phase 1.3)
-  // ════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   async getCommissionReport(saleId?: string, fromDate?: string, toDate?: string) {
     const filter: any = {};
@@ -454,3 +511,4 @@ export class OrdersService {
     };
   }
 }
+

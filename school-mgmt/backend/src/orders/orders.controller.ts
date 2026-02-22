@@ -52,8 +52,8 @@ export class OrdersController {
 
   @Get(':id')
   @Roles(Role.DIRECTOR, Role.SALE, Role.OPS)
-  findOne(@Param('id', ParseMongoIdPipe) id: string) {
-    return this.ordersService.findOne(id);
+  findOne(@Param('id', ParseMongoIdPipe) id: string, @Req() req: AuthenticatedRequest) {
+    return this.ordersService.findOne(id, req.user);
   }
 
   @Patch(':id')

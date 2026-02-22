@@ -63,13 +63,13 @@ export class RecordLoanPaymentDto {
   @IsMongoId()
   loanId!: string;
 
-  @IsNumber()
+  @IsNumber() @Min(1)
   paymentNumber!: number;
 
   @IsDateString()
   paidDate!: string;
 
-  @IsNumber() @Min(0) @IsOptional()
+  @IsNumber() @Min(1) @IsOptional()
   amount?: number;
 
   @IsString() @IsOptional()

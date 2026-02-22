@@ -15,6 +15,9 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { Session, SessionDocument, SessionStatus, CancelledByRole } from './schemas/session.schema';
 import { Classroom, ClassDocument } from '../classes/schemas/class.schema';
 import { Student, StudentDocument } from '../students/schemas/student.schema';
+import { Invoice, InvoiceDocument } from '../invoices/schemas/invoice.schema';
+import { TeacherProfile, TeacherProfileDocument } from '../teachers/schemas/teacher-profile.schema';
+import { Attendance, AttendanceDocument, AttendanceStatus } from '../attendance/schemas/attendance.schema';
 
 import { CreateSessionDto } from './dto/create-session.dto';
 import { UpdateSessionDto } from './dto/update-session.dto';
@@ -25,9 +28,19 @@ import { CancelSessionDto } from './dto/cancel-session.dto';
 import { RescheduleSessionDto } from './dto/reschedule-session.dto';
 import { BulkCreateSessionDto } from './dto/bulk-create-session.dto';
 import { SubmitTeachingReportDto } from './dto/submit-teaching-report.dto';
+import { BulkTeachingReportDto } from './dto/bulk-teaching-report.dto';
 import { Role } from '../common/interfaces/role.enum';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
 import { WalletsService } from '../wallets/wallets.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import {
+  NotificationPriority,
+  NotificationType,
+} from '../notifications/schemas/notification.schema';
+
+// ─── Constants ───────────────────────────────────────────────────────
+const TEACHING_REPORT_DEADLINE_HOURS = 24; // Deadline nộp báo cáo: 24h sau buổi học
+const TRIAL_AUTO_DECIDE_DAYS = 7;          // Tự động quyết định trial sau 7 ngày
 
 @Injectable()
 export class SessionsService {
@@ -37,39 +50,338 @@ export class SessionsService {
     @InjectModel(Session.name) private sessionModel: Model<SessionDocument>,
     @InjectModel(Classroom.name) private classModel: Model<ClassDocument>,
     @InjectModel(Student.name) private studentModel: Model<StudentDocument>,
+    @InjectModel(Invoice.name) private invoiceModel: Model<InvoiceDocument>,
+    @InjectModel(TeacherProfile.name) private teacherProfileModel: Model<TeacherProfileDocument>,
+    @InjectModel(Attendance.name) private attendanceModel: Model<AttendanceDocument>,
     @Inject(forwardRef(() => WalletsService))
     private walletsService: WalletsService,
+    private notificationsService: NotificationsService,
   ) {}
+
+  private objectIdToString(value: any): string | null {
+    if (!value) return null;
+    if (typeof value === 'string') return value;
+    if (value instanceof Types.ObjectId) return value.toString();
+    if (value?._id) return this.objectIdToString(value._id);
+    if (typeof value.toString === 'function') {
+      const str = value.toString();
+      return str && str !== '[object Object]' ? str : null;
+    }
+    return null;
+  }
+
+  private isTeacherAssignedToClassOnDate(
+    classroom: any,
+    teacherId: string,
+    scheduledDate: Date,
+  ): boolean {
+    if (this.objectIdToString(classroom?.teacher) === teacherId) {
+      return true;
+    }
+
+    const subs = (classroom?.substituteTeachers || []) as any[];
+    const day = new Date(
+      Date.UTC(
+        scheduledDate.getUTCFullYear(),
+        scheduledDate.getUTCMonth(),
+        scheduledDate.getUTCDate(),
+      ),
+    );
+
+    return subs.some((s) => {
+      if (this.objectIdToString(s?.teacherId) !== teacherId) return false;
+      const from = new Date(s.fromDate);
+      const to = new Date(s.toDate);
+      from.setUTCHours(0, 0, 0, 0);
+      to.setUTCHours(23, 59, 59, 999);
+      return day >= from && day <= to;
+    });
+  }
+
+  private async resolveParentUserIdForSession(session: {
+    parentUserId?: any;
+    studentId: any;
+  }): Promise<string | null> {
+    const direct = this.objectIdToString(session.parentUserId);
+    if (direct) return direct;
+
+    const student = await this.studentModel
+      .findById(session.studentId)
+      .select('parentUserId')
+      .lean();
+    return this.objectIdToString((student as any)?.parentUserId);
+  }
+
+  private toSafeNumber(value: unknown, fallback = 0): number {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  private resolveClassPricing(classroom: any): {
+    referenceDuration: number;
+    pricePerSession: number;
+    teacherPayPerSession: number;
+  } {
+    const snapshot = classroom?.pricingSnapshot || {};
+    const referenceDuration =
+      this.toSafeNumber(snapshot.referenceDuration, this.toSafeNumber(classroom?.baseDuration, 60)) || 60;
+    const pricePerSession = this.toSafeNumber(
+      snapshot.pricePerSession,
+      this.toSafeNumber(classroom?.pricePerSession, 0),
+    );
+    const teacherPayPerSession = this.toSafeNumber(
+      snapshot.teacherPayPerSession,
+      this.toSafeNumber(classroom?.teacherPayPerSession, 0),
+    );
+
+    return { referenceDuration, pricePerSession, teacherPayPerSession };
+  }
+
+  private resolveSessionFinancials(classroom: any, durationMinutes: number): {
+    amountCharged: number;
+    teacherPayout: number;
+    pricePerSession: number;
+  } {
+    const pricing = this.resolveClassPricing(classroom);
+    const baseDuration = pricing.referenceDuration > 0 ? pricing.referenceDuration : 60;
+    const ratio = durationMinutes / baseDuration;
+
+    return {
+      amountCharged: Math.round(pricing.pricePerSession * ratio),
+      teacherPayout: Math.round(pricing.teacherPayPerSession * ratio),
+      pricePerSession: pricing.pricePerSession,
+    };
+  }
+
+  private extractErrorMessage(err: unknown): string {
+    if (typeof err === 'string') return err;
+    if (err instanceof Error) return err.message;
+    if (err && typeof (err as any).message === 'string') {
+      return (err as any).message;
+    }
+    return 'Unknown error';
+  }
+
+  private normalizeText(value: string): string {
+    return value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+  }
+
+  private isWalletInsufficientError(err: unknown): boolean {
+    const normalized = this.normalizeText(this.extractErrorMessage(err));
+    return (
+      normalized.includes('gioi han no') ||
+      normalized.includes('can nap them tien') ||
+      normalized.includes('insufficient') ||
+      normalized.includes('not enough')
+    );
+  }
+
+  /** FIX-8: Check teacher availability — warning only, does NOT throw */
+  private async checkTeacherAvailability(
+    teacherId: string,
+    scheduledDate: Date,
+    startTime?: string,
+    endTime?: string,
+  ): Promise<void> {
+    try {
+      const profile = await this.teacherProfileModel
+        .findOne({ userId: new Types.ObjectId(teacherId) })
+        .select('availability')
+        .lean();
+
+      if (!profile || !(profile as any).availability?.length) return;
+
+      // Map JS getUTCDay() (0=Sun) to DayOfWeek enum values
+      const dayIndexToEnum = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
+      const dayOfWeek = dayIndexToEnum[scheduledDate.getUTCDay()];
+      const dateStr = scheduledDate.toISOString().split('T')[0];
+
+      const slotsForDay = ((profile as any).availability as any[]).filter(
+        (slot) => slot.day === dayOfWeek,
+      );
+
+      if (slotsForDay.length === 0) {
+        this.logger.warn(
+          `[Availability] Teacher ${teacherId} has no availability on ${dayOfWeek} (${dateStr})`,
+        );
+        return;
+      }
+
+      if (!startTime || !endTime) return;
+
+      // String-based HH:mm comparison works for zero-padded times
+      const hasOverlap = slotsForDay.some(
+        (slot) => startTime < slot.endTime && endTime > slot.startTime,
+      );
+
+      if (!hasOverlap) {
+        this.logger.warn(
+          `[Availability] Teacher ${teacherId} has no slot covering ${startTime}-${endTime} on ${dayOfWeek} (${dateStr})`,
+        );
+      }
+    } catch (err) {
+      this.logger.warn(
+        `[Availability] Failed to check teacher availability: ${this.extractErrorMessage(err)}`,
+      );
+    }
+  }
+
+  private async notifyWalletLowBalance(
+    session: SessionDocument,
+    classroom: any | null,
+    reason: string,
+  ): Promise<void> {
+    try {
+      const student = await this.studentModel
+        .findById(session.studentId)
+        .select('fullName saleId parentUserId')
+        .lean();
+
+      const parentId =
+        this.objectIdToString(session.parentUserId) ||
+        this.objectIdToString((student as any)?.parentUserId);
+      if (!parentId) return;
+
+      const saleId =
+        this.objectIdToString(classroom?.sale) ||
+        this.objectIdToString((student as any)?.saleId);
+      const sessionId = this.objectIdToString(session._id) || '';
+      const classCode = classroom?.code ? `${classroom.code}` : '';
+      const studentName = (student as any)?.fullName || 'Hoc sinh';
+      const amount = this.toSafeNumber(session.amountCharged, 0).toLocaleString('vi-VN');
+      const parentMessage = classCode
+        ? `Vi khong du so du de tru ${amount}d cho buoi hoc lop ${classCode}. Vui long nap them tien.`
+        : `Vi khong du so du de tru ${amount}d cho buoi hoc. Vui long nap them tien.`;
+
+      await this.notificationsService.create({
+        recipientId: parentId,
+        recipientRole: Role.PARENT,
+        type: NotificationType.WALLET_LOW_BALANCE,
+        priority: NotificationPriority.HIGH,
+        title: 'Vi khong du so du',
+        message: parentMessage,
+        targetId: sessionId,
+        targetModule: 'SESSIONS',
+      });
+
+      if (saleId && saleId !== parentId) {
+        const saleMessage = classCode
+          ? `${studentName} (lop ${classCode}) khong du so du vi cho buoi hoc ${amount}d. Sale can lien he ho tro.`
+          : `${studentName} khong du so du vi cho buoi hoc ${amount}d. Sale can lien he ho tro.`;
+
+        await this.notificationsService.create({
+          recipientId: saleId,
+          recipientRole: Role.SALE,
+          type: NotificationType.WALLET_LOW_BALANCE,
+          priority: NotificationPriority.HIGH,
+          title: 'Can cham soc nap vi',
+          message: saleMessage,
+          targetId: sessionId,
+          targetModule: 'SESSIONS',
+        });
+      }
+    } catch (notifyErr) {
+      this.logger.warn(
+        `Failed to send low wallet notifications for session ${session._id}: ${this.extractErrorMessage(
+          notifyErr,
+        )}`,
+      );
+      this.logger.debug(`Low wallet reason: ${reason}`);
+    }
+  }
 
   // ──────────────────────────────────────────────────────────────────
   //  CREATE
   // ──────────────────────────────────────────────────────────────────
 
-  async create(dto: CreateSessionDto, createdBy: string): Promise<SessionDocument> {
+  async create(
+    dto: CreateSessionDto,
+    createdBy: string,
+    actor?: JwtPayload,
+  ): Promise<SessionDocument> {
     // Validate class exists
     const classroom = await this.classModel.findById(dto.classId).lean();
-    if (!classroom) throw new NotFoundException('Lớp học không tồn tại');
+    if (!classroom) throw new NotFoundException('Lop hoc khong ton tai');
 
     // Validate student exists
     const student = await this.studentModel.findById(dto.studentId).lean();
-    if (!student) throw new NotFoundException('Học sinh không tồn tại');
+    if (!student) throw new NotFoundException('Hoc sinh khong ton tai');
 
-    // Check for duplicate session (same student + class + date)
     const scheduledDate = new Date(dto.scheduledDate);
-    const dayStart = new Date(Date.UTC(scheduledDate.getUTCFullYear(), scheduledDate.getUTCMonth(), scheduledDate.getUTCDate()));
-    const dayEnd = new Date(dayStart);
-    dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
-    const duplicate = await this.sessionModel.findOne({
-      classId: dto.classId,
-      studentId: dto.studentId,
-      scheduledDate: { $gte: dayStart, $lt: dayEnd },
-      status: { $nin: [SessionStatus.CANCELLED, SessionStatus.RESCHEDULED] },
-    }).lean();
-    if (duplicate) {
-      throw new ConflictException('Đã tồn tại buổi học cho học sinh này trong lớp vào ngày này');
+
+    // Validate student belongs to class
+    const studentInClass = (classroom.students || []).some(
+      (s: any) => this.objectIdToString(s) === dto.studentId,
+    );
+    if (!studentInClass) {
+      throw new BadRequestException('Hoc sinh khong thuoc lop hoc nay');
     }
 
-    // ── Schedule Conflict Detection ──
+    // Validate teacher assignment for class/date
+    if (!this.isTeacherAssignedToClassOnDate(classroom, dto.teacherId, scheduledDate)) {
+      throw new BadRequestException(
+        'Giao vien khong phu trach lop nay trong ngay duoc chon',
+      );
+    }
+
+    // TEACHER can only create sessions for themselves
+    if (actor?.role === Role.TEACHER) {
+      if (actor.sub !== dto.teacherId) {
+        throw new ForbiddenException(
+          'Giao vien chi duoc tao buoi hoc cho chinh minh',
+        );
+      }
+      if (!this.isTeacherAssignedToClassOnDate(classroom, actor.sub, scheduledDate)) {
+        throw new ForbiddenException(
+          'Ban khong phu trach lop nay trong ngay duoc chon',
+        );
+      }
+    }
+
+    // FIX-8: Warn (do not reject) if session falls outside teacher's declared availability
+    await this.checkTeacherAvailability(
+      dto.teacherId,
+      scheduledDate,
+      dto.scheduledStartTime,
+      dto.scheduledEndTime,
+    );
+
+    const studentParentId = this.objectIdToString((student as any).parentUserId);
+    if (dto.parentUserId && studentParentId && dto.parentUserId !== studentParentId) {
+      throw new BadRequestException(
+        'parentUserId khong khop voi phu huynh cua hoc sinh',
+      );
+    }
+    const parentUserId = studentParentId ?? dto.parentUserId;
+
+    // Check for duplicate session (same student + class + date)
+    const dayStart = new Date(
+      Date.UTC(
+        scheduledDate.getUTCFullYear(),
+        scheduledDate.getUTCMonth(),
+        scheduledDate.getUTCDate(),
+      ),
+    );
+    const dayEnd = new Date(dayStart);
+    dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+    const duplicate = await this.sessionModel
+      .findOne({
+        classId: dto.classId,
+        studentId: dto.studentId,
+        scheduledDate: { $gte: dayStart, $lt: dayEnd },
+        status: { $nin: [SessionStatus.CANCELLED, SessionStatus.RESCHEDULED] },
+      })
+      .lean();
+    if (duplicate) {
+      throw new ConflictException(
+        'Da ton tai buoi hoc cho hoc sinh nay trong lop vao ngay nay',
+      );
+    }
+
+    // Schedule conflict detection
     if (dto.scheduledStartTime && dto.scheduledEndTime) {
       const conflictResult = await this.checkConflicts({
         teacherId: dto.teacherId,
@@ -80,19 +392,21 @@ export class SessionsService {
       });
       if (conflictResult.hasConflict) {
         const msgs = conflictResult.conflicts.map((c: any) => c.message).join('; ');
-        throw new ConflictException(`Trùng lịch: ${msgs}`);
+        throw new ConflictException(`Trung lich: ${msgs}`);
       }
     }
 
-    // Auto-fill financials from class — tỷ lệ theo thời lượng
-    const baseDuration = (classroom as any).baseDuration || 60;
-    const durationMinutes = dto.durationMinutes ?? classroom.sessionDuration ?? 60;
-    const ratio = durationMinutes / baseDuration;
-    const amountCharged = dto.amountCharged ?? Math.round((classroom.pricePerSession ?? 0) * ratio);
-    const teacherPayout = dto.teacherPayout ?? Math.round((classroom.teacherPayPerSession ?? 0) * ratio);
-    const parentUserId = dto.parentUserId ?? student.parentUserId?.toString();
+    // Auto-fill financials from class pricing snapshot (fallback to class fields for legacy data)
+    const defaultDuration =
+      this.toSafeNumber((classroom as any)?.pricingSnapshot?.sessionDuration, 0) ||
+      this.toSafeNumber((classroom as any)?.sessionDuration, 60) ||
+      60;
+    const durationMinutes = dto.durationMinutes ?? defaultDuration;
+    const pricing = this.resolveSessionFinancials(classroom, durationMinutes);
+    const amountCharged = dto.amountCharged ?? pricing.amountCharged;
+    const teacherPayout = dto.teacherPayout ?? pricing.teacherPayout;
 
-    // Build evaluation nếu có mục tiêu buổi học
+    // Build evaluation if lesson objective provided
     const evaluation = dto.lessonObjective
       ? { lessonObjective: dto.lessonObjective }
       : undefined;
@@ -119,7 +433,7 @@ export class SessionsService {
   //  BULK CREATE (tạo cho cả lớp)
   // ──────────────────────────────────────────────────────────────────
 
-  async bulkCreate(dto: BulkCreateSessionDto, createdBy: string): Promise<SessionDocument[]> {
+  async bulkCreate(dto: BulkCreateSessionDto, actor: JwtPayload): Promise<SessionDocument[]> {
     const classroom = await this.classModel.findById(dto.classId).lean();
     if (!classroom) throw new NotFoundException('Lớp học không tồn tại');
 
@@ -139,7 +453,8 @@ export class SessionsService {
             scheduledStartTime: dto.scheduledStartTime,
             scheduledEndTime: dto.scheduledEndTime,
           },
-          createdBy,
+          actor.sub,
+          actor,
         );
         sessions.push(session);
       } catch (err) {
@@ -222,14 +537,17 @@ export class SessionsService {
 
     // Ownership check for PARENT and TEACHER
     if (actor?.role === Role.PARENT) {
-      if (session.parentUserId?.toString() !== actor.sub &&
-          (session.parentUserId as any)?._id?.toString() !== actor.sub) {
-        throw new NotFoundException('Buổi học không tồn tại');
+      const parentOwnerId = await this.resolveParentUserIdForSession({
+        parentUserId: session.parentUserId as any,
+        studentId: session.studentId as any,
+      });
+      if (!parentOwnerId || parentOwnerId !== actor.sub) {
+        throw new NotFoundException('Buoi hoc khong ton tai');
       }
     } else if (actor?.role === Role.TEACHER) {
-      if (session.teacherId?.toString() !== actor.sub &&
-          (session.teacherId as any)?._id?.toString() !== actor.sub) {
-        throw new NotFoundException('Buổi học không tồn tại');
+      const teacherOwnerId = this.objectIdToString(session.teacherId as any);
+      if (!teacherOwnerId || teacherOwnerId !== actor.sub) {
+        throw new NotFoundException('Buoi hoc khong ton tai');
       }
     }
 
@@ -345,9 +663,9 @@ export class SessionsService {
       );
     }
 
-    // Tính deadline (24h sau scheduledDate)
+    // Tính deadline (TEACHING_REPORT_DEADLINE_HOURS sau scheduledDate) — dùng UTC để tránh lệch timezone
     const deadline = new Date(session.scheduledDate);
-    deadline.setHours(deadline.getHours() + 24);
+    deadline.setUTCHours(deadline.getUTCHours() + TEACHING_REPORT_DEADLINE_HOURS);
 
     const now = new Date();
     const isLate = now > deadline;
@@ -389,6 +707,92 @@ export class SessionsService {
     return session.save();
   }
 
+  /**
+   * Nộp báo cáo giảng dạy cho TẤT CẢ sessions của lớp OFFLINE trong 1 ngày.
+   * Dùng cho lớp nhóm để GV không phải nộp từng báo cáo riêng lẻ.
+   */
+  async bulkSubmitTeachingReport(
+    classId: string,
+    date: string,
+    teacherUserId: string,
+    dto: BulkTeachingReportDto,
+  ): Promise<{ updatedCount: number; skippedCount: number; results: { sessionId: string; status: string; action: string }[] }> {
+    const classObjectId = new Types.ObjectId(classId);
+
+    // Parse date thành range [start, end) của ngày UTC
+    const dayStart = new Date(date);
+    dayStart.setUTCHours(0, 0, 0, 0);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+
+    // Query tất cả sessions của lớp này trong ngày, do GV này dạy
+    const sessions = await this.sessionModel.find({
+      classId: classObjectId,
+      teacherId: new Types.ObjectId(teacherUserId),
+      scheduledDate: { $gte: dayStart, $lt: dayEnd },
+      status: { $in: [SessionStatus.TEACHER_COMPLETED, SessionStatus.FINALIZED] },
+    }).lean();
+
+    if (sessions.length === 0) {
+      throw new NotFoundException(
+        `Không tìm thấy buổi học nào cho lớp ${classId} ngày ${date} của giáo viên này`,
+      );
+    }
+
+    const now = new Date();
+    const results: { sessionId: string; status: string; action: string }[] = [];
+    let updatedCount = 0;
+    let skippedCount = 0;
+
+    for (const sess of sessions) {
+      // Skip sessions đã bị thanh toán (isTeacherPaid=true) để tránh ghi đè sau khi lương đã khóa
+      if ((sess as any).isTeacherPaid) {
+        results.push({ sessionId: sess._id.toString(), status: sess.status, action: 'SKIPPED_PAID' });
+        skippedCount++;
+        continue;
+      }
+
+      const deadline = new Date(sess.scheduledDate);
+      deadline.setUTCHours(deadline.getUTCHours() + TEACHING_REPORT_DEADLINE_HOURS);
+      const isLate = now > deadline;
+      const lateHours = isLate
+        ? Math.floor((now.getTime() - deadline.getTime()) / (1000 * 60 * 60))
+        : 0;
+
+      const isUpdate = (sess as any).hasTeachingReport && (sess as any).teachingReport;
+      const currentVersion = (sess as any).teachingReport?.version || 0;
+
+      await this.sessionModel.findByIdAndUpdate(sess._id, {
+        $set: {
+          teachingReport: {
+            lessonContent: dto.lessonContent,
+            studentAttitude: dto.studentAttitude,
+            recordingUrl: dto.recordingUrl,
+            teacherComment: dto.teacherComment,
+            homework: dto.homework,
+            additionalNotes: dto.additionalNotes,
+            submittedAt: isUpdate ? (sess as any).teachingReport.submittedAt : now,
+            deadline,
+            isLateSubmission: isUpdate ? (sess as any).teachingReport.isLateSubmission : isLate,
+            lateSubmissionHours: isUpdate ? (sess as any).teachingReport.lateSubmissionHours : lateHours,
+            version: currentVersion + 1,
+            lastUpdatedAt: now,
+          },
+          hasTeachingReport: true,
+        },
+      });
+
+      results.push({ sessionId: sess._id.toString(), status: sess.status, action: isUpdate ? 'UPDATED' : 'SUBMITTED' });
+      updatedCount++;
+    }
+
+    this.logger.log(
+      `Bulk teaching report by teacher ${teacherUserId} for class ${classId} on ${date}: updated=${updatedCount}, skipped=${skippedCount}`,
+    );
+
+    return { updatedCount, skippedCount, results };
+  }
+
   // ──────────────────────────────────────────────────────────────────
   //  PARENT CONFIRM  (TEACHER_COMPLETED → PARENT_CONFIRMED)
   // ──────────────────────────────────────────────────────────────────
@@ -407,14 +811,14 @@ export class SessionsService {
       );
     }
 
-    // Verify parent owns this student
-    if (
-      session.parentUserId &&
-      session.parentUserId.toString() !== parentUserId
-    ) {
-      throw new ForbiddenException('Bạn không phải PH của học sinh này');
+    // Verify parent owns this student (fallback to student.parentUserId when session.parentUserId is missing)
+    const ownerParentId = await this.resolveParentUserIdForSession({
+      parentUserId: session.parentUserId,
+      studentId: session.studentId,
+    });
+    if (!ownerParentId || ownerParentId !== parentUserId) {
+      throw new ForbiddenException('Ban khong phai PH cua hoc sinh nay');
     }
-
     // Legacy fields
     if (dto.parentNotes) session.parentNotes = dto.parentNotes;
     if (dto.parentRating) session.parentRating = dto.parentRating;
@@ -450,6 +854,7 @@ export class SessionsService {
 
     // Trừ ví PH
     await this.deductWalletForSession(updated);
+    await this.applyInvoiceConsumptionForSession(updated._id as Types.ObjectId);
 
     return updated;
   }
@@ -461,6 +866,41 @@ export class SessionsService {
   async manualFinalize(sessionId: string, userId: string): Promise<SessionDocument> {
     const session = await this.sessionModel.findById(sessionId);
     if (!session) throw new NotFoundException('Buổi học không tồn tại');
+
+    // Session đã FINALIZED bởi system/parent: cho phép OPS/DIRECTOR đóng dấu xác nhận payroll.
+    if (session.status === SessionStatus.FINALIZED) {
+      if (session.confirmation?.finalizedBy) {
+        return session;
+      }
+
+      const setPayload: Record<string, any> = {
+        'confirmation.finalizedBy': new Types.ObjectId(userId),
+      };
+      if (!session.confirmation?.finalizedAt) {
+        setPayload['confirmation.finalizedAt'] = new Date();
+      }
+
+      const confirmed = await this.sessionModel.findOneAndUpdate(
+        {
+          _id: sessionId,
+          status: SessionStatus.FINALIZED,
+          $or: [
+            { 'confirmation.finalizedBy': { $exists: false } },
+            { 'confirmation.finalizedBy': null },
+          ],
+        },
+        { $set: setPayload },
+        { new: true },
+      );
+
+      if (confirmed) {
+        return confirmed;
+      }
+
+      const reloaded = await this.sessionModel.findById(sessionId);
+      if (!reloaded) throw new NotFoundException('Buổi học không tồn tại');
+      return reloaded;
+    }
 
     const allowedStatuses = [
       SessionStatus.TEACHER_COMPLETED,
@@ -496,6 +936,7 @@ export class SessionsService {
 
     // Trừ ví PH
     await this.deductWalletForSession(updated);
+    await this.applyInvoiceConsumptionForSession(updated._id as Types.ObjectId);
 
     return updated;
   }
@@ -542,8 +983,12 @@ export class SessionsService {
     } else if (userRole === Role.PARENT) {
       cancelledByRole = CancelledByRole.PARENT;
       // Verify parent owns this student
-      if (session.parentUserId && session.parentUserId.toString() !== userId) {
-        throw new ForbiddenException('Bạn không phải phụ huynh của học sinh này');
+      const ownerParentId = await this.resolveParentUserIdForSession({
+        parentUserId: session.parentUserId,
+        studentId: session.studentId,
+      });
+      if (!ownerParentId || ownerParentId !== userId) {
+        throw new ForbiddenException('Ban khong phai PH cua hoc sinh nay');
       }
     } else {
       cancelledByRole = CancelledByRole.OPS;
@@ -598,16 +1043,20 @@ export class SessionsService {
 
   async reschedule(
     sessionId: string,
-    userId: string,
+    actor: JwtPayload,
     dto: RescheduleSessionDto,
   ): Promise<{ oldSession: SessionDocument; newSession: SessionDocument }> {
     const oldSession = await this.sessionModel.findById(sessionId);
-    if (!oldSession) throw new NotFoundException('Buổi học không tồn tại');
-
+    if (!oldSession) throw new NotFoundException('Buoi hoc khong ton tai');
+    const actorId = actor?.sub ?? actor?._id;
     if (oldSession.status !== SessionStatus.SCHEDULED) {
       throw new BadRequestException(
-        'Chỉ dời lịch được buổi ở trạng thái SCHEDULED',
+        'Chi doi lich duoc buoi o trang thai SCHEDULED',
       );
+    }
+
+    if (actor?.role === Role.TEACHER && oldSession.teacherId.toString() !== actorId) {
+      throw new ForbiddenException('Ban khong phai giao vien cua buoi hoc nay');
     }
 
     // Check max reschedules from class policy
@@ -632,7 +1081,8 @@ export class SessionsService {
         teacherPayout: oldSession.teacherPayout,
         sessionNumber: oldSession.sessionNumber,
       },
-      userId,
+      actorId,
+      actor,
     );
 
     // Link old ↔ new
@@ -650,7 +1100,7 @@ export class SessionsService {
   //  MARK NO-SHOW
   // ──────────────────────────────────────────────────────────────────
 
-  async markNoShow(sessionId: string): Promise<SessionDocument> {
+  async markNoShow(sessionId: string, actor: JwtPayload): Promise<SessionDocument> {
     const session = await this.sessionModel.findById(sessionId);
     if (!session) throw new NotFoundException('Buổi học không tồn tại');
 
@@ -660,6 +1110,9 @@ export class SessionsService {
       );
     }
 
+    if (actor?.role === Role.TEACHER && session.teacherId.toString() !== actor.sub) {
+      throw new ForbiddenException('Ban khong phai giao vien cua buoi hoc nay');
+    }
     session.status = SessionStatus.NO_SHOW;
     const saved = await session.save();
 
@@ -774,6 +1227,7 @@ export class SessionsService {
 
         // Trừ ví PH
         await this.deductWalletForSession(updated);
+        await this.applyInvoiceConsumptionForSession(updated._id as Types.ObjectId);
 
         confirmed++;
       }
@@ -807,11 +1261,78 @@ export class SessionsService {
       if (session.sessionType === 'TRIAL' && !session.trialConverted) continue;
 
       await this.deductWalletForSession(session);
-      if (session.isPaid) recovered++;
+      await this.applyInvoiceConsumptionForSession(session._id as Types.ObjectId);
+      const reloaded = await this.sessionModel.findById(session._id).select('isPaid').lean();
+      if (reloaded?.isPaid) recovered++;
     }
 
     if (recovered > 0) {
       this.logger.log(`Recovery: retried wallet deduction for ${recovered} sessions`);
+    }
+  }
+
+  /**
+   * Backfill dữ liệu cũ:
+   * - Session đã FINALIZED nhưng chưa consume invoice (sessionsRemaining)
+   * - Chạy định kỳ để tự sửa dữ liệu lịch sử sau khi deploy
+   */
+  @Cron(CronExpression.EVERY_6_HOURS)
+  async backfillInvoiceConsumptionForFinalizedSessions() {
+    const cutoff = new Date();
+    cutoff.setHours(cutoff.getHours() - 1);
+
+    const sessions = await this.sessionModel.find({
+      status: SessionStatus.FINALIZED,
+      isPaid: true,
+      invoiceConsumptionApplied: false,
+      amountCharged: { $gt: 0 },
+      $or: [{ sessionType: { $ne: 'TRIAL' } }, { trialConverted: true }],
+      'confirmation.finalizedAt': { $lt: cutoff },
+    })
+      .select('_id')
+      .limit(100);
+
+    let applied = 0;
+    for (const session of sessions) {
+      await this.applyInvoiceConsumptionForSession(session._id as Types.ObjectId);
+      const reloaded = await this.sessionModel
+        .findById(session._id)
+        .select('invoiceConsumptionApplied')
+        .lean();
+      if ((reloaded as any)?.invoiceConsumptionApplied) applied++;
+    }
+
+    if (applied > 0) {
+      this.logger.log(`Backfill: applied invoice consumption for ${applied} finalized sessions`);
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  //  CRON: AUTO-DECIDE ORPHAN TRIAL SESSIONS
+  //  Buổi thử FINALIZED quá TRIAL_AUTO_DECIDE_DAYS mà chưa có quyết định
+  //  → tự động đánh dấu trialTeacherPaidOnly = true (GV được trả, PH miễn phí)
+  // ──────────────────────────────────────────────────────────────────
+
+  @Cron(CronExpression.EVERY_12_HOURS)
+  async autoDecideOrphanTrialSessions() {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - TRIAL_AUTO_DECIDE_DAYS);
+
+    const result = await this.sessionModel.updateMany(
+      {
+        sessionType: 'TRIAL',
+        status: SessionStatus.FINALIZED,
+        trialConverted: false,
+        trialTeacherPaidOnly: false,
+        'confirmation.finalizedAt': { $lt: cutoff },
+      },
+      { $set: { trialTeacherPaidOnly: true } },
+    );
+
+    if (result.modifiedCount > 0) {
+      this.logger.log(
+        `Auto-decided ${result.modifiedCount} orphan trial sessions (teacher-paid-only after ${TRIAL_AUTO_DECIDE_DAYS} days)`,
+      );
     }
   }
 
@@ -837,6 +1358,170 @@ export class SessionsService {
     return diffMs / (1000 * 60 * 60);
   }
 
+  private roundTo4(value: number): number {
+    return Math.round(value * 10000) / 10000;
+  }
+
+  /**
+   * Trừ sessionsRemaining của invoice theo giá trị buổi học đã chốt.
+   * Quy ước:
+   * - Chỉ áp dụng cho session FINALIZED, đã trừ ví (isPaid = true) và có amountCharged > 0
+   * - TRIAL chỉ consume khi đã convert
+   * - FIFO theo paymentDate/createdAt của invoice APPROVED
+   * - Idempotent qua cờ session.invoiceConsumptionApplied
+   */
+  private async applyInvoiceConsumptionForSession(sessionId: string | Types.ObjectId): Promise<void> {
+    const sid = typeof sessionId === 'string' ? new Types.ObjectId(sessionId) : sessionId;
+
+    const claim = await this.sessionModel
+      .findOneAndUpdate(
+        {
+          _id: sid,
+          status: SessionStatus.FINALIZED,
+          isPaid: true,
+          invoiceConsumptionApplied: false,
+          amountCharged: { $gt: 0 },
+          $or: [{ sessionType: { $ne: 'TRIAL' } }, { trialConverted: true }],
+        },
+        { $set: { invoiceConsumptionApplied: true } },
+        { new: true },
+      )
+      .select('_id studentId classId amountCharged')
+      .lean();
+
+    if (!claim) return;
+
+    const billedAmount = this.toSafeNumber((claim as any).amountCharged, 0);
+    if (billedAmount <= 0) {
+      await this.sessionModel.updateOne(
+        { _id: sid },
+        {
+          $set: { invoiceConsumptionApplied: false, consumedInvoiceUnits: 0, consumedInvoiceAmount: 0 },
+          $unset: { consumedInvoiceId: 1 },
+        },
+      );
+      return;
+    }
+
+    let remainingAmount = billedAmount;
+    let consumedAmount = 0;
+    let consumedUnits = 0;
+    let primaryInvoiceId: Types.ObjectId | null = null;
+
+    try {
+      const invoices = await this.invoiceModel
+        .find({
+          studentId: (claim as any).studentId,
+          classId: (claim as any).classId,
+          status: 'APPROVED',
+          sessionsRemaining: { $gt: 0 },
+        })
+        .sort({ paymentDate: 1, createdAt: 1 })
+        .select('_id sessionsRemaining pricePerSession')
+        .lean();
+
+      if (!invoices.length) {
+        await this.sessionModel.updateOne(
+          { _id: sid },
+          {
+            $set: { invoiceConsumptionApplied: false, consumedInvoiceUnits: 0, consumedInvoiceAmount: 0 },
+            $unset: { consumedInvoiceId: 1 },
+          },
+        );
+        this.logger.warn(
+          `Invoice consumption skipped: no APPROVED invoice with remaining sessions for session ${sid.toString()}`,
+        );
+        return;
+      }
+
+      for (const inv of invoices) {
+        if (remainingAmount <= 0) break;
+
+        const pricePerSession = this.toSafeNumber((inv as any).pricePerSession, 0);
+        const invoiceRemaining = this.toSafeNumber((inv as any).sessionsRemaining, 0);
+        if (pricePerSession <= 0 || invoiceRemaining <= 0) continue;
+
+        // Derive units from remaining billed amount, then consume atomically.
+        let unitsToConsume = this.roundTo4(
+          Math.min(invoiceRemaining, remainingAmount / pricePerSession),
+        );
+        if (unitsToConsume <= 0) continue;
+
+        let updateResult = await this.invoiceModel.updateOne(
+          { _id: (inv as any)._id, sessionsRemaining: { $gte: unitsToConsume } },
+          { $inc: { sessionsRemaining: -unitsToConsume } },
+        );
+
+        if (!updateResult.modifiedCount) {
+          const latestInvoice = await this.invoiceModel
+            .findById((inv as any)._id)
+            .select('sessionsRemaining')
+            .lean();
+          const latestRemaining = this.toSafeNumber((latestInvoice as any)?.sessionsRemaining, 0);
+          const fallbackUnits = this.roundTo4(Math.min(latestRemaining, unitsToConsume));
+          if (fallbackUnits <= 0) continue;
+
+          updateResult = await this.invoiceModel.updateOne(
+            { _id: (inv as any)._id, sessionsRemaining: { $gte: fallbackUnits } },
+            { $inc: { sessionsRemaining: -fallbackUnits } },
+          );
+          if (!updateResult.modifiedCount) continue;
+          unitsToConsume = fallbackUnits;
+        }
+
+        const amountToConsume = Math.min(
+          remainingAmount,
+          this.roundTo4(unitsToConsume * pricePerSession),
+        );
+        if (amountToConsume <= 0) continue;
+
+        if (!primaryInvoiceId) primaryInvoiceId = (inv as any)._id as Types.ObjectId;
+        consumedAmount += amountToConsume;
+        consumedUnits += unitsToConsume;
+        remainingAmount = Math.max(0, this.roundTo4(remainingAmount - amountToConsume));
+      }
+
+      if (consumedAmount <= 0) {
+        await this.sessionModel.updateOne(
+          { _id: sid },
+          {
+            $set: { invoiceConsumptionApplied: false, consumedInvoiceUnits: 0, consumedInvoiceAmount: 0 },
+            $unset: { consumedInvoiceId: 1 },
+          },
+        );
+        return;
+      }
+
+      await this.sessionModel.updateOne(
+        { _id: sid },
+        {
+          $set: {
+            consumedInvoiceId: primaryInvoiceId || undefined,
+            consumedInvoiceUnits: this.roundTo4(consumedUnits),
+            consumedInvoiceAmount: Math.round(consumedAmount),
+          },
+        },
+      );
+
+      if (remainingAmount > 0) {
+        this.logger.warn(
+          `Invoice consumption partial for session ${sid.toString()}: consumed ${Math.round(consumedAmount)} / ${Math.round(billedAmount)}`,
+        );
+      }
+    } catch (err) {
+      await this.sessionModel.updateOne(
+        { _id: sid },
+        {
+          $set: { invoiceConsumptionApplied: false, consumedInvoiceUnits: 0, consumedInvoiceAmount: 0 },
+          $unset: { consumedInvoiceId: 1 },
+        },
+      );
+      this.logger.warn(
+        `Invoice consumption failed for session ${sid.toString()}: ${this.extractErrorMessage(err)}`,
+      );
+    }
+  }
+
   /**
    * Trừ ví PH khi session FINALIZED.
    * - Trial sessions: chỉ trừ ví nếu trialConverted = true
@@ -845,14 +1530,10 @@ export class SessionsService {
   private async deductWalletForSession(session: SessionDocument): Promise<void> {
     if (!session.parentUserId || session.isPaid || session.amountCharged <= 0) return;
 
-    // ── Trial session logic ──
-    // Trial chưa convert → không trừ ví PH (GV vẫn được trả qua payroll)
-    if (
-      session.sessionType === 'TRIAL' &&
-      !session.trialConverted
-    ) {
+    // Trial chua convert => khong tru vi PH (GV van duoc tra qua payroll)
+    if (session.sessionType === 'TRIAL' && !session.trialConverted) {
       this.logger.log(
-        `Session ${session._id} is TRIAL (not converted) — skipping wallet deduction, teacher will still be paid`,
+        `Session ${session._id} is TRIAL (not converted) - skipping wallet deduction, teacher will still be paid`,
       );
       return;
     }
@@ -869,9 +1550,14 @@ export class SessionsService {
       return;
     }
 
+    let classroom: any | null = null;
+
     try {
-      // Load giá buổi để tính debt limit
-      const classroom = await this.classModel.findById(session.classId).select('pricePerSession').lean();
+      classroom = await this.classModel
+        .findById(session.classId)
+        .select('pricePerSession pricingSnapshot sale code')
+        .lean();
+      const pricePerSessionForDebtLimit = this.resolveClassPricing(classroom).pricePerSession;
 
       await this.walletsService.deductForSession({
         parentUserId: session.parentUserId.toString(),
@@ -879,16 +1565,37 @@ export class SessionsService {
         classId: session.classId.toString(),
         studentId: session.studentId.toString(),
         amount: session.amountCharged,
-        pricePerSession: classroom?.pricePerSession,
+        pricePerSession: pricePerSessionForDebtLimit,
       });
-    } catch (err) {
-      // Rollback isPaid if deduction fails
+
       await this.sessionModel.updateOne(
         { _id: session._id },
-        { $set: { isPaid: false } },
+        { $unset: { walletDeductError: 1 } },
       );
+    } catch (err) {
+      const errorMessage = this.extractErrorMessage(err);
+      const shouldNotify =
+        this.isWalletInsufficientError(err) && !updated.walletDeductAlertSentAt;
+
+      const rollbackPayload: Record<string, unknown> = {
+        isPaid: false,
+        walletDeductError: errorMessage,
+      };
+      if (shouldNotify) {
+        rollbackPayload.walletDeductAlertSentAt = new Date();
+      }
+
+      await this.sessionModel.updateOne(
+        { _id: session._id },
+        { $set: rollbackPayload },
+      );
+
+      if (shouldNotify) {
+        await this.notifyWalletLowBalance(updated, classroom, errorMessage);
+      }
+
       this.logger.warn(
-        `Wallet deduct failed for session ${session._id}: ${(err as Error).message}`,
+        `Wallet deduct failed for session ${session._id}: ${errorMessage}`,
       );
     }
   }
@@ -924,6 +1631,7 @@ export class SessionsService {
 
       // Now deduct wallet
       await this.deductWalletForSession(session);
+      await this.applyInvoiceConsumptionForSession(session._id as Types.ObjectId);
       // Reload to get updated isPaid from atomic deductWalletForSession
       const reloaded = await this.sessionModel.findById(session._id).lean();
       if (reloaded?.isPaid) deducted++;
@@ -1239,19 +1947,46 @@ export class SessionsService {
    */
   async countFinalizedForPayroll(
     teacherId: string,
-    from: Date,
-    to: Date,
+    cutoffExclusive: Date,
     mongoSession?: any,
   ): Promise<{ count: number; totalPayout: number; sessions: SessionDocument[] }> {
     let query = this.sessionModel.find({
       teacherId: new Types.ObjectId(teacherId),
       status: SessionStatus.FINALIZED,
-      'confirmation.finalizedAt': { $gte: from, $lte: to },
+      'confirmation.finalizedAt': { $lt: cutoffExclusive },
       isTeacherPaid: false,
       hasTeachingReport: true, // Chỉ tính lương buổi có báo cáo giảng dạy
     });
     if (mongoSession) query = query.session(mongoSession);
-    const sessions = await query;
+    const candidateSessions = await query;
+
+    if (candidateSessions.length === 0) {
+      return { count: 0, totalPayout: 0, sessions: [] };
+    }
+
+    const candidateIds = candidateSessions.map((s) => s._id as Types.ObjectId);
+    let attendanceQuery = this.attendanceModel
+      .find({
+        sessionId: { $in: candidateIds },
+        status: { $in: [AttendanceStatus.PRESENT, AttendanceStatus.LATE] },
+        checkedBy: { $exists: true, $ne: null }, // OPS/DIRECTOR confirmed attendance
+      })
+      .select('sessionId');
+    if (mongoSession) attendanceQuery = attendanceQuery.session(mongoSession);
+    const attendanceRows = await attendanceQuery.lean();
+
+    const attendanceQualifiedSessionIds = new Set(
+      attendanceRows
+        .map((row: any) => row?.sessionId?.toString())
+        .filter((id: string | undefined): id is string => !!id),
+    );
+
+    const sessions = candidateSessions.filter((session) => {
+      const sid = (session._id as Types.ObjectId).toString();
+      const confirmedByOpsInAttendance = attendanceQualifiedSessionIds.has(sid);
+      const confirmedByOpsInSession = !!session.confirmation?.finalizedBy;
+      return confirmedByOpsInAttendance || confirmedByOpsInSession;
+    });
 
     const totalPayout = sessions.reduce((acc, s) => acc + s.teacherPayout, 0);
     return { count: sessions.length, totalPayout, sessions };
@@ -1260,6 +1995,43 @@ export class SessionsService {
   /**
    * Đánh dấu sessions đã tính lương (sau khi payroll approved)
    */
+  async claimTeacherPaid(sessionIds: string[], mongoSession?: any): Promise<void> {
+    const objectIds = sessionIds.map((id) => new Types.ObjectId(id));
+    const queryOptions = mongoSession ? { session: mongoSession } : undefined;
+
+    let alreadyClaimedQuery = this.sessionModel
+      .find({
+        _id: { $in: objectIds },
+        isTeacherPaid: true,
+      })
+      .select('_id');
+    if (mongoSession) {
+      alreadyClaimedQuery = alreadyClaimedQuery.session(mongoSession);
+    }
+
+    const alreadyClaimed = await alreadyClaimedQuery.lean();
+    if (alreadyClaimed.length > 0) {
+      throw new ConflictException(
+        `${alreadyClaimed.length} buoi hoc da duoc gan cho bang luong khac`,
+      );
+    }
+
+    const result = await this.sessionModel.updateMany(
+      {
+        _id: { $in: objectIds },
+        isTeacherPaid: false,
+      },
+      { $set: { isTeacherPaid: true } },
+      queryOptions,
+    );
+
+    if (result.modifiedCount !== sessionIds.length) {
+      throw new ConflictException(
+        'Khong the khoa toan bo buoi hoc cho payroll. Vui long thu lai.',
+      );
+    }
+  }
+
   async markTeacherPaid(sessionIds: string[], mongoSession?: any): Promise<void> {
     await this.sessionModel.updateMany(
       { _id: { $in: sessionIds.map((id) => new Types.ObjectId(id)) } },
@@ -1335,18 +2107,16 @@ export class SessionsService {
       return { success: true, message: 'Feedback đã được ghi nhận (không có session liên quan)' };
     }
 
-    // Store in evaluation.parentFeedback
+    // Store in top-level parentFeedback for consistency across dashboards/reports
     await this.sessionModel.updateOne(
       { _id: session._id },
       {
         $set: {
-          'evaluation.parentFeedback': {
+          parentFeedback: {
             overallRating: feedback.overallRating,
-            teachingQuality: feedback.teachingQuality,
-            communication: feedback.communication,
-            facility: feedback.facility,
-            comment: feedback.comment,
-            submittedAt: new Date(),
+            teachingQualityRating: feedback.teachingQuality,
+            communicationRating: feedback.communication,
+            parentNotes: feedback.comment,
           },
         },
       },

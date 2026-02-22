@@ -45,4 +45,4 @@ export const UserSchema = SchemaFactory.createForClass(User);
 
 // Indexes for frequently queried fields
 UserSchema.index({ role: 1 });
-UserSchema.index({ email: 1 }, { unique: true });
+

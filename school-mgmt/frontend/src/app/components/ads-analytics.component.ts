@@ -1,10 +1,12 @@
-import { Component, signal, OnInit } from '@angular/core';
+﻿import { Component, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import {
-  AdsService, AdGroupItem, AdAnalyticsResponse, AdAnalyticsRow,
-  AdAnalyticsSummary, AdSuggestionResponse, AdSuggestionRow,
+  AdsService, AdGroupItem, AdAnalyticsRow,
+  AdAnalyticsSummary, AdSuggestionResponse,
 } from '../services/ads.service';
+import { AuthService } from '../services/auth.service';
+import { Role } from '../models/role.enum';
 
 const PLATFORM_LABELS: Record<string, string> = {
   FACEBOOK: 'Facebook',
@@ -123,12 +125,12 @@ const PLATFORM_LABELS: Record<string, string> = {
   <p class="empty" *ngIf="loaded() && !rows().length">Không có dữ liệu trong khoảng thời gian này.</p>
 
   <!-- ═══ Budget Suggestion Section ═══ -->
-  <section class="section suggestion-section">
+  <section class="section suggestion-section" *ngIf="canViewSuggestions(); else suggestionsNoPermission">
     <h3>Đề xuất phân bổ ngân sách</h3>
     <p class="desc">Dựa trên thuật toán lợi nhuận biên giảm dần, hệ thống đề xuất cách phân bổ ngân sách tối ưu giữa các nhóm QC.</p>
 
     <div class="suggestion-input">
-      <label>Tổng ngân sách hàng ngày (VNĐ)
+      <label>Tổng ngân sách hằng ngày (VNĐ)
         <input type="number" [(ngModel)]="totalBudget" min="0" step="100000" />
       </label>
       <button class="primary" (click)="loadSuggestions()" [disabled]="!totalBudget || sugLoading()">
@@ -140,6 +142,10 @@ const PLATFORM_LABELS: Record<string, string> = {
       <div class="sug-summary">
         <span><strong>Tổng ngân sách:</strong> {{sugData()!.totalBudget | number}}đ</span>
         <span><strong>Đã phân bổ:</strong> {{sugData()!.allocated | number}}đ</span>
+        <span><strong>Chưa phân bổ:</strong> {{sugData()!.unallocated | number}}đ</span>
+        <span><strong>Đề xuất/ngày:</strong> {{sugData()!.totalSuggestedDailySpend | number}}đ</span>
+        <span><strong>LN thuần dự kiến/ngày:</strong> {{sugData()!.expectedDailyNetProfit | number}}đ</span>
+        <span><strong>Dự báo chi phí/tháng:</strong> {{sugData()!.projectedMonthlySpend | number}}đ</span>
       </div>
 
       <table class="data" *ngIf="sugData()!.suggestions.length">
@@ -150,9 +156,8 @@ const PLATFORM_LABELS: Record<string, string> = {
             <th>CP hiện tại/ngày</th>
             <th>CP đề xuất/ngày</th>
             <th>Tăng/Giảm</th>
-            <th>Đơn dự kiến</th>
-            <th>DT dự kiến</th>
-            <th>CP/Đơn dự kiến</th>
+            <th>LN thuần dự kiến/ngày</th>
+            <th>LN biên dự kiến</th>
             <th>Độ tin cậy</th>
           </tr>
         </thead>
@@ -161,7 +166,7 @@ const PLATFORM_LABELS: Record<string, string> = {
             <td><strong>{{s.adGroupName || s.adGroupId}}</strong></td>
             <td><span class="badge platform" [attr.data-platform]="s.platform">{{platformLabel(s.platform)}}</span></td>
             <td class="amount">{{s.currentDailySpend | number}}đ</td>
-            <td class="amount">{{s.suggestedDailySpend !== null ? (s.suggestedDailySpend | number) + 'đ' : '-'}}</td>
+            <td class="amount">{{(s.suggestedDailySpend | number) + 'đ'}}</td>
             <td>
               <span *ngIf="s.changePercent !== null"
                     [class.amount-green]="s.changePercent! > 0"
@@ -170,15 +175,80 @@ const PLATFORM_LABELS: Record<string, string> = {
               </span>
               <span *ngIf="s.changePercent === null">-</span>
             </td>
-            <td>{{s.expectedOrders !== null ? s.expectedOrders : '-'}}</td>
-            <td class="amount">{{s.expectedRevenue !== null ? (s.expectedRevenue | number) + 'đ' : '-'}}</td>
-            <td>{{s.expectedCostPerOrder !== null ? (s.expectedCostPerOrder | number) + 'đ' : '-'}}</td>
+            <td [class.amount-green]="(s.expectedDailyNetProfit || 0) >= 0" [class.amount-red]="(s.expectedDailyNetProfit || 0) < 0">
+              {{s.expectedDailyNetProfit !== null ? (s.expectedDailyNetProfit | number) + 'đ' : '-'}}
+            </td>
+            <td>{{s.expectedDailyMarginalProfit !== null ? s.expectedDailyMarginalProfit : '-'}}</td>
             <td>
               <span class="confidence-badge" [attr.data-level]="s.confidence">{{confidenceLabel(s.confidence)}}</span>
             </td>
           </tr>
         </tbody>
       </table>
+
+      <div class="table-wrap" *ngIf="sugData()!.summaryTable.length">
+        <h4>Bảng tổng hợp theo ngày</h4>
+        <table class="data compact">
+          <thead>
+            <tr>
+              <th>Ngày tháng</th>
+              <th>Nhóm quảng cáo</th>
+              <th>Lợi nhuận thuần</th>
+              <th>Chi phí quảng cáo đề xuất</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let row of sugData()!.summaryTable">
+              <td>{{row.date}}</td>
+              <td>{{row.adGroupName || row.adGroupId}}</td>
+              <td [class.amount-green]="row.netProfit >= 0" [class.amount-red]="row.netProfit < 0">{{row.netProfit | number}}đ</td>
+              <td class="amount">{{row.suggestedAdSpend | number}}đ</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="table-wrap" *ngIf="sugData()!.dailySuggestedTotals.length">
+        <h4>Tổng đề xuất theo ngày</h4>
+        <table class="data compact">
+          <thead>
+            <tr>
+              <th>Ngày</th>
+              <th>Lợi nhuận thuần thực tế</th>
+              <th>Tổng chi phí ads đề xuất</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let row of sugData()!.dailySuggestedTotals">
+              <td>{{row.date}}</td>
+              <td [class.amount-green]="row.totalNetProfit >= 0" [class.amount-red]="row.totalNetProfit < 0">{{row.totalNetProfit | number}}đ</td>
+              <td class="amount">{{row.totalSuggestedAdSpend | number}}đ</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="table-wrap" *ngIf="sugData()!.monthlyProjection.length">
+        <h4>Dự báo theo tháng</h4>
+        <table class="data compact">
+          <thead>
+            <tr>
+              <th>Tháng</th>
+              <th>Số ngày</th>
+              <th>Chi phí ads dự báo</th>
+              <th>LN thuần dự báo</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let row of sugData()!.monthlyProjection">
+              <td>{{row.month}}</td>
+              <td>{{row.daysInMonth}}</td>
+              <td class="amount">{{row.projectedSpend | number}}đ</td>
+              <td [class.amount-green]="row.projectedNetProfit >= 0" [class.amount-red]="row.projectedNetProfit < 0">{{row.projectedNetProfit | number}}đ</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
       <!-- Visual bar comparison -->
       <div class="bar-chart" *ngIf="sugData()!.suggestions.length">
@@ -187,7 +257,7 @@ const PLATFORM_LABELS: Record<string, string> = {
           <div class="bar-label">{{s.adGroupName || s.adGroupId}}</div>
           <div class="bar-container">
             <div class="bar current" [style.width.%]="barWidth(s.currentDailySpend)" title="Hiện tại: {{s.currentDailySpend | number}}đ"></div>
-            <div class="bar suggested" [style.width.%]="barWidth(s.suggestedDailySpend || 0)" title="Đề xuất: {{(s.suggestedDailySpend || 0) | number}}đ"></div>
+            <div class="bar suggested" [style.width.%]="barWidth(s.suggestedDailySpend)" title="Đề xuất: {{s.suggestedDailySpend | number}}đ"></div>
           </div>
         </div>
         <div class="bar-legend">
@@ -197,8 +267,13 @@ const PLATFORM_LABELS: Record<string, string> = {
       </div>
     </div>
   </section>
-  `,
-  styles: [`
+  <ng-template #suggestionsNoPermission>
+    <section class="section suggestion-section">
+      <h3>Đề xuất phân bổ ngân sách</h3>
+      <p class="desc">Chỉ Director có quyền xem và tính đề xuất ngân sách.</p>
+    </section>
+  </ng-template>
+  `,  styles: [`
     .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }
     .page-header h2 { margin: 0; font-size: 20px; }
     .page-header p { margin: 4px 0 0; color: #64748b; font-size: 13px; }
@@ -230,6 +305,7 @@ const PLATFORM_LABELS: Record<string, string> = {
     table.data th.sortable:hover { color: #1e40af; }
     table.data td { padding: 8px 10px; border-bottom: 1px solid #f1f5f9; }
     table.data tr:hover { background: #f8fafc; }
+    table.data.compact th, table.data.compact td { padding: 6px 8px; }
     td.amount { font-weight: 600; }
     .amount-green { color: #10b981; }
     .amount-red { color: #ef4444; }
@@ -256,7 +332,8 @@ const PLATFORM_LABELS: Record<string, string> = {
     .suggestion-input label { font-size: 13px; color: #475569; font-weight: 500; }
     .suggestion-input input { padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; width: 200px; margin-top: 4px; display: block; }
 
-    .sug-summary { display: flex; gap: 24px; margin-bottom: 16px; font-size: 14px; }
+    .sug-summary { display: flex; gap: 16px; margin-bottom: 16px; font-size: 13px; flex-wrap: wrap; }
+    .table-wrap h4 { font-size: 14px; margin: 16px 0 8px; }
 
     .confidence-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
     .confidence-badge[data-level="HIGH"] { background: #d1fae5; color: #065f46; }
@@ -297,7 +374,10 @@ export class AdsAnalyticsComponent implements OnInit {
 
   private maxSpend = 0;
 
-  constructor(private adsService: AdsService) {}
+  constructor(
+    private adsService: AdsService,
+    private authService: AuthService,
+  ) {}
 
   ngOnInit() {
     const now = new Date();
@@ -310,6 +390,7 @@ export class AdsAnalyticsComponent implements OnInit {
   }
 
   platformLabel(p: string) { return PLATFORM_LABELS[p] || p; }
+  canViewSuggestions() { return this.authService.hasRole([Role.DIRECTOR]); }
 
   confidenceLabel(c: string) {
     if (c === 'HIGH') return 'Cao';
@@ -365,6 +446,7 @@ export class AdsAnalyticsComponent implements OnInit {
   }
 
   async loadSuggestions() {
+    if (!this.canViewSuggestions()) return;
     if (!this.startDate || !this.endDate || !this.totalBudget) return;
     this.sugLoading.set(true);
     try {
@@ -374,7 +456,7 @@ export class AdsAnalyticsComponent implements OnInit {
       // Calculate max spend for bar chart
       this.maxSpend = 0;
       for (const s of res.suggestions) {
-        this.maxSpend = Math.max(this.maxSpend, s.currentDailySpend, s.suggestedDailySpend || 0);
+        this.maxSpend = Math.max(this.maxSpend, s.currentDailySpend, s.suggestedDailySpend);
       }
     } catch {
       this.sugData.set(null);
@@ -387,3 +469,4 @@ export class AdsAnalyticsComponent implements OnInit {
     return Math.min(100, (value / this.maxSpend) * 100);
   }
 }
+

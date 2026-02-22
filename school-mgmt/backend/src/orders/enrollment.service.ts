@@ -5,11 +5,13 @@ import { Order, OrderDocument, OrderStatus } from './schemas/order.schema';
 import { Student, StudentDocument } from '../students/schemas/student.schema';
 import { Invoice, InvoiceDocument, InvoiceStatus, InvoiceType } from '../invoices/schemas/invoice.schema';
 import { Classroom, ClassDocument } from '../classes/schemas/class.schema';
+import { User, UserDocument } from '../users/schemas/user.schema';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { AuditAction, AuditModule } from '../audit-log/schemas/audit-log.schema';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/schemas/notification.schema';
 import { Role } from '../common/interfaces/role.enum';
+import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
 
 export interface EnrollmentResult {
   success: boolean;
@@ -29,6 +31,7 @@ export class EnrollmentService {
     @InjectModel(Student.name) private readonly studentModel: Model<StudentDocument>,
     @InjectModel(Invoice.name) private readonly invoiceModel: Model<InvoiceDocument>,
     @InjectModel(Classroom.name) private readonly classModel: Model<ClassDocument>,
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     @InjectConnection() private readonly connection: Connection,
     private readonly auditLogService: AuditLogService,
     private readonly notificationsService: NotificationsService,
@@ -42,7 +45,7 @@ export class EnrollmentService {
    * 4. Đổi status → COMPLETED
    * 5. Ghi audit log + gửi thông báo
    */
-  async processApprovedOrder(orderId: string, approver: any): Promise<EnrollmentResult> {
+  async processApprovedOrder(orderId: string, approver: JwtPayload): Promise<EnrollmentResult> {
     const errors: string[] = [];
     const order = await this.orderModel.findById(orderId).lean();
     if (!order) {
@@ -103,7 +106,7 @@ export class EnrollmentService {
     try {
       // ── Step 4: Audit log ──
       await this.auditLogService.log({
-        userId: approver.userId,
+        userId: approver._id,
         userEmail: approver.email,
         userFullName: approver.fullName,
         userRole: approver.role,
@@ -155,25 +158,92 @@ export class EnrollmentService {
   //  STUDENT
   // ────────────────────────────────────────────────
 
+  private normalizePhone(value?: string): string {
+    return (value || '').trim();
+  }
+
+  private async resolveParentUserId(
+    order: any,
+    mongoSession?: ClientSession,
+  ): Promise<Types.ObjectId> {
+    const withSession = <T>(query: any): any => (mongoSession ? query.session(mongoSession) : query);
+
+    if (order.parentUserId) {
+      const parentById = await withSession(
+        this.userModel.findById(order.parentUserId).select('_id role').lean(),
+      );
+      if (!parentById) {
+        throw new Error('Khong tim thay tai khoan phu huynh tu parentUserId');
+      }
+      if ((parentById as any).role !== Role.PARENT) {
+        throw new Error('parentUserId khong phai tai khoan PHU HUYNH');
+      }
+      return new Types.ObjectId((parentById as any)._id);
+    }
+
+    const email = (order.parentEmail || '').trim().toLowerCase();
+    if (email) {
+      const parentByEmail = await withSession(
+        this.userModel
+          .findOne({ email, role: Role.PARENT })
+          .select('_id')
+          .lean(),
+      );
+      if (parentByEmail?._id) {
+        return new Types.ObjectId(parentByEmail._id);
+      }
+    }
+
+    const phone = this.normalizePhone(order.parentPhone);
+    if (phone) {
+      const parentByPhone = await withSession(
+        this.userModel
+          .find({ phone, role: Role.PARENT })
+          .select('_id')
+          .lean(),
+      );
+      if (parentByPhone.length === 1) {
+        return new Types.ObjectId(parentByPhone[0]._id);
+      }
+      if (parentByPhone.length > 1) {
+        throw new Error('Tim thay nhieu tai khoan phu huynh trung so dien thoai');
+      }
+    }
+
+    throw new Error(
+      'Khong xac dinh duoc tai khoan PHU HUYNH. Vui long bo sung parentUserId hoac tao user PARENT truoc khi duyet don',
+    );
+  }
+
   private async findOrCreateStudent(
     order: any,
-    approver: any,
+    approver: JwtPayload,
     mongoSession?: ClientSession,
   ): Promise<{ studentId: string; studentCode: string; isNew: boolean }> {
     const sessionOpts = mongoSession ? { session: mongoSession } : {};
+    const parentUserId = await this.resolveParentUserId(order, mongoSession);
 
     // Nếu order đã link existingStudentId → dùng luôn
     if (order.existingStudentId) {
       const existing = await this.studentModel.findById(order.existingStudentId).session(mongoSession || null).lean();
       if (existing) {
         // Cập nhật adGroupId nếu student chưa có mà order có
-        if (order.adGroupId && !(existing as any).adGroupId) {
-          await this.studentModel.findByIdAndUpdate((existing as any)._id, {
-            orderId: order._id,
-            adGroupId: order.adGroupId,
-            adGroupName: order.adGroupName || undefined,
-          }, { session: mongoSession || undefined });
+        const existingParentUserId = (existing as any).parentUserId?.toString();
+        if (existingParentUserId && existingParentUserId !== parentUserId.toString()) {
+          throw new Error('Hoc vien da duoc gan cho phu huynh khac');
         }
+
+        const patch: Record<string, any> = { orderId: order._id };
+        if (!existingParentUserId) patch.parentUserId = parentUserId;
+        if (order.adGroupId && !(existing as any).adGroupId) {
+          patch.adGroupId = order.adGroupId;
+          patch.adGroupName = order.adGroupName || undefined;
+        }
+        await this.studentModel.findByIdAndUpdate(
+          (existing as any)._id,
+          patch,
+          { session: mongoSession || undefined },
+        );
         return {
           studentId: (existing as any)._id.toString(),
           studentCode: (existing as any).studentCode,
@@ -190,13 +260,22 @@ export class EnrollmentService {
 
     if (existingByPhone) {
       // Cập nhật adGroupId nếu student chưa có mà order có
-      if (order.adGroupId && !(existingByPhone as any).adGroupId) {
-        await this.studentModel.findByIdAndUpdate((existingByPhone as any)._id, {
-          orderId: order._id,
-          adGroupId: order.adGroupId,
-          adGroupName: order.adGroupName || undefined,
-        }, { session: mongoSession || undefined });
+      const existingParentUserId = (existingByPhone as any).parentUserId?.toString();
+      if (existingParentUserId && existingParentUserId !== parentUserId.toString()) {
+        throw new Error('Hoc vien da duoc gan cho phu huynh khac');
       }
+
+      const patch: Record<string, any> = { orderId: order._id };
+      if (!existingParentUserId) patch.parentUserId = parentUserId;
+      if (order.adGroupId && !(existingByPhone as any).adGroupId) {
+        patch.adGroupId = order.adGroupId;
+        patch.adGroupName = order.adGroupName || undefined;
+      }
+      await this.studentModel.findByIdAndUpdate(
+        (existingByPhone as any)._id,
+        patch,
+        { session: mongoSession || undefined },
+      );
       return {
         studentId: (existingByPhone as any)._id.toString(),
         studentCode: (existingByPhone as any).studentCode,
@@ -214,7 +293,7 @@ export class EnrollmentService {
       age,
       parentName: order.parentName,
       parentPhone: order.parentPhone,
-      parentUserId: order.parentUserId || undefined,
+      parentUserId,
       faceImage: 'default-avatar.png', // placeholder
       grade: order.studentGrade || undefined,
       saleId: order.saleId,
@@ -223,7 +302,7 @@ export class EnrollmentService {
       adGroupId: order.adGroupId || undefined,
       adGroupName: order.adGroupName || undefined,
       approvalStatus: 'APPROVED', // Auto-approve khi đơn đã được Director/OPS duyệt
-      approvedBy: approver.userId,
+      approvedBy: new Types.ObjectId(approver._id),
       approvedAt: new Date(),
     });
 
@@ -231,7 +310,7 @@ export class EnrollmentService {
 
     // Audit log cho student mới
     await this.auditLogService.log({
-      userId: approver.userId,
+      userId: approver._id,
       userEmail: approver.email,
       userFullName: approver.fullName,
       userRole: approver.role,
@@ -257,7 +336,7 @@ export class EnrollmentService {
     order: any,
     item: any,
     studentId: string,
-    approver: any,
+    approver: JwtPayload,
     mongoSession?: ClientSession,
   ): Promise<string> {
     const sessionOpts = mongoSession ? { session: mongoSession } : {};
@@ -288,7 +367,7 @@ export class EnrollmentService {
       paymentDate: new Date(), // Ngày tạo
       description: `Hóa đơn tự động từ đơn ${order.orderCode} — ${item.productName || 'Gói học'}`,
       status: InvoiceStatus.PENDING_APPROVAL,
-      createdBy: new Types.ObjectId(approver.userId),
+      createdBy: new Types.ObjectId(approver._id),
     });
 
     const saved = await invoice.save(sessionOpts);

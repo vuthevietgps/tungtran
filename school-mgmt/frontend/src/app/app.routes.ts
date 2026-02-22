@@ -98,7 +98,7 @@ export const routes: Routes = [
 			{ path: 'loans', component: LoansComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING])] },
 			{ path: 'financial-control', component: FinancialControlComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING])] },
 			{ path: 'ads-management', component: AdsManagementComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.OPS])] },
-			{ path: 'ads-analytics', component: AdsAnalyticsComponent, canActivate: [roleGuard([Role.DIRECTOR])] },
+			{ path: 'ads-analytics', component: AdsAnalyticsComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.OPS])] },
 			{ path: 'conversations', component: ConversationsComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.SALE])] },
 			{ path: 'chatbot-settings', component: ChatbotSettingsComponent, canActivate: [roleGuard([Role.DIRECTOR])] },
 			{ path: 'student-progress', component: StudentProgressComponent, canActivate: [roleGuard([Role.PARENT])] },

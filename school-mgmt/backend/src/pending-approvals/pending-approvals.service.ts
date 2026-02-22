@@ -29,7 +29,7 @@ export class PendingApprovalsService {
       this.invoiceModel.countDocuments({ status: { $in: ['PENDING', 'PENDING_APPROVAL'] } }),
       this.ledgerModel.countDocuments({ type: TransactionType.TOP_UP, status: TransactionStatus.PENDING }),
       this.teacherModel.countDocuments({ status: 'PENDING' }),
-      this.ticketModel.countDocuments({ status: { $in: ['OPEN', 'IN_PROGRESS'] } }),
+      this.ticketModel.countDocuments({ status: { $in: ['OPEN', 'IN_PROGRESS', 'WAITING_INFO'] } }),
     ]);
 
     return {

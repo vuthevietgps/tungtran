@@ -41,6 +41,12 @@ export class SalaryConfigController {
   }
 
   /** Nhân viên xem cấu hình lương của mình */
+  @Get('users/options')
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING)
+  listUsersForConfig() {
+    return this.salaryConfigService.listUsersForConfig();
+  }
+
   @Get('my')
   @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.TEACHER, Role.SALE)
   findMy(@Req() req: AuthenticatedRequest) {

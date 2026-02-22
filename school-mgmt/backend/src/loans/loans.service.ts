@@ -1,11 +1,12 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectModel, InjectConnection } from '@nestjs/mongoose';
-import { Model, Types, Connection } from 'mongoose';
+import { ClientSession, Model, Types, Connection } from 'mongoose';
+import { randomBytes } from 'crypto';
 import { Loan, LoanDocument, LoanStatus } from './schemas/loan.schema';
 import { LoanPayment, LoanPaymentDocument, LoanPaymentStatus } from './schemas/loan-payment.schema';
 import { CreateLoanDto, UpdateLoanDto, RecordLoanPaymentDto, QueryLoanDto, QueryLoanPaymentDto } from './dto/loan.dto';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
-import { FinancialControlService } from '../financial-control/financial-control.service';
+import { FinancialControlBankFundService } from '../financial-control/financial-control-bank-fund.service';
 
 @Injectable()
 export class LoansService {
@@ -13,51 +14,68 @@ export class LoansService {
     @InjectModel(Loan.name) private loanModel: Model<LoanDocument>,
     @InjectModel(LoanPayment.name) private paymentModel: Model<LoanPaymentDocument>,
     @InjectConnection() private connection: Connection,
-    private financialControlService: FinancialControlService,
+    private bankFundService: FinancialControlBankFundService,
   ) {}
 
   // ─── Code generation ─────────────────────────────────────────────
-  private async generateLoanCode(): Promise<string> {
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const count = await this.loanModel.countDocuments();
-      const code = `LOAN-${String(count + 1 + attempt).padStart(3, '0')}`;
-      const exists = await this.loanModel.findOne({ loanCode: code }).lean();
-      if (!exists) return code;
-    }
-    return `LOAN-${Date.now()}`;
+  private buildCode(prefix: string): string {
+    const timestamp = Date.now().toString(36).toUpperCase();
+    const suffix = randomBytes(3).toString('hex').toUpperCase();
+    return `${prefix}-${timestamp}${suffix}`;
   }
 
-  private async generatePaymentCode(): Promise<string> {
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const count = await this.paymentModel.countDocuments();
-      const code = `LP-${String(count + 1 + attempt).padStart(5, '0')}`;
-      const exists = await this.paymentModel.findOne({ paymentCode: code }).lean();
+  private buildPaymentCode(loanCode: string, paymentNumber: number): string {
+    return `LP-${loanCode}-${String(paymentNumber).padStart(3, '0')}`;
+  }
+
+  private isDuplicateKeyError(error: any, field?: string): boolean {
+    if (!error || error.code !== 11000) return false;
+    if (!field) return true;
+    if (error.keyPattern && error.keyPattern[field]) return true;
+    if (error.keyValue && error.keyValue[field] !== undefined) return true;
+    return typeof error.message === 'string' && error.message.includes(field);
+  }
+
+  private async generateLoanCode(): Promise<string> {
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const code = this.buildCode('LOAN');
+      const exists = await this.loanModel.findOne({ loanCode: code }).select({ _id: 1 }).lean();
       if (!exists) return code;
     }
-    return `LP-${Date.now()}`;
+    throw new BadRequestException('Khong the sinh ma khoan vay duy nhat');
   }
 
   // ─── CRUD ────────────────────────────────────────────────────────
 
   async create(dto: CreateLoanDto, user: JwtPayload): Promise<Loan> {
-    const loanCode = await this.generateLoanCode();
-
     const startDate = new Date(dto.startDate);
     const endDate = new Date(startDate);
     endDate.setMonth(endDate.getMonth() + dto.term);
 
-    const loan = new this.loanModel({
-      ...dto,
-      loanCode,
-      startDate,
-      endDate,
-      remainingBalance: dto.principal,
-      status: LoanStatus.DRAFT,
-      createdById: user._id,
-      createdByName: user.fullName,
-    });
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const loanCode = await this.generateLoanCode();
+      const loan = new this.loanModel({
+        ...dto,
+        loanCode,
+        startDate,
+        endDate,
+        remainingBalance: dto.principal,
+        status: LoanStatus.DRAFT,
+        createdById: user._id,
+        createdByName: user.fullName,
+      });
 
-    return loan.save();
+      try {
+        return await loan.save();
+      } catch (err) {
+        if (this.isDuplicateKeyError(err, 'loanCode') && attempt < 4) {
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    throw new BadRequestException('Khong the tao khoan vay do xung dot ma dinh danh');
   }
 
   async findAll(query: QueryLoanDto): Promise<Loan[]> {
@@ -93,46 +111,67 @@ export class LoansService {
   // ─── Activate (DRAFT → ACTIVE) ──────────────────────────────────
 
   async activate(id: string, user: JwtPayload): Promise<Loan> {
-    const loan = await this.findOne(id);
-    if (loan.status !== LoanStatus.DRAFT) {
-      throw new BadRequestException('Chỉ có thể kích hoạt khoản vay ở trạng thái Nháp');
+    const session = await this.connection.startSession();
+    try {
+      session.startTransaction();
+
+      const approvedAt = new Date();
+      const loan = await this.loanModel.findOneAndUpdate(
+        { _id: new Types.ObjectId(id), status: LoanStatus.DRAFT },
+        {
+          $set: {
+            status: LoanStatus.ACTIVE,
+            approvedById: new Types.ObjectId(user._id),
+            approvedByName: user.fullName,
+            approvedAt,
+          },
+        },
+        { new: true, session },
+      ).exec();
+
+      if (!loan) {
+        const existed = await this.loanModel.findById(id).session(session).exec();
+        if (!existed) throw new NotFoundException('Khong tim thay khoan vay');
+        throw new BadRequestException('Chi co the kich hoat khoan vay o trang thai Nhap');
+      }
+
+      await this.generatePaymentSchedule(loan, session);
+
+      if (loan.principal > 0) {
+        const disbursementBankAccountId = await this.resolveActiveBankAccountId(
+          loan.bankAccountId as any,
+          session,
+          'giai ngan khoan vay',
+        );
+        await this.bankFundService.recordBankTransaction({
+          bankAccountId: disbursementBankAccountId,
+          type: 'DEPOSIT',
+          category: 'LOAN_DISBURSEMENT',
+          amount: loan.principal,
+          transactionDate: loan.startDate.toISOString(),
+          description: `Giai ngan khoan vay ${loan.loanCode} tu ${loan.lenderName}`,
+          reference: loan.loanCode,
+          referenceId: (loan as any)._id.toString(),
+          referenceType: 'LOAN',
+        }, user, { session });
+      }
+
+      await session.commitTransaction();
+      return loan;
+    } catch (err) {
+      await session.abortTransaction();
+      throw err;
+    } finally {
+      session.endSession();
     }
-
-    loan.status = LoanStatus.ACTIVE;
-    loan.approvedById = new Types.ObjectId(user._id);
-    loan.approvedByName = user.fullName;
-    loan.approvedAt = new Date();
-    await loan.save();
-
-    // Generate payment schedule
-    await this.generatePaymentSchedule(loan);
-
-    // Record bank transaction for disbursement if bankAccountId is set
-    if (loan.bankAccountId) {
-      await this.financialControlService.recordBankTransaction({
-        bankAccountId: loan.bankAccountId.toString(),
-        type: 'DEPOSIT',
-        category: 'LOAN_DISBURSEMENT',
-        amount: loan.principal,
-        transactionDate: loan.startDate.toISOString(),
-        description: `Giải ngân khoản vay ${loan.loanCode} từ ${loan.lenderName}`,
-        reference: loan.loanCode,
-        referenceId: (loan as any)._id.toString(),
-        referenceType: 'LOAN',
-      }, user);
-    }
-
-    return loan;
   }
 
-  // ─── Payment Schedule Generation ────────────────────────────────
-
-  private async generatePaymentSchedule(loan: LoanDocument): Promise<void> {
+  private async generatePaymentSchedule(loan: LoanDocument, session: ClientSession): Promise<void> {
     const monthsPerPeriod = this.getMonthsPerPeriod(loan.paymentFrequency);
     const totalPeriods = Math.ceil(loan.term / monthsPerPeriod);
     const periodicRate = (loan.interestRate / 100) / (12 / monthsPerPeriod);
 
-    let payments: any[] = [];
+    const payments: any[] = [];
     let remainingPrincipal = loan.principal;
 
     if (loan.interestType === 'FIXED' && periodicRate > 0) {
@@ -148,7 +187,7 @@ export class LoansService {
         const dueDate = new Date(loan.startDate);
         dueDate.setMonth(dueDate.getMonth() + i * monthsPerPeriod);
 
-        const paymentCode = await this.generatePaymentCode();
+        const paymentCode = this.buildPaymentCode(loan.loanCode, i);
 
         payments.push({
           paymentCode,
@@ -158,6 +197,9 @@ export class LoansService {
           principalAmount,
           interestAmount,
           totalAmount,
+          paidAmount: 0,
+          paidPrincipal: 0,
+          paidInterest: 0,
           status: LoanPaymentStatus.SCHEDULED,
         });
 
@@ -175,7 +217,7 @@ export class LoansService {
         const dueDate = new Date(loan.startDate);
         dueDate.setMonth(dueDate.getMonth() + i * monthsPerPeriod);
 
-        const paymentCode = await this.generatePaymentCode();
+        const paymentCode = this.buildPaymentCode(loan.loanCode, i);
 
         payments.push({
           paymentCode,
@@ -185,6 +227,9 @@ export class LoansService {
           principalAmount: actualPrincipal,
           interestAmount,
           totalAmount,
+          paidAmount: 0,
+          paidPrincipal: 0,
+          paidInterest: 0,
           status: LoanPaymentStatus.SCHEDULED,
         });
 
@@ -192,9 +237,36 @@ export class LoansService {
       }
     }
 
+    await this.paymentModel.deleteMany({ loanId: (loan as any)._id }).session(session);
     if (payments.length > 0) {
-      await this.paymentModel.insertMany(payments);
+      await this.paymentModel.insertMany(payments, { session });
     }
+  }
+
+  private getOutstandingAmount(payment: Pick<LoanPayment, 'totalAmount' | 'paidAmount'>): number {
+    return Math.max((payment.totalAmount || 0) - (payment.paidAmount || 0), 0);
+  }
+
+  private getOutstandingPrincipal(payment: Pick<LoanPayment, 'principalAmount' | 'paidPrincipal'>): number {
+    return Math.max((payment.principalAmount || 0) - (payment.paidPrincipal || 0), 0);
+  }
+
+  private getOutstandingInterest(payment: Pick<LoanPayment, 'interestAmount' | 'paidInterest'>): number {
+    return Math.max((payment.interestAmount || 0) - (payment.paidInterest || 0), 0);
+  }
+
+  private getPaymentOutstandingExpr(): any {
+    return {
+      $max: [
+        0,
+        {
+          $subtract: [
+            '$totalAmount',
+            { $ifNull: ['$paidAmount', 0] },
+          ],
+        },
+      ],
+    };
   }
 
   private getMonthsPerPeriod(frequency: string): number {
@@ -207,7 +279,56 @@ export class LoansService {
     }
   }
 
-  // ─── Record Payment ─────────────────────────────────────────────
+  private async resolveActiveBankAccountId(
+    requestedBankAccountId: Types.ObjectId | string | undefined,
+    session: ClientSession,
+    context: string,
+  ): Promise<string> {
+    if (typeof (this.connection as any).model !== 'function') {
+      if (requestedBankAccountId) {
+        return requestedBankAccountId.toString();
+      }
+      throw new BadRequestException(
+        `Khong co tai khoan ngan hang de ghi nhan giao dich ${context}`,
+      );
+    }
+
+    const BankAccountModel = this.connection.model('BankAccount');
+
+    if (requestedBankAccountId) {
+      const bankAccountId = requestedBankAccountId.toString();
+      if (!Types.ObjectId.isValid(bankAccountId)) {
+        throw new BadRequestException('bankAccountId khong hop le');
+      }
+
+      const requested = await BankAccountModel.findOne({
+        _id: new Types.ObjectId(bankAccountId),
+        status: 'ACTIVE',
+      })
+        .select({ _id: 1 })
+        .session(session)
+        .lean();
+
+      if (!requested) {
+        throw new BadRequestException('Tai khoan ngan hang khong ton tai hoac khong ACTIVE');
+      }
+      return (requested as any)._id.toString();
+    }
+
+    const fallback = await BankAccountModel.findOne({ status: 'ACTIVE' })
+      .sort({ isPrimary: -1, createdAt: -1 })
+      .select({ _id: 1 })
+      .session(session)
+      .lean();
+
+    if (!fallback) {
+      throw new BadRequestException(
+        `Khong co tai khoan ngan hang ACTIVE de ghi nhan giao dich ${context}`,
+      );
+    }
+
+    return (fallback as any)._id.toString();
+  }
 
   async recordPayment(dto: RecordLoanPaymentDto, user: JwtPayload): Promise<LoanPayment> {
     const session = await this.connection.startSession();
@@ -219,14 +340,41 @@ export class LoansService {
         paymentNumber: dto.paymentNumber,
       }).session(session);
 
-      if (!payment) throw new NotFoundException('Không tìm thấy kỳ thanh toán');
+      if (!payment) throw new NotFoundException('Khong tim thay ky thanh toan');
       if (payment.status === LoanPaymentStatus.PAID) {
-        throw new BadRequestException('Kỳ thanh toán này đã được ghi nhận');
+        throw new BadRequestException('Ky thanh toan nay da duoc ghi nhan');
       }
 
-      const paidAmount = dto.amount ?? payment.totalAmount;
+      const outstandingAmount = this.getOutstandingAmount(payment);
+      if (outstandingAmount <= 0) {
+        throw new BadRequestException('Ky thanh toan khong con so du can thu');
+      }
 
-      payment.status = paidAmount >= payment.totalAmount
+      const paidAmount = dto.amount ?? outstandingAmount;
+      if (paidAmount <= 0) {
+        throw new BadRequestException('So tien thanh toan phai lon hon 0');
+      }
+      if (paidAmount > outstandingAmount + 0.0001) {
+        throw new BadRequestException(`So tien thanh toan vuot qua so con lai cua ky (${outstandingAmount})`);
+      }
+
+      const outstandingInterest = this.getOutstandingInterest(payment);
+      const outstandingPrincipal = this.getOutstandingPrincipal(payment);
+
+      let allocationLeft = paidAmount;
+      const paidInterest = Math.min(allocationLeft, outstandingInterest);
+      allocationLeft -= paidInterest;
+      const paidPrincipal = Math.min(allocationLeft, outstandingPrincipal);
+      allocationLeft -= paidPrincipal;
+
+      if (allocationLeft > 0.0001) {
+        throw new BadRequestException('Khong the phan bo so tien thanh toan vao goc/lai');
+      }
+
+      payment.paidAmount = (payment.paidAmount || 0) + paidAmount;
+      payment.paidInterest = (payment.paidInterest || 0) + paidInterest;
+      payment.paidPrincipal = (payment.paidPrincipal || 0) + paidPrincipal;
+      payment.status = this.getOutstandingAmount(payment) <= 0.0001
         ? LoanPaymentStatus.PAID
         : LoanPaymentStatus.PARTIAL;
       payment.paidDate = new Date(dto.paidDate);
@@ -237,16 +385,19 @@ export class LoansService {
       payment.paidByName = user.fullName;
       await payment.save({ session });
 
-      // Update loan totals
       const loan = await this.loanModel.findOneAndUpdate(
         { _id: new Types.ObjectId(dto.loanId) },
-        { $inc: { totalPaid: paidAmount, remainingBalance: -payment.principalAmount } },
+        { $inc: { totalPaid: paidAmount, remainingBalance: -paidPrincipal } },
         { new: true, session },
       );
 
-      if (!loan) throw new NotFoundException('Không tìm thấy khoản vay');
+      if (!loan) throw new NotFoundException('Khong tim thay khoan vay');
 
-      // Check if all payments are done
+      if (loan.remainingBalance < 0) {
+        loan.remainingBalance = 0;
+        await loan.save({ session });
+      }
+
       const pendingCount = await this.paymentModel.countDocuments({
         loanId: new Types.ObjectId(dto.loanId),
         status: { $ne: LoanPaymentStatus.PAID },
@@ -258,27 +409,26 @@ export class LoansService {
         await loan.save({ session });
       }
 
-      await session.commitTransaction();
-
-      // Record bank transaction (outside main transaction for independence)
-      if (loan.bankAccountId) {
-        try {
-          await this.financialControlService.recordBankTransaction({
-            bankAccountId: loan.bankAccountId.toString(),
-            type: 'WITHDRAWAL',
-            category: 'LOAN_REPAYMENT',
-            amount: paidAmount,
-            transactionDate: dto.paidDate,
-            description: `Trả nợ kỳ ${dto.paymentNumber} - ${loan.loanCode} (${loan.lenderName})`,
-            reference: loan.loanCode,
-            referenceId: (loan as any)._id.toString(),
-            referenceType: 'LOAN',
-          }, user);
-        } catch {
-          // Bank transaction failure should not rollback loan payment
-        }
+      if (paidAmount > 0) {
+        const repaymentBankAccountId = await this.resolveActiveBankAccountId(
+          loan.bankAccountId as any,
+          session,
+          'tra no khoan vay',
+        );
+        await this.bankFundService.recordBankTransaction({
+          bankAccountId: repaymentBankAccountId,
+          type: 'WITHDRAWAL',
+          category: 'LOAN_REPAYMENT',
+          amount: paidAmount,
+          transactionDate: dto.paidDate,
+          description: `Tra no ky ${dto.paymentNumber} - ${loan.loanCode} (${loan.lenderName})`,
+          reference: loan.loanCode,
+          referenceId: (loan as any)._id.toString(),
+          referenceType: 'LOAN',
+        }, user, { session });
       }
 
+      await session.commitTransaction();
       return payment;
     } catch (err) {
       await session.abortTransaction();
@@ -287,8 +437,6 @@ export class LoansService {
       session.endSession();
     }
   }
-
-  // ─── Payment Queries ────────────────────────────────────────────
 
   async findPayments(query: QueryLoanPaymentDto): Promise<LoanPayment[]> {
     const filter: any = {};
@@ -311,6 +459,7 @@ export class LoansService {
   async getLoanSummary(): Promise<any> {
     const now = new Date();
     const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const outstandingExpr = this.getPaymentOutstandingExpr();
 
     const [activeLoans, overduePayments, upcomingPayments, totalInterestPaid] = await Promise.all([
       this.loanModel.aggregate([
@@ -327,22 +476,58 @@ export class LoansService {
 
       this.paymentModel.aggregate([
         { $match: { status: LoanPaymentStatus.OVERDUE } },
-        { $group: { _id: null, total: { $sum: '$totalAmount' }, count: { $sum: 1 } } },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: outstandingExpr },
+            count: { $sum: 1 },
+          },
+        },
       ]),
 
       this.paymentModel.aggregate([
         {
           $match: {
-            status: { $in: [LoanPaymentStatus.SCHEDULED, LoanPaymentStatus.OVERDUE] },
+            status: { $in: [LoanPaymentStatus.SCHEDULED, LoanPaymentStatus.OVERDUE, LoanPaymentStatus.PARTIAL] },
             dueDate: { $lte: in30Days },
           },
         },
-        { $group: { _id: null, total: { $sum: '$totalAmount' }, count: { $sum: 1 } } },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: outstandingExpr },
+            count: { $sum: 1 },
+          },
+        },
       ]),
 
       this.paymentModel.aggregate([
-        { $match: { status: LoanPaymentStatus.PAID } },
-        { $group: { _id: null, totalInterest: { $sum: '$interestAmount' }, totalPaid: { $sum: '$totalAmount' } } },
+        { $match: { status: { $in: [LoanPaymentStatus.PAID, LoanPaymentStatus.PARTIAL, LoanPaymentStatus.OVERDUE] } } },
+        {
+          $group: {
+            _id: null,
+            totalInterest: {
+              $sum: {
+                $ifNull: [
+                  '$paidInterest',
+                  {
+                    $cond: [{ $eq: ['$status', LoanPaymentStatus.PAID] }, '$interestAmount', 0],
+                  },
+                ],
+              },
+            },
+            totalPaid: {
+              $sum: {
+                $ifNull: [
+                  '$paidAmount',
+                  {
+                    $cond: [{ $eq: ['$status', LoanPaymentStatus.PAID] }, '$totalAmount', 0],
+                  },
+                ],
+              },
+            },
+          },
+        },
       ]),
     ]);
 
@@ -364,7 +549,7 @@ export class LoansService {
   async updateOverduePayments(): Promise<{ updated: number }> {
     const result = await this.paymentModel.updateMany(
       {
-        status: LoanPaymentStatus.SCHEDULED,
+        status: { $in: [LoanPaymentStatus.SCHEDULED, LoanPaymentStatus.PARTIAL] },
         dueDate: { $lt: new Date() },
       },
       { $set: { status: LoanPaymentStatus.OVERDUE } },
@@ -372,3 +557,4 @@ export class LoansService {
     return { updated: result.modifiedCount };
   }
 }
+

@@ -1,6 +1,7 @@
 import { Component, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
 import {
   FinancialControlService,
   BankAccount, BankTransaction, Fund, FundTransaction,
@@ -11,50 +12,50 @@ import { AuthService } from '../services/auth.service';
 import { Role } from '../models/role.enum';
 
 const FUND_TYPE_LABELS: Record<string, string> = {
-  RESERVE: 'Quỹ dự phòng',
-  PETTY_CASH: 'Quỹ tiền mặt',
-  MARKETING: 'Quỹ marketing',
-  TRAINING: 'Quỹ đào tạo',
-  BONUS: 'Quỹ thưởng',
-  OTHER: 'Quỹ khác',
+  RESERVE: 'Quá»¹ dá»± phÃ²ng',
+  PETTY_CASH: 'Quá»¹ tiá»n máº·t',
+  MARKETING: 'Quá»¹ marketing',
+  TRAINING: 'Quá»¹ Ä‘Ã o táº¡o',
+  BONUS: 'Quá»¹ thÆ°á»Ÿng',
+  OTHER: 'Quá»¹ khÃ¡c',
 };
 
 const TX_TYPE_LABELS: Record<string, string> = {
-  DEPOSIT: 'Nạp vào',
-  WITHDRAWAL: 'Rút ra',
-  TRANSFER_IN: 'Chuyển đến',
-  TRANSFER_OUT: 'Chuyển đi',
-  INTEREST: 'Lãi suất',
-  FEE: 'Phí dịch vụ',
-  ADJUSTMENT: 'Điều chỉnh',
-  WITHDRAW: 'Rút từ quỹ',
+  DEPOSIT: 'Náº¡p vÃ o',
+  WITHDRAWAL: 'RÃºt ra',
+  TRANSFER_IN: 'Chuyá»ƒn Ä‘áº¿n',
+  TRANSFER_OUT: 'Chuyá»ƒn Ä‘i',
+  INTEREST: 'LÃ£i suáº¥t',
+  FEE: 'PhÃ­ dá»‹ch vá»¥',
+  ADJUSTMENT: 'Äiá»u chá»‰nh',
+  WITHDRAW: 'RÃºt tá»« quá»¹',
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
-  TUITION_INCOME: 'Thu học phí',
-  PAYROLL: 'Chi lương',
-  EXPENSE: 'Chi phí VH',
-  RESERVE_FUND: 'Quỹ dự phòng',
-  PETTY_CASH: 'Tiền mặt',
-  COMMISSION: 'Hoa hồng',
-  REFUND: 'Hoàn tiền',
-  LOAN_DISBURSEMENT: 'Giải ngân vốn vay',
-  LOAN_REPAYMENT: 'Trả nợ vay',
-  OTHER: 'Khác',
+  TUITION_INCOME: 'Thu há»c phÃ­',
+  PAYROLL: 'Chi lÆ°Æ¡ng',
+  EXPENSE: 'Chi phÃ­ VH',
+  RESERVE_FUND: 'Quá»¹ dá»± phÃ²ng',
+  PETTY_CASH: 'Tiá»n máº·t',
+  COMMISSION: 'Hoa há»“ng',
+  REFUND: 'HoÃ n tiá»n',
+  LOAN_DISBURSEMENT: 'Giáº£i ngÃ¢n vá»‘n vay',
+  LOAN_REPAYMENT: 'Tráº£ ná»£ vay',
+  OTHER: 'KhÃ¡c',
 };
 
 const EXPENSE_CAT_LABELS: Record<string, string> = {
-  RENT: 'Thuê mặt bằng',
-  UTILITIES: 'Điện nước Internet',
-  SUPPLIES: 'Văn phòng phẩm',
+  RENT: 'ThuÃª máº·t báº±ng',
+  UTILITIES: 'Äiá»‡n nÆ°á»›c Internet',
+  SUPPLIES: 'VÄƒn phÃ²ng pháº©m',
   MARKETING: 'Marketing',
-  MAINTENANCE: 'Sửa chữa',
-  SALARY_BONUS: 'Thưởng/Phụ cấp',
-  TRAINING: 'Đào tạo',
-  TRANSPORT: 'Đi lại',
-  MEAL: 'Ăn uống',
-  ENTERTAINMENT: 'Tiếp khách',
-  OTHER: 'Khác',
+  MAINTENANCE: 'Sá»­a chá»¯a',
+  SALARY_BONUS: 'ThÆ°á»Ÿng/Phá»¥ cáº¥p',
+  TRAINING: 'ÄÃ o táº¡o',
+  TRANSPORT: 'Äi láº¡i',
+  MEAL: 'Ä‚n uá»‘ng',
+  ENTERTAINMENT: 'Tiáº¿p khÃ¡ch',
+  OTHER: 'KhÃ¡c',
 };
 
 @Component({
@@ -64,13 +65,13 @@ const EXPENSE_CAT_LABELS: Record<string, string> = {
   template: `
   <header class="page-header">
     <div>
-      <h2>🏦 Kiểm soát Tài chính</h2>
-      <p>Quản lý số dư ngân hàng, quỹ, dòng tiền và bảng cân đối.</p>
+      <h2>ðŸ¦ Kiá»ƒm soÃ¡t TÃ i chÃ­nh</h2>
+      <p>Quáº£n lÃ½ sá»‘ dÆ° ngÃ¢n hÃ ng, quá»¹, dÃ²ng tiá»n vÃ  báº£ng cÃ¢n Ä‘á»‘i.</p>
     </div>
     <div class="header-filters">
-      <input type="date" [(ngModel)]="startDate" placeholder="Từ ngày" />
-      <input type="date" [(ngModel)]="endDate" placeholder="Đến ngày" />
-      <button class="primary" (click)="reload()">Cập nhật</button>
+      <input type="date" [(ngModel)]="startDate" placeholder="Tá»« ngÃ y" />
+      <input type="date" [(ngModel)]="endDate" placeholder="Äáº¿n ngÃ y" />
+      <button class="primary" (click)="reload()">Cáº­p nháº­t</button>
     </div>
   </header>
 
@@ -81,120 +82,120 @@ const EXPENSE_CAT_LABELS: Record<string, string> = {
     </button>
   </div>
 
-  <!-- ═══ TAB: Overview (Dashboard) ═══ -->
+  <!-- â•â•â• TAB: Overview (Dashboard) â•â•â• -->
   <div *ngIf="activeTab === 'overview'" class="tab-content">
     <ng-container *ngIf="dashboard()">
 
       <!-- Section 1: Cash Position -->
       <div class="dash-section">
-        <h4>TÌNH HÌNH TIỀN MẶT</h4>
+        <h4>TÃŒNH HÃŒNH TIá»€N Máº¶T</h4>
         <div class="overview-grid">
           <div class="ov-card bank">
-            <div class="ov-icon">🏦</div>
-            <div class="ov-value">{{dashboard()!.cashPosition.bankBalance | number}}đ</div>
-            <div class="ov-label">Số dư Ngân hàng ({{dashboard()!.cashPosition.bankAccountCount}} TK)</div>
+            <div class="ov-icon">ðŸ¦</div>
+            <div class="ov-value">{{dashboard()!.cashPosition.bankBalance | number}}Ä‘</div>
+            <div class="ov-label">Sá»‘ dÆ° NgÃ¢n hÃ ng ({{dashboard()!.cashPosition.bankAccountCount}} TK)</div>
           </div>
           <div class="ov-card fund">
-            <div class="ov-icon">📢</div>
-            <div class="ov-value">{{dashboard()!.cashPosition.marketingFund | number}}đ</div>
-            <div class="ov-label">Quỹ Marketing ({{dashboard()!.cashPosition.marketingFundCount}} quỹ)</div>
+            <div class="ov-icon">ðŸ“¢</div>
+            <div class="ov-value">{{dashboard()!.cashPosition.marketingFund | number}}Ä‘</div>
+            <div class="ov-label">Quá»¹ Marketing ({{dashboard()!.cashPosition.marketingFundCount}} quá»¹)</div>
           </div>
           <div class="ov-card fund">
-            <div class="ov-icon">🏛️</div>
-            <div class="ov-value">{{dashboard()!.cashPosition.fundBalance | number}}đ</div>
-            <div class="ov-label">Tổng các Quỹ ({{dashboard()!.cashPosition.fundCount}} quỹ)</div>
+            <div class="ov-icon">ðŸ›ï¸</div>
+            <div class="ov-value">{{dashboard()!.cashPosition.fundBalance | number}}Ä‘</div>
+            <div class="ov-label">Tá»•ng cÃ¡c Quá»¹ ({{dashboard()!.cashPosition.fundCount}} quá»¹)</div>
           </div>
           <div class="ov-card profit">
-            <div class="ov-icon">💵</div>
-            <div class="ov-value">{{dashboard()!.cashPosition.availableCash | number}}đ</div>
-            <div class="ov-label">Tổng tiền khả dụng (NH + Quỹ)</div>
+            <div class="ov-icon">ðŸ’µ</div>
+            <div class="ov-value">{{dashboard()!.cashPosition.availableCash | number}}Ä‘</div>
+            <div class="ov-label">Tá»•ng tiá»n kháº£ dá»¥ng (NH + Quá»¹)</div>
           </div>
         </div>
       </div>
 
       <!-- Section 2: Obligations & Reserve -->
       <div class="dash-section">
-        <h4>NGHĨA VỤ THANH TOÁN & DỰ PHÒNG</h4>
+        <h4>NGHÄ¨A Vá»¤ THANH TOÃN & Dá»° PHÃ’NG</h4>
         <div class="overview-grid">
           <div class="ov-card outflow">
-            <div class="ov-icon">📋</div>
-            <div class="ov-value">{{dashboard()!.obligations.totalPayable14Days | number}}đ</div>
-            <div class="ov-label">Phải trả trong 14 ngày tới</div>
+            <div class="ov-icon">ðŸ“‹</div>
+            <div class="ov-value">{{dashboard()!.obligations.totalPayable14Days | number}}Ä‘</div>
+            <div class="ov-label">Pháº£i tráº£ trong 14 ngÃ y tá»›i</div>
             <div class="ov-detail" *ngIf="dashboard()!.obligations.totalPayable14Days > 0">
-              <small>Lương: {{dashboard()!.obligations.payrollPayable | number}}đ ({{dashboard()!.obligations.payrollPayableCount}})</small><br/>
-              <small>Chi phí: {{dashboard()!.obligations.expensePayable | number}}đ ({{dashboard()!.obligations.expensePayableCount}})</small><br/>
-              <small>Đơn hàng: {{dashboard()!.obligations.orderPayable | number}}đ ({{dashboard()!.obligations.orderPayableCount}})</small>
+              <small>LÆ°Æ¡ng: {{dashboard()!.obligations.payrollPayable | number}}Ä‘ ({{dashboard()!.obligations.payrollPayableCount}})</small><br/>
+              <small>Chi phÃ­: {{dashboard()!.obligations.expensePayable | number}}Ä‘ ({{dashboard()!.obligations.expensePayableCount}})</small><br/>
+              <small>ÄÆ¡n hÃ ng: {{dashboard()!.obligations.orderPayable | number}}Ä‘ ({{dashboard()!.obligations.orderPayableCount}})</small>
             </div>
           </div>
           <div class="ov-card" [class.loss]="!dashboard()!.obligations.reserveHealthy" [class.profit]="dashboard()!.obligations.reserveHealthy">
-            <div class="ov-icon">🛡️</div>
-            <div class="ov-value">{{dashboard()!.obligations.operatingReserve3Months | number}}đ</div>
-            <div class="ov-label">Dự phòng hoạt động 3 tháng cần</div>
+            <div class="ov-icon">ðŸ›¡ï¸</div>
+            <div class="ov-value">{{dashboard()!.obligations.operatingReserve3Months | number}}Ä‘</div>
+            <div class="ov-label">Dá»± phÃ²ng hoáº¡t Ä‘á»™ng 3 thÃ¡ng cáº§n</div>
             <div class="ov-warning" *ngIf="!dashboard()!.obligations.reserveHealthy">
-              ⚠️ Tiền khả dụng chưa đủ dự phòng 3 tháng!
+              âš ï¸ Tiá»n kháº£ dá»¥ng chÆ°a Ä‘á»§ dá»± phÃ²ng 3 thÃ¡ng!
             </div>
           </div>
           <div class="ov-card" [class.loss]="dashboard()!.obligations.runway < 3" [class.profit]="dashboard()!.obligations.runway >= 3">
-            <div class="ov-icon">⏱️</div>
-            <div class="ov-value">{{dashboard()!.obligations.runway}} tháng</div>
-            <div class="ov-label">Runway (hoạt động được bao lâu)</div>
+            <div class="ov-icon">â±ï¸</div>
+            <div class="ov-value">{{dashboard()!.obligations.runway}} thÃ¡ng</div>
+            <div class="ov-label">Runway (hoáº¡t Ä‘á»™ng Ä‘Æ°á»£c bao lÃ¢u)</div>
           </div>
           <div class="ov-card" [class.profit]="dashboard()!.obligations.cashAfterObligations >= 0" [class.loss]="dashboard()!.obligations.cashAfterObligations < 0">
-            <div class="ov-icon">💰</div>
-            <div class="ov-value">{{dashboard()!.obligations.cashAfterObligations | number}}đ</div>
-            <div class="ov-label">Tiền còn sau nghĩa vụ 14 ngày</div>
+            <div class="ov-icon">ðŸ’°</div>
+            <div class="ov-value">{{dashboard()!.obligations.cashAfterObligations | number}}Ä‘</div>
+            <div class="ov-label">Tiá»n cÃ²n sau nghÄ©a vá»¥ 14 ngÃ y</div>
           </div>
         </div>
       </div>
 
       <!-- Section 3: Deferred Revenue -->
       <div class="dash-section">
-        <h4>DOANH THU CHỜ XỬ LÝ & NỢ PHỤ HUYNH</h4>
+        <h4>DOANH THU CHá»œ Xá»¬ LÃ & Ná»¢ PHá»¤ HUYNH</h4>
         <div class="overview-grid">
           <div class="ov-card inflow">
-            <div class="ov-icon">👛</div>
-            <div class="ov-value">{{dashboard()!.deferredRevenue.walletBalance | number}}đ</div>
-            <div class="ov-label">Ví Phụ huynh (sử dụng được, chưa là DT)</div>
-            <div class="ov-detail"><small>{{dashboard()!.deferredRevenue.walletCount}} ví</small></div>
+            <div class="ov-icon">ðŸ‘›</div>
+            <div class="ov-value">{{dashboard()!.deferredRevenue.walletBalance | number}}Ä‘</div>
+            <div class="ov-label">VÃ­ Phá»¥ huynh (sá»­ dá»¥ng Ä‘Æ°á»£c, chÆ°a lÃ  DT)</div>
+            <div class="ov-detail"><small>{{dashboard()!.deferredRevenue.walletCount}} vÃ­</small></div>
           </div>
           <div class="ov-card inflow">
-            <div class="ov-icon">📄</div>
-            <div class="ov-value">{{dashboard()!.deferredRevenue.pendingInvoiceAmount | number}}đ</div>
-            <div class="ov-label">Hóa đơn chờ duyệt (tiền sắp vào)</div>
-            <div class="ov-detail"><small>{{dashboard()!.deferredRevenue.pendingInvoiceCount}} hóa đơn</small></div>
+            <div class="ov-icon">ðŸ“„</div>
+            <div class="ov-value">{{dashboard()!.deferredRevenue.pendingInvoiceAmount | number}}Ä‘</div>
+            <div class="ov-label">HÃ³a Ä‘Æ¡n chá» duyá»‡t (tiá»n sáº¯p vÃ o)</div>
+            <div class="ov-detail"><small>{{dashboard()!.deferredRevenue.pendingInvoiceCount}} hÃ³a Ä‘Æ¡n</small></div>
           </div>
         </div>
       </div>
 
       <!-- Section 4: Debt Position (Loans) -->
       <div class="dash-section" *ngIf="dashboard()!.debtPosition">
-        <h4>TÌNH HÌNH NỢ VAY</h4>
+        <h4>TÃŒNH HÃŒNH Ná»¢ VAY</h4>
         <div class="overview-grid">
           <div class="ov-card loss">
             <div class="ov-icon">&#128178;</div>
-            <div class="ov-value">{{dashboard()!.debtPosition!.totalDebt | number}}đ</div>
-            <div class="ov-label">Tổng dư nợ vay ({{dashboard()!.debtPosition!.activeLoanCount}} khoản)</div>
+            <div class="ov-value">{{dashboard()!.debtPosition!.totalDebt | number}}Ä‘</div>
+            <div class="ov-label">Tá»•ng dÆ° ná»£ vay ({{dashboard()!.debtPosition!.activeLoanCount}} khoáº£n)</div>
           </div>
           <div class="ov-card outflow">
             <div class="ov-icon">&#128197;</div>
-            <div class="ov-value">{{dashboard()!.debtPosition!.loanPayable | number}}đ</div>
-            <div class="ov-label">Phải trả nợ vay 30 ngày tới ({{dashboard()!.debtPosition!.loanPayableCount}} kỳ)</div>
+            <div class="ov-value">{{dashboard()!.debtPosition!.loanPayable | number}}Ä‘</div>
+            <div class="ov-label">Pháº£i tráº£ ná»£ vay 30 ngÃ y tá»›i ({{dashboard()!.debtPosition!.loanPayableCount}} ká»³)</div>
           </div>
         </div>
       </div>
 
       <!-- Section 5: Accounting Metrics -->
       <div class="dash-section">
-        <h4>CHỈ SỐ KẾ TOÁN</h4>
+        <h4>CHá»ˆ Sá» Káº¾ TOÃN</h4>
         <div class="metrics-grid">
           <div class="metric-card">
-            <div class="metric-label">Burn Rate / tháng</div>
-            <div class="metric-value">{{dashboard()!.metrics.burnRate | number}}đ</div>
+            <div class="metric-label">Burn Rate / thÃ¡ng</div>
+            <div class="metric-value">{{dashboard()!.metrics.burnRate | number}}Ä‘</div>
           </div>
           <div class="metric-card">
             <div class="metric-label">Runway</div>
             <div class="metric-value" [class.amount-red]="dashboard()!.metrics.runway < 3" [class.amount-green]="dashboard()!.metrics.runway >= 6">
-              {{dashboard()!.metrics.runway}} tháng
+              {{dashboard()!.metrics.runway}} thÃ¡ng
             </div>
           </div>
           <div class="metric-card">
@@ -202,100 +203,100 @@ const EXPENSE_CAT_LABELS: Record<string, string> = {
             <div class="metric-value" [class.amount-red]="dashboard()!.metrics.currentRatio < 1" [class.amount-green]="dashboard()!.metrics.currentRatio >= 1.5">
               {{dashboard()!.metrics.currentRatio}}
             </div>
-            <div class="metric-hint">&#8805; 1.5 = tốt</div>
+            <div class="metric-hint">&#8805; 1.5 = tá»‘t</div>
           </div>
           <div class="metric-card">
-            <div class="metric-label">Biên lợi nhuận gộp</div>
+            <div class="metric-label">BiÃªn lá»£i nhuáº­n gá»™p</div>
             <div class="metric-value" [class.amount-green]="dashboard()!.metrics.grossMargin > 0" [class.amount-red]="dashboard()!.metrics.grossMargin <= 0">
               {{dashboard()!.metrics.grossMargin}}%
             </div>
           </div>
           <div class="metric-card">
-            <div class="metric-label">Biên lợi nhuận ròng</div>
+            <div class="metric-label">BiÃªn lá»£i nhuáº­n rÃ²ng</div>
             <div class="metric-value" [class.amount-green]="dashboard()!.metrics.netMargin > 0" [class.amount-red]="dashboard()!.metrics.netMargin <= 0">
               {{dashboard()!.metrics.netMargin}}%
             </div>
           </div>
           <div class="metric-card">
-            <div class="metric-label">Tăng trưởng DT tháng</div>
+            <div class="metric-label">TÄƒng trÆ°á»Ÿng DT thÃ¡ng</div>
             <div class="metric-value" [class.amount-green]="dashboard()!.metrics.revenueGrowth > 0" [class.amount-red]="dashboard()!.metrics.revenueGrowth < 0">
               {{dashboard()!.metrics.revenueGrowth > 0 ? '+' : ''}}{{dashboard()!.metrics.revenueGrowth}}%
             </div>
-            <div class="metric-hint">{{dashboard()!.metrics.lastMonthRevenue | number}}đ → {{dashboard()!.metrics.thisMonthRevenue | number}}đ</div>
+            <div class="metric-hint">{{dashboard()!.metrics.lastMonthRevenue | number}}Ä‘ â†’ {{dashboard()!.metrics.thisMonthRevenue | number}}Ä‘</div>
           </div>
           <div class="metric-card">
-            <div class="metric-label">Phải thu (AR)</div>
-            <div class="metric-value">{{dashboard()!.metrics.accountsReceivable | number}}đ</div>
+            <div class="metric-label">Pháº£i thu (AR)</div>
+            <div class="metric-value">{{dashboard()!.metrics.accountsReceivable | number}}Ä‘</div>
           </div>
           <div class="metric-card">
-            <div class="metric-label">Phải trả (AP)</div>
-            <div class="metric-value">{{dashboard()!.metrics.accountsPayable | number}}đ</div>
+            <div class="metric-label">Pháº£i tráº£ (AP)</div>
+            <div class="metric-value">{{dashboard()!.metrics.accountsPayable | number}}Ä‘</div>
           </div>
           <div class="metric-card">
-            <div class="metric-label">Doanh thu trả trước (Nợ PH)</div>
-            <div class="metric-value">{{dashboard()!.metrics.deferredRevenue | number}}đ</div>
+            <div class="metric-label">Doanh thu tráº£ trÆ°á»›c (Ná»£ PH)</div>
+            <div class="metric-value">{{dashboard()!.metrics.deferredRevenue | number}}Ä‘</div>
           </div>
         </div>
       </div>
 
       <!-- Fund Warnings -->
       <div class="warning-section" *ngIf="dashboard()!.fundWarnings.length">
-        <h4>⚠️ Cảnh báo Quỹ dưới mức tối thiểu</h4>
+        <h4>âš ï¸ Cáº£nh bÃ¡o Quá»¹ dÆ°á»›i má»©c tá»‘i thiá»ƒu</h4>
         <div class="warning-list">
           <div class="warning-item" *ngFor="let w of dashboard()!.fundWarnings">
             <strong>{{w.name}}</strong> ({{w.fundCode}}):
-            Hiện có <span class="amount-red">{{w.currentBalance | number}}đ</span>,
-            Tối thiểu <span class="amount-blue">{{w.minimumBalance | number}}đ</span>,
-            Thiếu <span class="amount-red">{{w.deficit | number}}đ</span>
+            Hiá»‡n cÃ³ <span class="amount-red">{{w.currentBalance | number}}Ä‘</span>,
+            Tá»‘i thiá»ƒu <span class="amount-blue">{{w.minimumBalance | number}}Ä‘</span>,
+            Thiáº¿u <span class="amount-red">{{w.deficit | number}}Ä‘</span>
           </div>
         </div>
       </div>
 
     </ng-container>
-    <p class="empty-text" *ngIf="!dashboard()">Đang tải dữ liệu dashboard...</p>
+    <p class="empty-text" *ngIf="!dashboard()">Äang táº£i dá»¯ liá»‡u dashboard...</p>
   </div>
 
-  <!-- ═══ TAB: Bank Accounts ═══ -->
+  <!-- â•â•â• TAB: Bank Accounts â•â•â• -->
   <div *ngIf="activeTab === 'bank'" class="tab-content">
     <div class="section-header">
-      <h3>Tài khoản Ngân hàng</h3>
-      <button class="primary" (click)="openBankAccountModal()" *ngIf="isDirector()">+ Thêm TK ngân hàng</button>
+      <h3>TÃ i khoáº£n NgÃ¢n hÃ ng</h3>
+      <button class="primary" (click)="openBankAccountModal()" *ngIf="isDirector()">+ ThÃªm TK ngÃ¢n hÃ ng</button>
     </div>
 
     <div class="card-grid" *ngIf="bankAccounts().length">
       <div class="bank-card" *ngFor="let ba of bankAccounts()" [class.primary-account]="ba.isPrimary" (click)="selectBankAccount(ba)">
-        <div class="bank-name">{{ba.bankName}} {{ba.isPrimary ? '⭐' : ''}}</div>
+        <div class="bank-name">{{ba.bankName}} {{ba.isPrimary ? 'â­' : ''}}</div>
         <div class="account-num">{{ba.accountNumber}}</div>
-        <div class="bank-balance">{{ba.currentBalance | number}}đ</div>
+        <div class="bank-balance">{{ba.currentBalance | number}}Ä‘</div>
         <div class="bank-holder" *ngIf="ba.accountHolder">{{ba.accountHolder}}</div>
         <span class="badge" [class.active]="ba.status === 'ACTIVE'" [class.inactive]="ba.status !== 'ACTIVE'">{{ba.status}}</span>
       </div>
     </div>
-    <p class="empty-text" *ngIf="!bankAccounts().length">Chưa có tài khoản ngân hàng nào.</p>
+    <p class="empty-text" *ngIf="!bankAccounts().length">ChÆ°a cÃ³ tÃ i khoáº£n ngÃ¢n hÃ ng nÃ o.</p>
 
     <!-- Bank Transactions -->
     <div class="section-header mt">
-      <h3>Giao dịch ngân hàng {{selectedBankAccount() ? '— ' + selectedBankAccount()!.bankName : ''}}</h3>
-      <button class="primary" (click)="openBankTxModal()">+ Ghi nhận giao dịch</button>
+      <h3>Giao dá»‹ch ngÃ¢n hÃ ng {{selectedBankAccount() ? 'â€” ' + selectedBankAccount()!.bankName : ''}}</h3>
+      <button class="primary" (click)="openBankTxModal()">+ Ghi nháº­n giao dá»‹ch</button>
     </div>
     <div class="filters">
       <select [(ngModel)]="bankTxType" (ngModelChange)="loadBankTransactions()">
-        <option value="">Tất cả loại</option>
-        <option value="DEPOSIT">Nạp vào</option>
-        <option value="WITHDRAWAL">Rút ra</option>
-        <option value="TRANSFER_IN">Chuyển đến</option>
-        <option value="TRANSFER_OUT">Chuyển đi</option>
-        <option value="INTEREST">Lãi suất</option>
-        <option value="FEE">Phí dịch vụ</option>
-        <option value="ADJUSTMENT">Điều chỉnh</option>
+        <option value="">Táº¥t cáº£ loáº¡i</option>
+        <option value="DEPOSIT">Náº¡p vÃ o</option>
+        <option value="WITHDRAWAL">RÃºt ra</option>
+        <option value="TRANSFER_IN">Chuyá»ƒn Ä‘áº¿n</option>
+        <option value="TRANSFER_OUT">Chuyá»ƒn Ä‘i</option>
+        <option value="INTEREST">LÃ£i suáº¥t</option>
+        <option value="FEE">PhÃ­ dá»‹ch vá»¥</option>
+        <option value="ADJUSTMENT">Äiá»u chá»‰nh</option>
       </select>
-      <input placeholder="Tìm kiếm..." [(ngModel)]="bankTxKeyword" (ngModelChange)="loadBankTransactions()" />
+      <input placeholder="TÃ¬m kiáº¿m..." [(ngModel)]="bankTxKeyword" (ngModelChange)="loadBankTransactions()" />
     </div>
 
     <table class="data" *ngIf="bankTransactions().length">
       <thead><tr>
-        <th>Mã</th><th>Ngày</th><th>Loại</th><th>Danh mục</th><th>Số tiền</th>
-        <th>Trước</th><th>Sau</th><th>Mô tả</th><th>Người ghi</th><th>Đối soát</th>
+        <th>MÃ£</th><th>NgÃ y</th><th>Loáº¡i</th><th>Danh má»¥c</th><th>Sá»‘ tiá»n</th>
+        <th>TrÆ°á»›c</th><th>Sau</th><th>MÃ´ táº£</th><th>NgÆ°á»i ghi</th><th>Äá»‘i soÃ¡t</th>
       </tr></thead>
       <tbody>
         <tr *ngFor="let tx of bankTransactions()">
@@ -304,37 +305,37 @@ const EXPENSE_CAT_LABELS: Record<string, string> = {
           <td>{{txTypeLabel(tx.type)}}</td>
           <td>{{categoryLabel(tx.category)}}</td>
           <td class="right" [class.amount-green]="isInflow(tx.type)" [class.amount-red]="!isInflow(tx.type)">
-            {{isInflow(tx.type) ? '+' : '-'}}{{tx.amount | number}}đ
+            {{isInflow(tx.type) ? '+' : '-'}}{{tx.amount | number}}Ä‘
           </td>
-          <td class="right">{{tx.balanceBefore | number}}đ</td>
-          <td class="right">{{tx.balanceAfter | number}}đ</td>
+          <td class="right">{{tx.balanceBefore | number}}Ä‘</td>
+          <td class="right">{{tx.balanceAfter | number}}Ä‘</td>
           <td>{{tx.description || '-'}}</td>
           <td>{{tx.recordedByName}}</td>
           <td>
-            <span *ngIf="tx.isReconciled" class="badge reconciled">✓</span>
-            <button *ngIf="!tx.isReconciled" class="btn-sm" (click)="reconcile(tx._id)">Đối soát</button>
+            <span *ngIf="tx.isReconciled" class="badge reconciled">âœ“</span>
+            <button *ngIf="!tx.isReconciled" class="btn-sm" (click)="reconcile(tx._id)">Äá»‘i soÃ¡t</button>
           </td>
         </tr>
       </tbody>
     </table>
-    <p class="empty-text" *ngIf="!bankTransactions().length">Chưa có giao dịch nào.</p>
+    <p class="empty-text" *ngIf="!bankTransactions().length">ChÆ°a cÃ³ giao dá»‹ch nÃ o.</p>
   </div>
 
-  <!-- ═══ TAB: Funds ═══ -->
+  <!-- â•â•â• TAB: Funds â•â•â• -->
   <div *ngIf="activeTab === 'funds'" class="tab-content">
     <div class="section-header">
-      <h3>Quản lý Quỹ</h3>
-      <button class="primary" (click)="openFundModal()" *ngIf="isDirector()">+ Tạo quỹ mới</button>
+      <h3>Quáº£n lÃ½ Quá»¹</h3>
+      <button class="primary" (click)="openFundModal()" *ngIf="isDirector()">+ Táº¡o quá»¹ má»›i</button>
     </div>
 
     <div class="card-grid" *ngIf="funds().length">
       <div class="fund-card" *ngFor="let f of funds()" [class.warning]="f.currentBalance < f.minimumBalance" (click)="selectFund(f)">
         <div class="fund-type">{{fundTypeLabel(f.fundType)}}</div>
         <div class="fund-name">{{f.name}} <code>{{f.fundCode}}</code></div>
-        <div class="fund-balance">{{f.currentBalance | number}}đ</div>
+        <div class="fund-balance">{{f.currentBalance | number}}Ä‘</div>
         <div class="fund-meta">
-          <span>Tối thiểu: {{f.minimumBalance | number}}đ</span>
-          <span>Đích: {{f.targetBalance | number}}đ</span>
+          <span>Tá»‘i thiá»ƒu: {{f.minimumBalance | number}}Ä‘</span>
+          <span>ÄÃ­ch: {{f.targetBalance | number}}Ä‘</span>
         </div>
         <div class="fund-progress" *ngIf="f.targetBalance > 0">
           <div class="progress-bar">
@@ -343,23 +344,23 @@ const EXPENSE_CAT_LABELS: Record<string, string> = {
           <small>{{Math.round((f.currentBalance / f.targetBalance) * 100)}}%</small>
         </div>
         <div class="fund-warning" *ngIf="f.currentBalance < f.minimumBalance">
-          ⚠️ Dưới mức tối thiểu (thiếu {{(f.minimumBalance - f.currentBalance) | number}}đ)
+          âš ï¸ DÆ°á»›i má»©c tá»‘i thiá»ƒu (thiáº¿u {{(f.minimumBalance - f.currentBalance) | number}}Ä‘)
         </div>
         <span class="badge" [class.active]="f.status === 'ACTIVE'">{{f.status}}</span>
       </div>
     </div>
-    <p class="empty-text" *ngIf="!funds().length">Chưa có quỹ nào.</p>
+    <p class="empty-text" *ngIf="!funds().length">ChÆ°a cÃ³ quá»¹ nÃ o.</p>
 
     <!-- Fund Transactions -->
     <div class="section-header mt" *ngIf="selectedFund()">
-      <h3>Giao dịch quỹ — {{selectedFund()!.name}}</h3>
-      <button class="primary" (click)="openFundTxModal()">+ Nạp/Rút quỹ</button>
+      <h3>Giao dá»‹ch quá»¹ â€” {{selectedFund()!.name}}</h3>
+      <button class="primary" (click)="openFundTxModal()">+ Náº¡p/RÃºt quá»¹</button>
     </div>
 
     <table class="data" *ngIf="fundTransactions().length">
       <thead><tr>
-        <th>Mã</th><th>Ngày</th><th>Loại</th><th>Số tiền</th>
-        <th>Trước</th><th>Sau</th><th>Mô tả</th><th>Người thực hiện</th>
+        <th>MÃ£</th><th>NgÃ y</th><th>Loáº¡i</th><th>Sá»‘ tiá»n</th>
+        <th>TrÆ°á»›c</th><th>Sau</th><th>MÃ´ táº£</th><th>NgÆ°á»i thá»±c hiá»‡n</th>
       </tr></thead>
       <tbody>
         <tr *ngFor="let ft of fundTransactions()">
@@ -367,10 +368,10 @@ const EXPENSE_CAT_LABELS: Record<string, string> = {
           <td>{{ft.transactionDate | date:'dd/MM/yyyy'}}</td>
           <td>{{txTypeLabel(ft.type)}}</td>
           <td class="right" [class.amount-green]="ft.type === 'DEPOSIT'" [class.amount-red]="ft.type === 'WITHDRAW'">
-            {{ft.type === 'DEPOSIT' ? '+' : '-'}}{{ft.amount | number}}đ
+            {{ft.type === 'DEPOSIT' ? '+' : '-'}}{{ft.amount | number}}Ä‘
           </td>
-          <td class="right">{{ft.balanceBefore | number}}đ</td>
-          <td class="right">{{ft.balanceAfter | number}}đ</td>
+          <td class="right">{{ft.balanceBefore | number}}Ä‘</td>
+          <td class="right">{{ft.balanceAfter | number}}Ä‘</td>
           <td>{{ft.description || '-'}}</td>
           <td>{{ft.performedByName}}</td>
         </tr>
@@ -378,249 +379,269 @@ const EXPENSE_CAT_LABELS: Record<string, string> = {
     </table>
   </div>
 
-  <!-- ═══ TAB: Cash Flow ═══ -->
+  <!-- â•â•â• TAB: Cash Flow â•â•â• -->
   <div *ngIf="activeTab === 'cashflow'" class="tab-content">
     <div class="section-header">
-      <h3>Dòng tiền</h3>
+      <h3>DÃ²ng tiá»n</h3>
       <div class="filters inline">
         <select [(ngModel)]="cashFlowGroupBy" (ngModelChange)="loadCashFlow()">
-          <option value="day">Theo ngày</option>
-          <option value="month">Theo tháng</option>
+          <option value="day">Theo ngÃ y</option>
+          <option value="month">Theo thÃ¡ng</option>
         </select>
       </div>
     </div>
 
     <div class="cashflow-summary" *ngIf="cashFlow()">
       <div class="cf-card inflow">
-        <div>Tổng dòng tiền vào</div>
-        <div class="cf-value amount-green">{{cashFlow()!.totalInflow | number}}đ</div>
+        <div>Tá»•ng dÃ²ng tiá»n vÃ o</div>
+        <div class="cf-value amount-green">{{cashFlow()!.totalInflow | number}}Ä‘</div>
       </div>
       <div class="cf-card outflow">
-        <div>Tổng dòng tiền ra</div>
-        <div class="cf-value amount-red">{{cashFlow()!.totalOutflow | number}}đ</div>
+        <div>Tá»•ng dÃ²ng tiá»n ra</div>
+        <div class="cf-value amount-red">{{cashFlow()!.totalOutflow | number}}Ä‘</div>
       </div>
       <div class="cf-card net" [class.positive]="cashFlow()!.netCashFlow >= 0" [class.negative]="cashFlow()!.netCashFlow < 0">
-        <div>Dòng tiền ròng</div>
-        <div class="cf-value">{{cashFlow()!.netCashFlow | number}}đ</div>
+        <div>DÃ²ng tiá»n rÃ²ng</div>
+        <div class="cf-value">{{cashFlow()!.netCashFlow | number}}Ä‘</div>
       </div>
     </div>
+    <p class="empty-text" *ngIf="cashFlow()?.basis">
+      Basis: {{cashFlow()!.basis!.applied | uppercase}}.
+      Session revenue vÃ  teacher cost chá»‰ lÃ  tham chiáº¿u accrual, khÃ´ng cá»™ng vÃ o tá»•ng cashflow.
+    </p>
+    <p class="empty-text" *ngIf="cashFlow()?.accrualReference">
+      Tham chiáº¿u accrual: Doanh thu buá»•i há»c {{cashFlow()!.accrualReference!.sessionRevenue | number}}Ä‘,
+      Chi phÃ­ giÃ¡o viÃªn {{cashFlow()!.accrualReference!.teacherCost | number}}Ä‘.
+    </p>
 
     <table class="data" *ngIf="cashFlow()?.timeline?.length">
       <thead><tr>
-        <th>Kỳ</th><th>Hóa đơn (vào)</th><th>Doanh thu buổi học</th><th>Nạp ví (vào)</th><th>Vốn vay (vào)</th>
-        <th>Lương GV (ra)</th><th>Chi phí VH (ra)</th><th>QC (ra)</th><th>Trả nợ vay (ra)</th>
-        <th>Tổng vào</th><th>Tổng ra</th><th>Ròng</th>
+        <th>Ká»³</th><th>HÃ³a Ä‘Æ¡n (vÃ o)</th><th>Doanh thu buá»•i há»c</th><th>Náº¡p vÃ­ (vÃ o)</th><th>Vá»‘n vay (vÃ o)</th>
+        <th>LÆ°Æ¡ng GV (ra)</th><th>Chi phÃ­ VH (ra)</th><th>QC (ra)</th><th>Tráº£ ná»£ vay (ra)</th>
+        <th>Tá»•ng vÃ o</th><th>Tá»•ng ra</th><th>RÃ²ng</th>
       </tr></thead>
       <tbody>
         <tr *ngFor="let t of cashFlow()!.timeline">
           <td><strong>{{t.date}}</strong></td>
-          <td class="right amount-green">{{t.inflow.invoices | number}}đ <small>({{t.inflow.invoiceCount}})</small></td>
-          <td class="right">{{t.inflow.sessionRevenue | number}}đ <small>({{t.inflow.sessionCount}})</small></td>
-          <td class="right amount-green">{{t.inflow.walletTopUps | number}}đ <small>({{t.inflow.walletTopUpCount}})</small></td>
-          <td class="right amount-green">{{t.inflow.loanDisbursements | number}}đ <small>({{t.inflow.loanDisbursementCount}})</small></td>
-          <td class="right amount-red">{{t.outflow.payroll | number}}đ <small>({{t.outflow.payrollCount}})</small></td>
-          <td class="right amount-red">{{t.outflow.expenses | number}}đ <small>({{t.outflow.expenseCount}})</small></td>
-          <td class="right amount-red">{{t.outflow.adCost | number}}đ <small>({{t.outflow.adCostCount}})</small></td>
-          <td class="right amount-red">{{t.outflow.loanRepayments | number}}đ <small>({{t.outflow.loanRepaymentCount}})</small></td>
-          <td class="right amount-green"><strong>{{t.totalInflow | number}}đ</strong></td>
-          <td class="right amount-red"><strong>{{t.totalOutflow | number}}đ</strong></td>
+          <td class="right amount-green">{{t.inflow.invoices | number}}Ä‘ <small>({{t.inflow.invoiceCount}})</small></td>
+          <td class="right">{{t.inflow.sessionRevenue | number}}Ä‘ <small>({{t.inflow.sessionCount}})</small></td>
+          <td class="right amount-green">{{t.inflow.walletTopUps | number}}Ä‘ <small>({{t.inflow.walletTopUpCount}})</small></td>
+          <td class="right amount-green">{{t.inflow.loanDisbursements | number}}Ä‘ <small>({{t.inflow.loanDisbursementCount}})</small></td>
+          <td class="right amount-red">{{t.outflow.payroll | number}}Ä‘ <small>({{t.outflow.payrollCount}})</small></td>
+          <td class="right amount-red">{{t.outflow.expenses | number}}Ä‘ <small>({{t.outflow.expenseCount}})</small></td>
+          <td class="right amount-red">{{t.outflow.adCost | number}}Ä‘ <small>({{t.outflow.adCostCount}})</small></td>
+          <td class="right amount-red">{{t.outflow.loanRepayments | number}}Ä‘ <small>({{t.outflow.loanRepaymentCount}})</small></td>
+          <td class="right amount-green"><strong>{{t.totalInflow | number}}Ä‘</strong></td>
+          <td class="right amount-red"><strong>{{t.totalOutflow | number}}Ä‘</strong></td>
           <td class="right" [class.amount-green]="t.netCashFlow >= 0" [class.amount-red]="t.netCashFlow < 0">
-            <strong>{{t.netCashFlow | number}}đ</strong>
+            <strong>{{t.netCashFlow | number}}Ä‘</strong>
           </td>
         </tr>
       </tbody>
     </table>
-    <p class="empty-text" *ngIf="!cashFlow()?.timeline?.length">Không có dữ liệu dòng tiền.</p>
+    <p class="empty-text" *ngIf="!cashFlow()?.timeline?.length">KhÃ´ng cÃ³ dá»¯ liá»‡u dÃ²ng tiá»n.</p>
   </div>
 
-  <!-- ═══ TAB: P&L Report ═══ -->
+  <!-- â•â•â• TAB: P&L Report â•â•â• -->
   <div *ngIf="activeTab === 'pnl'" class="tab-content">
-    <h3>Bảng cân đối Thu Chi (P&L)</h3>
+    <div class="section-header">
+      <h3>P&L Report</h3>
+      <div class="filters inline">
+        <select [(ngModel)]="pnlBasis" (ngModelChange)="loadPnl()">
+          <option value="cash">Cash basis</option>
+          <option value="accrual">Accrual basis</option>
+        </select>
+      </div>
+    </div>
 
     <div class="pnl-report" *ngIf="pnl()">
       <div class="pnl-section revenue">
-        <h4>📈 DOANH THU</h4>
+        <h4>ðŸ“ˆ DOANH THU</h4>
         <div class="pnl-row">
-          <span>Doanh thu từ buổi học ({{pnl()!.revenue.sessionCount}} buổi):</span>
-          <span class="amount-green">{{pnl()!.revenue.sessionRevenue | number}}đ</span>
+          <span>Doanh thu tá»« buá»•i há»c (tham chiáº¿u accrual, {{pnl()!.revenue.sessionCount}} buá»•i):</span>
+          <span class="amount-green">{{pnl()!.revenue.sessionRevenue | number}}Ä‘</span>
         </div>
         <div class="pnl-row" *ngFor="let entry of invoiceTypeEntries()">
-          <span>Hóa đơn {{entry.key}} ({{entry.value.count}}):</span>
-          <span class="amount-green">{{entry.value.amount | number}}đ</span>
+          <span>HÃ³a Ä‘Æ¡n {{entry.key}} ({{entry.value.count}}):</span>
+          <span class="amount-green">{{entry.value.amount | number}}Ä‘</span>
         </div>
         <div class="pnl-row total">
-          <span>TỔNG DOANH THU:</span>
-          <span class="amount-green"><strong>{{pnl()!.revenue.total | number}}đ</strong></span>
+          <span>Tá»”NG DOANH THU ({{(pnl()!.basis?.selected || pnlBasis) | uppercase}}):</span>
+          <span class="amount-green"><strong>{{pnl()!.revenue.total | number}}Ä‘</strong></span>
         </div>
       </div>
 
       <div class="pnl-section costs">
-        <h4>📉 CHI PHÍ</h4>
+        <h4>ðŸ“‰ CHI PHÃ</h4>
         <div class="pnl-row">
-          <span>Chi phí giáo viên:</span>
-          <span class="amount-red">{{pnl()!.costs.teacherCost | number}}đ</span>
+          <span>Chi phÃ­ giÃ¡o viÃªn (tham chiáº¿u accrual):</span>
+          <span class="amount-red">{{pnl()!.costs.teacherCost | number}}Ä‘</span>
+        </div>
+        <div class="pnl-row">
+          <span>Payroll Ä‘Ã£ chi (GV + Staff):</span>
+          <span class="amount-red">{{pnl()!.costs.payrollCost | number}}Ä‘</span>
         </div>
         <div class="pnl-row" *ngFor="let entry of expenseCatEntries()">
           <span>{{expenseCatLabel(entry.key)}} ({{entry.value.count}}):</span>
-          <span class="amount-red">{{entry.value.amount | number}}đ</span>
+          <span class="amount-red">{{entry.value.amount | number}}Ä‘</span>
         </div>
         <div class="pnl-row" *ngFor="let entry of adCostPlatformEntries()">
-          <span>Quảng cáo {{entry.key}} ({{entry.value.count}}):</span>
-          <span class="amount-red">{{entry.value.amount | number}}đ</span>
+          <span>Quáº£ng cÃ¡o {{entry.key}} ({{entry.value.count}}):</span>
+          <span class="amount-red">{{entry.value.amount | number}}Ä‘</span>
         </div>
         <div class="pnl-row" *ngIf="pnl()!.costs.interestExpense">
-          <span>Chi phí lãi vay:</span>
-          <span class="amount-red">{{pnl()!.costs.interestExpense | number}}đ</span>
+          <span>Chi phÃ­ lÃ£i vay:</span>
+          <span class="amount-red">{{pnl()!.costs.interestExpense | number}}Ä‘</span>
         </div>
         <div class="pnl-row total">
-          <span>TỔNG CHI PHÍ:</span>
-          <span class="amount-red"><strong>{{pnl()!.costs.totalCosts | number}}đ</strong></span>
+          <span>Tá»”NG CHI PHÃ ({{(pnl()!.basis?.selected || pnlBasis) | uppercase}}):</span>
+          <span class="amount-red"><strong>{{pnl()!.costs.totalCosts | number}}Ä‘</strong></span>
         </div>
       </div>
 
       <div class="pnl-section summary">
         <div class="pnl-row">
-          <span>Lợi nhuận gộp:</span>
+          <span>Lá»£i nhuáº­n gá»™p:</span>
           <span [class.amount-green]="pnl()!.summary.grossProfit >= 0"
                 [class.amount-red]="pnl()!.summary.grossProfit < 0">
-            {{pnl()!.summary.grossProfit | number}}đ ({{pnl()!.summary.grossMargin}}%)
+            {{pnl()!.summary.grossProfit | number}}Ä‘ ({{pnl()!.summary.grossMargin}}%)
           </span>
         </div>
         <div class="pnl-row highlight">
-          <span><strong>LỢI NHUẬN RÒNG:</strong></span>
+          <span><strong>Lá»¢I NHUáº¬N RÃ’NG:</strong></span>
           <span [class.amount-green]="pnl()!.summary.netProfit >= 0"
                 [class.amount-red]="pnl()!.summary.netProfit < 0">
-            <strong>{{pnl()!.summary.netProfit | number}}đ ({{pnl()!.summary.netMargin}}%)</strong>
+            <strong>{{pnl()!.summary.netProfit | number}}Ä‘ ({{pnl()!.summary.netMargin}}%)</strong>
           </span>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- ═══ TAB: Reconciliation ═══ -->
+  <!-- â•â•â• TAB: Reconciliation â•â•â• -->
   <div *ngIf="activeTab === 'reconciliation'" class="tab-content">
-    <h3>Đối soát Tài chính</h3>
+    <h3>Äá»‘i soÃ¡t TÃ i chÃ­nh</h3>
 
     <div class="recon-grid" *ngIf="reconciliation()">
       <div class="recon-card">
-        <h4>🏦 Ngân hàng</h4>
-        <div class="recon-value">{{reconciliation()!.healthIndicators.bankBalance | number}}đ</div>
-        <small>{{reconciliation()!.bankAccounts.accountCount}} tài khoản</small>
+        <h4>ðŸ¦ NgÃ¢n hÃ ng</h4>
+        <div class="recon-value">{{reconciliation()!.healthIndicators.bankBalance | number}}Ä‘</div>
+        <small>{{reconciliation()!.bankAccounts.accountCount}} tÃ i khoáº£n</small>
       </div>
       <div class="recon-card">
-        <h4>🏛️ Các Quỹ</h4>
-        <div class="recon-value">{{reconciliation()!.healthIndicators.fundBalance | number}}đ</div>
-        <small>{{reconciliation()!.funds.fundCount}} quỹ</small>
+        <h4>ðŸ›ï¸ CÃ¡c Quá»¹</h4>
+        <div class="recon-value">{{reconciliation()!.healthIndicators.fundBalance | number}}Ä‘</div>
+        <small>{{reconciliation()!.funds.fundCount}} quá»¹</small>
       </div>
       <div class="recon-card">
-        <h4>👛 Ví Phụ huynh (Nợ)</h4>
-        <div class="recon-value amount-red">{{reconciliation()!.healthIndicators.walletLiability | number}}đ</div>
-        <small>Tiền trong ví PH</small>
+        <h4>ðŸ‘› VÃ­ Phá»¥ huynh (Ná»£)</h4>
+        <div class="recon-value amount-red">{{reconciliation()!.healthIndicators.walletLiability | number}}Ä‘</div>
+        <small>Tiá»n trong vÃ­ PH</small>
       </div>
       <div class="recon-card" *ngIf="reconciliation()!.healthIndicators.loanDebt">
-        <h4>&#128178; Nợ vay</h4>
-        <div class="recon-value amount-red">{{reconciliation()!.healthIndicators.loanDebt | number}}đ</div>
-        <small>{{reconciliation()!.loanSummary?.activeLoanCount || 0}} khoản vay</small>
+        <h4>&#128178; Ná»£ vay</h4>
+        <div class="recon-value amount-red">{{reconciliation()!.healthIndicators.loanDebt | number}}Ä‘</div>
+        <small>{{reconciliation()!.loanSummary?.activeLoanCount || 0}} khoáº£n vay</small>
       </div>
       <div class="recon-card" [class.positive]="reconciliation()!.healthIndicators.netPosition >= 0"
            [class.negative]="reconciliation()!.healthIndicators.netPosition < 0">
-        <h4>📊 Vị thế ròng</h4>
-        <div class="recon-value">{{reconciliation()!.healthIndicators.netPosition | number}}đ</div>
-        <small>NH + Quỹ - Nợ PH - Nợ vay</small>
+        <h4>ðŸ“Š Vá»‹ tháº¿ rÃ²ng</h4>
+        <div class="recon-value">{{reconciliation()!.healthIndicators.netPosition | number}}Ä‘</div>
+        <small>NH + Quá»¹ - Ná»£ PH - Ná»£ vay</small>
       </div>
       <div class="recon-card" [class.warning-card]="reconciliation()!.healthIndicators.unreconciledItems > 0">
-        <h4>📋 Chưa đối soát</h4>
+        <h4>ðŸ“‹ ChÆ°a Ä‘á»‘i soÃ¡t</h4>
         <div class="recon-value">{{reconciliation()!.healthIndicators.unreconciledItems}}</div>
-        <small>giao dịch</small>
+        <small>giao dá»‹ch</small>
       </div>
       <div class="recon-card" [class.warning-card]="reconciliation()!.healthIndicators.fundWarnings > 0">
-        <h4>⚠️ Cảnh báo Quỹ</h4>
+        <h4>âš ï¸ Cáº£nh bÃ¡o Quá»¹</h4>
         <div class="recon-value">{{reconciliation()!.healthIndicators.fundWarnings}}</div>
-        <small>quỹ dưới ngưỡng</small>
+        <small>quá»¹ dÆ°á»›i ngÆ°á»¡ng</small>
       </div>
     </div>
 
     <div class="recon-pnl" *ngIf="reconciliation()?.profitAndLoss">
-      <h4>Tóm tắt lãi/lỗ trong kỳ</h4>
+      <h4>TÃ³m táº¯t lÃ£i/lá»— trong ká»³</h4>
       <div class="pnl-row">
-        <span>Lợi nhuận gộp:</span>
-        <span>{{reconciliation()!.profitAndLoss.grossProfit | number}}đ ({{reconciliation()!.profitAndLoss.grossMargin}}%)</span>
+        <span>Lá»£i nhuáº­n gá»™p:</span>
+        <span>{{reconciliation()!.profitAndLoss.grossProfit | number}}Ä‘ ({{reconciliation()!.profitAndLoss.grossMargin}}%)</span>
       </div>
       <div class="pnl-row bold">
-        <span>Lợi nhuận ròng:</span>
+        <span>Lá»£i nhuáº­n rÃ²ng:</span>
         <span [class.amount-green]="reconciliation()!.profitAndLoss.netProfit >= 0"
               [class.amount-red]="reconciliation()!.profitAndLoss.netProfit < 0">
-          {{reconciliation()!.profitAndLoss.netProfit | number}}đ ({{reconciliation()!.profitAndLoss.netMargin}}%)
+          {{reconciliation()!.profitAndLoss.netProfit | number}}Ä‘ ({{reconciliation()!.profitAndLoss.netMargin}}%)
         </span>
       </div>
     </div>
   </div>
 
-  <!-- ═══ TAB: Alerts (Cảnh báo & Chỉ dẫn) ═══ -->
+  <!-- â•â•â• TAB: Alerts (Cáº£nh bÃ¡o & Chá»‰ dáº«n) â•â•â• -->
   <div *ngIf="activeTab === 'alerts'" class="tab-content">
     <div class="section-header">
-      <h3>Cảnh báo & Chỉ dẫn hành động</h3>
-      <button class="primary" (click)="loadTab('alerts')">🔄 Làm mới</button>
+      <h3>Cáº£nh bÃ¡o & Chá»‰ dáº«n hÃ nh Ä‘á»™ng</h3>
+      <button class="primary" (click)="loadTab('alerts')">ðŸ”„ LÃ m má»›i</button>
     </div>
 
     <ng-container *ngIf="alertsData()">
       <!-- Alert summary badges -->
       <div class="alert-summary">
         <div class="alert-badge critical" *ngIf="alertsData()!.criticalCount > 0">
-          🔴 {{alertsData()!.criticalCount}} Nghiêm trọng
+          ðŸ”´ {{alertsData()!.criticalCount}} NghiÃªm trá»ng
         </div>
         <div class="alert-badge warning" *ngIf="alertsData()!.warningCount > 0">
-          🟡 {{alertsData()!.warningCount}} Cảnh báo
+          ðŸŸ¡ {{alertsData()!.warningCount}} Cáº£nh bÃ¡o
         </div>
         <div class="alert-badge info" *ngIf="alertsData()!.infoCount > 0">
-          🔵 {{alertsData()!.infoCount}} Thông tin
+          ðŸ”µ {{alertsData()!.infoCount}} ThÃ´ng tin
         </div>
         <div class="alert-badge ok" *ngIf="alertsData()!.totalAlerts === 0">
-          ✅ Không có cảnh báo nào
+          âœ… KhÃ´ng cÃ³ cáº£nh bÃ¡o nÃ o
         </div>
       </div>
 
       <!-- Marketing Budget Overview -->
       <div class="marketing-budget-section" *ngIf="alertsData()!.marketingBudget.optimalDailyBudget > 0">
-        <h4>📢 NGÂN SÁCH MARKETING TỐI ƯU (từ phân tích QC)</h4>
+        <h4>ðŸ“¢ NGÃ‚N SÃCH MARKETING Tá»I Æ¯U (tá»« phÃ¢n tÃ­ch QC)</h4>
         <div class="mkt-overview">
           <div class="mkt-card">
-            <div class="mkt-label">Quỹ Marketing hiện tại</div>
-            <div class="mkt-value">{{alertsData()!.marketingBudget.fundBalance | number}}đ</div>
+            <div class="mkt-label">Quá»¹ Marketing hiá»‡n táº¡i</div>
+            <div class="mkt-value">{{alertsData()!.marketingBudget.fundBalance | number}}Ä‘</div>
           </div>
           <div class="mkt-card">
-            <div class="mkt-label">Chi phí QC tối ưu / ngày</div>
-            <div class="mkt-value amount-blue">{{alertsData()!.marketingBudget.optimalDailyBudget | number}}đ</div>
+            <div class="mkt-label">Chi phÃ­ QC tá»‘i Æ°u / ngÃ y</div>
+            <div class="mkt-value amount-blue">{{alertsData()!.marketingBudget.optimalDailyBudget | number}}Ä‘</div>
           </div>
           <div class="mkt-card">
-            <div class="mkt-label">Chi phí QC tối ưu / tháng</div>
-            <div class="mkt-value amount-blue">{{alertsData()!.marketingBudget.optimalMonthlyBudget | number}}đ</div>
+            <div class="mkt-label">Chi phÃ­ QC tá»‘i Æ°u / thÃ¡ng</div>
+            <div class="mkt-value amount-blue">{{alertsData()!.marketingBudget.optimalMonthlyBudget | number}}Ä‘</div>
           </div>
           <div class="mkt-card" [class.positive]="alertsData()!.marketingBudget.fundBalance >= alertsData()!.marketingBudget.optimalMonthlyBudget"
                [class.negative]="alertsData()!.marketingBudget.fundBalance < alertsData()!.marketingBudget.optimalMonthlyBudget">
-            <div class="mkt-label">Đủ cho</div>
+            <div class="mkt-label">Äá»§ cho</div>
             <div class="mkt-value">
               {{alertsData()!.marketingBudget.optimalMonthlyBudget > 0
                 ? (alertsData()!.marketingBudget.fundBalance / alertsData()!.marketingBudget.optimalMonthlyBudget | number:'1.1-1')
-                : '∞'}} tháng
+                : 'âˆž'}} thÃ¡ng
             </div>
           </div>
         </div>
 
         <!-- Group breakdown -->
         <div class="mkt-breakdown" *ngIf="alertsData()!.marketingBudget.groupBreakdown.length">
-          <h5>Chi tiết theo nhóm quảng cáo</h5>
+          <h5>Chi tiáº¿t theo nhÃ³m quáº£ng cÃ¡o</h5>
           <table class="data">
             <thead><tr>
-              <th>Nhóm QC</th><th>Nền tảng</th><th>Chi hiện tại/ngày</th>
-              <th>Đề xuất tối ưu/ngày</th><th>Thay đổi</th><th>Độ tin cậy</th><th>Lý do</th>
+              <th>NhÃ³m QC</th><th>Ná»n táº£ng</th><th>Chi hiá»‡n táº¡i/ngÃ y</th>
+              <th>Äá» xuáº¥t tá»‘i Æ°u/ngÃ y</th><th>Thay Ä‘á»•i</th><th>Äá»™ tin cáº­y</th><th>LÃ½ do</th>
             </tr></thead>
             <tbody>
               <tr *ngFor="let g of alertsData()!.marketingBudget.groupBreakdown">
                 <td><strong>{{g.adGroupName || g.adGroupId}}</strong></td>
                 <td><span class="badge platform">{{g.platform}}</span></td>
-                <td class="right">{{g.currentDailySpend | number}}đ</td>
-                <td class="right amount-blue"><strong>{{g.optimalDailySpend | number}}đ</strong></td>
+                <td class="right">{{g.currentDailySpend | number}}Ä‘</td>
+                <td class="right amount-blue"><strong>{{g.optimalDailySpend | number}}Ä‘</strong></td>
                 <td class="right" [class.amount-green]="g.changePercent > 0" [class.amount-red]="g.changePercent < 0">
                   {{g.changePercent > 0 ? '+' : ''}}{{g.changePercent || 0}}%
                 </td>
@@ -645,14 +666,14 @@ const EXPENSE_CAT_LABELS: Record<string, string> = {
              [class.alert-info]="alert.severity === 'INFO'">
           <div class="alert-header">
             <span class="alert-severity">
-              {{alert.severity === 'CRITICAL' ? '🔴' : alert.severity === 'WARNING' ? '🟡' : '🔵'}}
+              {{alert.severity === 'CRITICAL' ? 'ðŸ”´' : alert.severity === 'WARNING' ? 'ðŸŸ¡' : 'ðŸ”µ'}}
             </span>
             <span class="alert-category-tag">{{alertCategoryLabel(alert.category)}}</span>
             <h4 class="alert-title">{{alert.title}}</h4>
           </div>
           <p class="alert-message">{{alert.message}}</p>
           <div class="alert-actions" *ngIf="alert.actions.length">
-            <span class="action-label">Hành động đề xuất:</span>
+            <span class="action-label">HÃ nh Ä‘á»™ng Ä‘á» xuáº¥t:</span>
             <div class="action-buttons">
               <button *ngFor="let action of alert.actions"
                       class="action-btn"
@@ -660,50 +681,50 @@ const EXPENSE_CAT_LABELS: Record<string, string> = {
                       [class.action-fund]="action.type === 'FUND_DEPOSIT' || action.type === 'FUND_WITHDRAW'"
                       [class.action-info]="action.type === 'INFO'"
                       (click)="handleAlertAction(action)">
-                {{action.type === 'NAVIGATE' ? '→' : action.type === 'INFO' ? 'ℹ️' : '💰'}} {{action.label}}
+                {{action.type === 'NAVIGATE' ? 'â†’' : action.type === 'INFO' ? 'â„¹ï¸' : 'ðŸ’°'}} {{action.label}}
               </button>
             </div>
           </div>
         </div>
       </div>
 
-      <p class="empty-text" *ngIf="!alertsData()!.alerts.length">✅ Không có cảnh báo nào. Tài chính đang ổn định!</p>
+      <p class="empty-text" *ngIf="!alertsData()!.alerts.length">âœ… KhÃ´ng cÃ³ cáº£nh bÃ¡o nÃ o. TÃ i chÃ­nh Ä‘ang á»•n Ä‘á»‹nh!</p>
     </ng-container>
-    <p class="empty-text" *ngIf="!alertsData()">Đang tải dữ liệu cảnh báo...</p>
+    <p class="empty-text" *ngIf="!alertsData()">Äang táº£i dá»¯ liá»‡u cáº£nh bÃ¡o...</p>
   </div>
 
-  <!-- ═══ MODALS ═══ -->
+  <!-- â•â•â• MODALS â•â•â• -->
 
   <!-- Modal: Create Bank Account -->
   <div class="modal-backdrop" *ngIf="showBankAccountModal()">
     <div class="modal">
-      <h3>Thêm tài khoản ngân hàng</h3>
+      <h3>ThÃªm tÃ i khoáº£n ngÃ¢n hÃ ng</h3>
       <form (ngSubmit)="submitBankAccount()" #baForm="ngForm">
-        <label>Tên ngân hàng <span class="req">*</span>
+        <label>TÃªn ngÃ¢n hÃ ng <span class="req">*</span>
           <input name="bankName" [(ngModel)]="bankAccountForm.bankName" required />
         </label>
-        <label>Số tài khoản <span class="req">*</span>
+        <label>Sá»‘ tÃ i khoáº£n <span class="req">*</span>
           <input name="accountNumber" [(ngModel)]="bankAccountForm.accountNumber" required />
         </label>
-        <label>Chủ tài khoản
+        <label>Chá»§ tÃ i khoáº£n
           <input name="accountHolder" [(ngModel)]="bankAccountForm.accountHolder" />
         </label>
-        <label>Chi nhánh
+        <label>Chi nhÃ¡nh
           <input name="branch" [(ngModel)]="bankAccountForm.branch" />
         </label>
-        <label>Số dư ban đầu (đ)
+        <label>Sá»‘ dÆ° ban Ä‘áº§u (Ä‘)
           <input name="openingBalance" type="number" [(ngModel)]="bankAccountForm.openingBalance" min="0" />
         </label>
-        <label>Mô tả
+        <label>MÃ´ táº£
           <textarea name="description" [(ngModel)]="bankAccountForm.description" rows="2"></textarea>
         </label>
         <label class="checkbox-label">
           <input type="checkbox" name="isPrimary" [(ngModel)]="bankAccountForm.isPrimary" />
-          Tài khoản chính
+          TÃ i khoáº£n chÃ­nh
         </label>
         <div class="form-actions">
-          <button type="submit" class="primary">Tạo</button>
-          <button type="button" (click)="showBankAccountModal.set(false)">Hủy</button>
+          <button type="submit" class="primary">Táº¡o</button>
+          <button type="button" (click)="showBankAccountModal.set(false)">Há»§y</button>
         </div>
         <p class="error" *ngIf="modalError()">{{modalError()}}</p>
       </form>
@@ -713,53 +734,53 @@ const EXPENSE_CAT_LABELS: Record<string, string> = {
   <!-- Modal: Record Bank Transaction -->
   <div class="modal-backdrop" *ngIf="showBankTxModal()">
     <div class="modal">
-      <h3>Ghi nhận giao dịch ngân hàng</h3>
+      <h3>Ghi nháº­n giao dá»‹ch ngÃ¢n hÃ ng</h3>
       <form (ngSubmit)="submitBankTx()">
-        <label>Tài khoản <span class="req">*</span>
+        <label>TÃ i khoáº£n <span class="req">*</span>
           <select [(ngModel)]="bankTxForm.bankAccountId" name="bankAccountId" required>
             <option *ngFor="let ba of bankAccounts()" [value]="ba._id">{{ba.bankName}} - {{ba.accountNumber}}</option>
           </select>
         </label>
-        <label>Loại giao dịch <span class="req">*</span>
+        <label>Loáº¡i giao dá»‹ch <span class="req">*</span>
           <select [(ngModel)]="bankTxForm.type" name="type" required>
-            <option value="DEPOSIT">Nạp vào</option>
-            <option value="WITHDRAWAL">Rút ra</option>
-            <option value="TRANSFER_IN">Chuyển khoản đến</option>
-            <option value="TRANSFER_OUT">Chuyển khoản đi</option>
-            <option value="INTEREST">Lãi suất</option>
-            <option value="FEE">Phí dịch vụ</option>
-            <option value="ADJUSTMENT">Điều chỉnh</option>
+            <option value="DEPOSIT">Náº¡p vÃ o</option>
+            <option value="WITHDRAWAL">RÃºt ra</option>
+            <option value="TRANSFER_IN">Chuyá»ƒn khoáº£n Ä‘áº¿n</option>
+            <option value="TRANSFER_OUT">Chuyá»ƒn khoáº£n Ä‘i</option>
+            <option value="INTEREST">LÃ£i suáº¥t</option>
+            <option value="FEE">PhÃ­ dá»‹ch vá»¥</option>
+            <option value="ADJUSTMENT">Äiá»u chá»‰nh</option>
           </select>
         </label>
-        <label>Danh mục
+        <label>Danh má»¥c
           <select [(ngModel)]="bankTxForm.category" name="category">
-            <option value="TUITION_INCOME">Thu học phí</option>
-            <option value="PAYROLL">Chi lương</option>
-            <option value="EXPENSE">Chi phí VH</option>
-            <option value="RESERVE_FUND">Quỹ dự phòng</option>
-            <option value="PETTY_CASH">Tiền mặt</option>
-            <option value="COMMISSION">Hoa hồng</option>
-            <option value="REFUND">Hoàn tiền</option>
-            <option value="OTHER">Khác</option>
+            <option value="TUITION_INCOME">Thu há»c phÃ­</option>
+            <option value="PAYROLL">Chi lÆ°Æ¡ng</option>
+            <option value="EXPENSE">Chi phÃ­ VH</option>
+            <option value="RESERVE_FUND">Quá»¹ dá»± phÃ²ng</option>
+            <option value="PETTY_CASH">Tiá»n máº·t</option>
+            <option value="COMMISSION">Hoa há»“ng</option>
+            <option value="REFUND">HoÃ n tiá»n</option>
+            <option value="OTHER">KhÃ¡c</option>
           </select>
         </label>
         <div class="form-grid">
-          <label>Số tiền (đ) <span class="req">*</span>
+          <label>Sá»‘ tiá»n (Ä‘) <span class="req">*</span>
             <input name="amount" type="number" [(ngModel)]="bankTxForm.amount" required min="0" />
           </label>
-          <label>Ngày giao dịch <span class="req">*</span>
+          <label>NgÃ y giao dá»‹ch <span class="req">*</span>
             <input name="transactionDate" type="date" [(ngModel)]="bankTxForm.transactionDate" required />
           </label>
         </div>
-        <label>Mô tả
+        <label>MÃ´ táº£
           <textarea name="description" [(ngModel)]="bankTxForm.description" rows="2"></textarea>
         </label>
-        <label>Tham chiếu (mã hóa đơn, lương...)
+        <label>Tham chiáº¿u (mÃ£ hÃ³a Ä‘Æ¡n, lÆ°Æ¡ng...)
           <input name="reference" [(ngModel)]="bankTxForm.reference" />
         </label>
         <div class="form-actions">
-          <button type="submit" class="primary">Ghi nhận</button>
-          <button type="button" (click)="showBankTxModal.set(false)">Hủy</button>
+          <button type="submit" class="primary">Ghi nháº­n</button>
+          <button type="button" (click)="showBankTxModal.set(false)">Há»§y</button>
         </div>
         <p class="error" *ngIf="modalError()">{{modalError()}}</p>
       </form>
@@ -769,38 +790,38 @@ const EXPENSE_CAT_LABELS: Record<string, string> = {
   <!-- Modal: Create Fund -->
   <div class="modal-backdrop" *ngIf="showFundModal()">
     <div class="modal">
-      <h3>Tạo quỹ mới</h3>
+      <h3>Táº¡o quá»¹ má»›i</h3>
       <form (ngSubmit)="submitFund()">
-        <label>Tên quỹ <span class="req">*</span>
+        <label>TÃªn quá»¹ <span class="req">*</span>
           <input name="name" [(ngModel)]="fundForm.name" required />
         </label>
-        <label>Loại quỹ <span class="req">*</span>
+        <label>Loáº¡i quá»¹ <span class="req">*</span>
           <select [(ngModel)]="fundForm.fundType" name="fundType" required>
-            <option value="RESERVE">Quỹ dự phòng</option>
-            <option value="PETTY_CASH">Quỹ tiền mặt</option>
-            <option value="MARKETING">Quỹ marketing</option>
-            <option value="TRAINING">Quỹ đào tạo</option>
-            <option value="BONUS">Quỹ thưởng</option>
-            <option value="OTHER">Quỹ khác</option>
+            <option value="RESERVE">Quá»¹ dá»± phÃ²ng</option>
+            <option value="PETTY_CASH">Quá»¹ tiá»n máº·t</option>
+            <option value="MARKETING">Quá»¹ marketing</option>
+            <option value="TRAINING">Quá»¹ Ä‘Ã o táº¡o</option>
+            <option value="BONUS">Quá»¹ thÆ°á»Ÿng</option>
+            <option value="OTHER">Quá»¹ khÃ¡c</option>
           </select>
         </label>
         <div class="form-grid">
-          <label>Số dư ban đầu (đ)
+          <label>Sá»‘ dÆ° ban Ä‘áº§u (Ä‘)
             <input name="currentBalance" type="number" [(ngModel)]="fundForm.currentBalance" min="0" />
           </label>
-          <label>Mức tối thiểu (đ)
+          <label>Má»©c tá»‘i thiá»ƒu (Ä‘)
             <input name="minimumBalance" type="number" [(ngModel)]="fundForm.minimumBalance" min="0" />
           </label>
-          <label>Mức đích (đ)
+          <label>Má»©c Ä‘Ã­ch (Ä‘)
             <input name="targetBalance" type="number" [(ngModel)]="fundForm.targetBalance" min="0" />
           </label>
         </div>
-        <label>Mô tả
+        <label>MÃ´ táº£
           <textarea name="description" [(ngModel)]="fundForm.description" rows="2"></textarea>
         </label>
         <div class="form-actions">
-          <button type="submit" class="primary">Tạo</button>
-          <button type="button" (click)="showFundModal.set(false)">Hủy</button>
+          <button type="submit" class="primary">Táº¡o</button>
+          <button type="button" (click)="showFundModal.set(false)">Há»§y</button>
         </div>
         <p class="error" *ngIf="modalError()">{{modalError()}}</p>
       </form>
@@ -810,32 +831,32 @@ const EXPENSE_CAT_LABELS: Record<string, string> = {
   <!-- Modal: Fund Transaction -->
   <div class="modal-backdrop" *ngIf="showFundTxModal()">
     <div class="modal">
-      <h3>Nạp/Rút quỹ: {{selectedFund()?.name}}</h3>
+      <h3>Náº¡p/RÃºt quá»¹: {{selectedFund()?.name}}</h3>
       <form (ngSubmit)="submitFundTx()">
-        <label>Loại <span class="req">*</span>
+        <label>Loáº¡i <span class="req">*</span>
           <select [(ngModel)]="fundTxForm.type" name="type" required>
-            <option value="DEPOSIT">Nạp vào</option>
-            <option value="WITHDRAW">Rút ra</option>
-            <option value="ADJUSTMENT">Điều chỉnh</option>
+            <option value="DEPOSIT">Náº¡p vÃ o</option>
+            <option value="WITHDRAW">RÃºt ra</option>
+            <option value="ADJUSTMENT">Äiá»u chá»‰nh</option>
           </select>
         </label>
         <div class="form-grid">
-          <label>Số tiền (đ) <span class="req">*</span>
+          <label>Sá»‘ tiá»n (Ä‘) <span class="req">*</span>
             <input name="amount" type="number" [(ngModel)]="fundTxForm.amount" required min="0" />
           </label>
-          <label>Ngày <span class="req">*</span>
+          <label>NgÃ y <span class="req">*</span>
             <input name="transactionDate" type="date" [(ngModel)]="fundTxForm.transactionDate" required />
           </label>
         </div>
-        <label>Mô tả
+        <label>MÃ´ táº£
           <textarea name="description" [(ngModel)]="fundTxForm.description" rows="2"></textarea>
         </label>
-        <label>Tham chiếu
+        <label>Tham chiáº¿u
           <input name="reference" [(ngModel)]="fundTxForm.reference" />
         </label>
         <div class="form-actions">
-          <button type="submit" class="primary">Thực hiện</button>
-          <button type="button" (click)="showFundTxModal.set(false)">Hủy</button>
+          <button type="submit" class="primary">Thá»±c hiá»‡n</button>
+          <button type="button" (click)="showFundTxModal.set(false)">Há»§y</button>
         </div>
         <p class="error" *ngIf="modalError()">{{modalError()}}</p>
       </form>
@@ -1039,13 +1060,13 @@ const EXPENSE_CAT_LABELS: Record<string, string> = {
 export class FinancialControlComponent implements OnInit {
   Math = Math;
   tabs = [
-    { key: 'overview', label: 'Tổng quan', icon: '📊' },
-    { key: 'alerts', label: 'Cảnh báo', icon: '🚨' },
-    { key: 'bank', label: 'Ngân hàng', icon: '🏦' },
-    { key: 'funds', label: 'Quỹ', icon: '🏛️' },
-    { key: 'cashflow', label: 'Dòng tiền', icon: '💰' },
-    { key: 'pnl', label: 'P&L', icon: '📈' },
-    { key: 'reconciliation', label: 'Đối soát', icon: '🔄' },
+    { key: 'overview', label: 'Tá»•ng quan', icon: 'ðŸ“Š' },
+    { key: 'alerts', label: 'Cáº£nh bÃ¡o', icon: 'ðŸš¨' },
+    { key: 'bank', label: 'NgÃ¢n hÃ ng', icon: 'ðŸ¦' },
+    { key: 'funds', label: 'Quá»¹', icon: 'ðŸ›ï¸' },
+    { key: 'cashflow', label: 'DÃ²ng tiá»n', icon: 'ðŸ’°' },
+    { key: 'pnl', label: 'P&L', icon: 'ðŸ“ˆ' },
+    { key: 'reconciliation', label: 'Äá»‘i soÃ¡t', icon: 'ðŸ”„' },
   ];
   activeTab = 'overview';
 
@@ -1073,6 +1094,7 @@ export class FinancialControlComponent implements OnInit {
   bankTxType = '';
   bankTxKeyword = '';
   cashFlowGroupBy = 'month';
+  pnlBasis: 'cash' | 'accrual' = 'cash';
 
   // Modals
   showBankAccountModal = signal(false);
@@ -1087,7 +1109,7 @@ export class FinancialControlComponent implements OnInit {
   fundForm: any = { name: '', fundType: 'RESERVE', currentBalance: 0, minimumBalance: 0, targetBalance: 0, description: '' };
   fundTxForm: any = { type: 'DEPOSIT', amount: 0, transactionDate: '', description: '', reference: '' };
 
-  constructor(private service: FinancialControlService, private auth: AuthService) {}
+  constructor(private service: FinancialControlService, private auth: AuthService, private router: Router) {}
 
   ngOnInit() { this.reload(); }
 
@@ -1142,7 +1164,7 @@ export class FinancialControlComponent implements OnInit {
           this.loadCashFlow();
           break;
         case 'pnl':
-          this.pnl.set(await this.service.getProfitAndLoss(this.startDate, this.endDate));
+          await this.loadPnl();
           break;
         case 'reconciliation':
           this.reconciliation.set(await this.service.getReconciliationReport(this.startDate, this.endDate));
@@ -1168,6 +1190,10 @@ export class FinancialControlComponent implements OnInit {
     this.cashFlow.set(await this.service.getCashFlow(params));
   }
 
+  async loadPnl() {
+    this.pnl.set(await this.service.getProfitAndLoss(this.startDate, this.endDate, this.pnlBasis));
+  }
+
   selectBankAccount(ba: BankAccount) {
     this.selectedBankAccount.set(ba);
     this.loadBankTransactions();
@@ -1186,7 +1212,7 @@ export class FinancialControlComponent implements OnInit {
     this.fundTransactions.set(await this.service.getFundTransactions(params));
   }
 
-  // ─── Bank Account Modal ────────────────────────────────────────
+  // â”€â”€â”€ Bank Account Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   openBankAccountModal() {
     this.bankAccountForm = { bankName: '', accountNumber: '', accountHolder: '', branch: '', openingBalance: 0, description: '', isPrimary: false };
     this.modalError.set('');
@@ -1195,12 +1221,12 @@ export class FinancialControlComponent implements OnInit {
 
   async submitBankAccount() {
     const res = await this.service.createBankAccount(this.bankAccountForm);
-    if (!res.ok) { this.modalError.set(res.message || 'Lỗi'); return; }
+    if (!res.ok) { this.modalError.set(res.message || 'Lá»—i'); return; }
     this.showBankAccountModal.set(false);
     this.bankAccounts.set(await this.service.getBankAccounts());
   }
 
-  // ─── Bank Transaction Modal ────────────────────────────────────
+  // â”€â”€â”€ Bank Transaction Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   openBankTxModal() {
     this.bankTxForm = {
       bankAccountId: this.selectedBankAccount()?._id || (this.bankAccounts().length ? this.bankAccounts()[0]._id : ''),
@@ -1212,20 +1238,20 @@ export class FinancialControlComponent implements OnInit {
 
   async submitBankTx() {
     const res = await this.service.recordBankTransaction(this.bankTxForm);
-    if (!res.ok) { this.modalError.set(res.message || 'Lỗi'); return; }
+    if (!res.ok) { this.modalError.set(res.message || 'Lá»—i'); return; }
     this.showBankTxModal.set(false);
     this.bankAccounts.set(await this.service.getBankAccounts());
     this.loadBankTransactions();
   }
 
   async reconcile(txId: string) {
-    if (!confirm('Xác nhận đối soát giao dịch này?')) return;
+    if (!confirm('XÃ¡c nháº­n Ä‘á»‘i soÃ¡t giao dá»‹ch nÃ y?')) return;
     const res = await this.service.reconcileTransaction(txId);
     if (!res.ok) { alert(res.message); return; }
     this.loadBankTransactions();
   }
 
-  // ─── Fund Modal ────────────────────────────────────────────────
+  // â”€â”€â”€ Fund Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   openFundModal() {
     this.fundForm = { name: '', fundType: 'RESERVE', currentBalance: 0, minimumBalance: 0, targetBalance: 0, description: '' };
     this.modalError.set('');
@@ -1234,12 +1260,12 @@ export class FinancialControlComponent implements OnInit {
 
   async submitFund() {
     const res = await this.service.createFund(this.fundForm);
-    if (!res.ok) { this.modalError.set(res.message || 'Lỗi'); return; }
+    if (!res.ok) { this.modalError.set(res.message || 'Lá»—i'); return; }
     this.showFundModal.set(false);
     this.funds.set(await this.service.getFunds());
   }
 
-  // ─── Fund Transaction Modal ────────────────────────────────────
+  // â”€â”€â”€ Fund Transaction Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   openFundTxModal() {
     this.fundTxForm = {
       type: 'DEPOSIT', amount: 0, transactionDate: new Date().toISOString().split('T')[0], description: '', reference: '',
@@ -1253,26 +1279,26 @@ export class FinancialControlComponent implements OnInit {
     if (!fund) return;
     const data = { ...this.fundTxForm, fundId: fund._id };
     const res = await this.service.recordFundTransaction(data);
-    if (!res.ok) { this.modalError.set(res.message || 'Lỗi'); return; }
+    if (!res.ok) { this.modalError.set(res.message || 'Lá»—i'); return; }
     this.showFundTxModal.set(false);
     this.funds.set(await this.service.getFunds());
     this.selectedFund.set(this.funds().find(f => f._id === fund._id) || null);
     this.loadFundTransactions();
   }
 
-  // ─── Alerts helpers ─────────────────────────────────────────────
+  // â”€â”€â”€ Alerts helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   private readonly ALERT_CATEGORY_LABELS: Record<string, string> = {
     MARKETING: 'Marketing',
-    CASH_FLOW: 'Dòng tiền',
-    RESERVE: 'Dự phòng',
-    FUND: 'Quỹ',
-    OBLIGATIONS: 'Nghĩa vụ TT',
-    METRICS: 'Chỉ số',
-    PROFITABILITY: 'Lợi nhuận',
-    RECONCILIATION: 'Đối soát',
-    EXPENSES: 'Chi phí',
-    RECEIVABLE: 'Công nợ',
+    CASH_FLOW: 'DÃ²ng tiá»n',
+    RESERVE: 'Dá»± phÃ²ng',
+    FUND: 'Quá»¹',
+    OBLIGATIONS: 'NghÄ©a vá»¥ TT',
+    METRICS: 'Chá»‰ sá»‘',
+    PROFITABILITY: 'Lá»£i nhuáº­n',
+    RECONCILIATION: 'Äá»‘i soÃ¡t',
+    EXPENSES: 'Chi phÃ­',
+    RECEIVABLE: 'CÃ´ng ná»£',
     REVENUE: 'Doanh thu',
   };
 
@@ -1280,21 +1306,27 @@ export class FinancialControlComponent implements OnInit {
     return this.ALERT_CATEGORY_LABELS[cat] || cat;
   }
 
+  private normalizeAppTarget(target: string): string {
+    const trimmed = (target || '').trim();
+    if (!trimmed) return '/app/dashboard';
+    if (trimmed.startsWith('/app/')) return trimmed;
+    if (trimmed.startsWith('/')) return `/app${trimmed}`;
+    return `/app/${trimmed}`;
+  }
+
   handleAlertAction(action: { label: string; type: string; target?: string; amount?: number }) {
     switch (action.type) {
       case 'NAVIGATE':
-        if (action.target?.startsWith('/financial-control')) {
-          // Internal tab navigation
-          const tabMatch = action.target.match(/tab=(\w+)/);
+        if (!action.target) break;
+        const normalizedTarget = this.normalizeAppTarget(action.target);
+        if (normalizedTarget.startsWith('/app/financial-control')) {
+          const tabMatch = normalizedTarget.match(/[?&]tab=(\w+)/);
           if (tabMatch) {
             this.activeTab = tabMatch[1];
             this.loadTab(tabMatch[1]);
           }
-        } else if (action.target) {
-          // Navigate to other pages — strip leading '/'
-          const route = action.target.replace(/^\//, '');
-          window.location.hash = route;
         }
+        this.router.navigateByUrl(normalizedTarget);
         break;
       case 'FUND_DEPOSIT':
         // Open fund transaction modal for deposit
@@ -1310,7 +1342,7 @@ export class FinancialControlComponent implements OnInit {
                 type: 'DEPOSIT',
                 amount: action.amount || 0,
                 transactionDate: new Date().toISOString().split('T')[0],
-                description: `Nạp quỹ theo đề xuất cảnh báo: ${action.label}`,
+                description: `Náº¡p quá»¹ theo Ä‘á» xuáº¥t cáº£nh bÃ¡o: ${action.label}`,
                 reference: '',
               };
               this.modalError.set('');
@@ -1332,7 +1364,7 @@ export class FinancialControlComponent implements OnInit {
                 type: 'WITHDRAW',
                 amount: action.amount || 0,
                 transactionDate: new Date().toISOString().split('T')[0],
-                description: `Rút quỹ theo đề xuất: ${action.label}`,
+                description: `RÃºt quá»¹ theo Ä‘á» xuáº¥t: ${action.label}`,
                 reference: '',
               };
               this.modalError.set('');

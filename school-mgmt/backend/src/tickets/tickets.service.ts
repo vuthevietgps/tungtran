@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -40,6 +41,180 @@ export class TicketsService {
     private readonly classesService: ClassesService,
   ) {}
 
+  private toObjectId(value?: string | Types.ObjectId): Types.ObjectId | undefined {
+    if (!value) return undefined;
+    return typeof value === 'string' ? new Types.ObjectId(value) : value;
+  }
+
+  private async findSessionContext(sessionId: string | Types.ObjectId) {
+    const sid = this.toObjectId(sessionId);
+    const session = await this.ticketModel.db.collection('sessions').findOne(
+      { _id: sid as Types.ObjectId },
+      {
+        projection: {
+          _id: 1,
+          classId: 1,
+          studentId: 1,
+          teacherId: 1,
+          parentUserId: 1,
+          isPaid: 1,
+          amountCharged: 1,
+        },
+      },
+    );
+    if (!session) throw new NotFoundException('Buoi hoc khong ton tai');
+    return session as any;
+  }
+
+  private async resolveParentUserIdFromStudent(studentId: Types.ObjectId): Promise<Types.ObjectId | null> {
+    const student = await this.ticketModel.db.collection('students').findOne(
+      { _id: studentId },
+      { projection: { parentUserId: 1 } },
+    );
+    return (student?.parentUserId as Types.ObjectId) || null;
+  }
+
+  private async buildRefundPayload(ticket: TicketDocument, refundAmount: number) {
+    if (!ticket.sessionId) {
+      throw new BadRequestException('Ticket hoan tien bat buoc phai gan sessionId');
+    }
+    const session = await this.findSessionContext(ticket.sessionId as Types.ObjectId);
+
+    if (!session.isPaid) {
+      throw new BadRequestException(
+        'Buoi hoc nay chua tru vi phu huynh, khong the hoan tien',
+      );
+    }
+
+    if (!session.classId || !session.studentId) {
+      throw new BadRequestException(
+        'Session khong day du classId/studentId de hoan tien',
+      );
+    }
+
+    const chargedAmount = Number(session.amountCharged || 0);
+    if (chargedAmount <= 0) {
+      throw new BadRequestException(
+        'Buoi hoc nay khong co so tien da tru hop le de hoan',
+      );
+    }
+    if (refundAmount > chargedAmount) {
+      throw new BadRequestException(
+        `So tien hoan (${refundAmount}) vuot qua so tien da tru (${chargedAmount})`,
+      );
+    }
+
+    if (ticket.classId && ticket.classId.toString() !== session.classId.toString()) {
+      throw new BadRequestException('Class cua ticket khong khop voi class cua session');
+    }
+    if (ticket.studentId && ticket.studentId.toString() !== session.studentId.toString()) {
+      throw new BadRequestException('Hoc sinh cua ticket khong khop voi session');
+    }
+
+    let parentUserId = session.parentUserId?.toString() || '';
+    if (!parentUserId) {
+      const parentFromStudent = await this.resolveParentUserIdFromStudent(session.studentId);
+      parentUserId = parentFromStudent?.toString() || '';
+    }
+    if (!parentUserId) {
+      throw new BadRequestException(
+        'Khong xac dinh duoc parentUserId cua session de hoan tien',
+      );
+    }
+
+    return {
+      parentUserId,
+      sessionId: session._id.toString(),
+      classId: session.classId.toString(),
+      studentId: session.studentId.toString(),
+      refundAmount,
+    };
+  }
+
+  private computeDueDate(base: Date, priority: TicketPriority): Date {
+    const dueDate = new Date(base);
+    switch (priority) {
+      case TicketPriority.URGENT:
+        dueDate.setHours(dueDate.getHours() + 4);
+        break;
+      case TicketPriority.HIGH:
+        dueDate.setHours(dueDate.getHours() + 24);
+        break;
+      case TicketPriority.MEDIUM:
+        dueDate.setHours(dueDate.getHours() + 48);
+        break;
+      case TicketPriority.LOW:
+        dueDate.setHours(dueDate.getHours() + 72);
+        break;
+      default:
+        dueDate.setHours(dueDate.getHours() + 48);
+        break;
+    }
+    return dueDate;
+  }
+
+  private shouldBeOverdue(ticket: { dueDate?: Date; status: TicketStatus }): boolean {
+    if (!ticket.dueDate) return false;
+    if ([TicketStatus.RESOLVED, TicketStatus.CLOSED, TicketStatus.CANCELLED].includes(ticket.status)) {
+      return false;
+    }
+    return new Date(ticket.dueDate).getTime() < Date.now();
+  }
+
+  private async canTakeAttendanceForTicketClass(ticket: TicketDocument, userId: string): Promise<boolean> {
+    let classId = ticket.classId as Types.ObjectId | undefined;
+    if (!classId && ticket.sessionId) {
+      const session = await this.ticketModel.db.collection('sessions').findOne(
+        { _id: ticket.sessionId as Types.ObjectId },
+        { projection: { classId: 1 } },
+      ) as any;
+      if (session?.classId) classId = session.classId as Types.ObjectId;
+    }
+    if (!classId) return false;
+
+    const classroom = await this.ticketModel.db.collection('classrooms').findOne(
+      { _id: classId },
+      {
+        projection: {
+          teacher: 1,
+          substituteTeachers: 1,
+        },
+      },
+    ) as any;
+    if (!classroom) return false;
+
+    if (classroom.teacher?.toString() === userId) return true;
+
+    let referenceDate = ticket.createdAt ? new Date(ticket.createdAt) : new Date();
+    if (ticket.sessionId) {
+      const session = await this.ticketModel.db.collection('sessions').findOne(
+        { _id: ticket.sessionId as Types.ObjectId },
+        { projection: { scheduledDate: 1 } },
+      ) as any;
+      if (session?.scheduledDate) {
+        referenceDate = new Date(session.scheduledDate);
+      }
+    }
+
+    const day = new Date(
+      Date.UTC(
+        referenceDate.getUTCFullYear(),
+        referenceDate.getUTCMonth(),
+        referenceDate.getUTCDate(),
+      ),
+    );
+
+    const subs = Array.isArray(classroom.substituteTeachers) ? classroom.substituteTeachers : [];
+    return subs.some((s: any) => {
+      if (s?.teacherId?.toString() !== userId) return false;
+      const from = new Date(s.fromDate);
+      const to = new Date(s.toDate);
+      from.setUTCHours(0, 0, 0, 0);
+      to.setUTCHours(23, 59, 59, 999);
+      return day >= from && day <= to;
+    });
+  }
+
   // ══════════════════════════════════════════════════════════════════
   //  CREATE
   // ══════════════════════════════════════════════════════════════════
@@ -61,20 +236,65 @@ export class TicketsService {
     }
 
     // SLA: set due date based on priority
-    const dueDate = new Date(now);
-    switch (dto.priority || TicketPriority.MEDIUM) {
-      case TicketPriority.URGENT:
-        dueDate.setHours(dueDate.getHours() + 4);
-        break;
-      case TicketPriority.HIGH:
-        dueDate.setHours(dueDate.getHours() + 24);
-        break;
-      case TicketPriority.MEDIUM:
-        dueDate.setHours(dueDate.getHours() + 48);
-        break;
-      case TicketPriority.LOW:
-        dueDate.setHours(dueDate.getHours() + 72);
-        break;
+    const effectivePriority = dto.priority || TicketPriority.MEDIUM;
+    const dueDate = this.computeDueDate(now, effectivePriority);
+
+    const isParentActor = userRole === Role.PARENT;
+    const isTeacherActor = userRole === Role.TEACHER;
+
+    if (isParentActor && dto.parentId && dto.parentId !== userId) {
+      throw new ForbiddenException('Phu huynh chi duoc tao ticket cho chinh minh');
+    }
+    if (isTeacherActor && dto.teacherId && dto.teacherId !== userId) {
+      throw new ForbiddenException('Giao vien chi duoc tao ticket cho chinh minh');
+    }
+
+    let sessionId = this.toObjectId(dto.sessionId);
+    let classId = this.toObjectId(dto.classId);
+    let studentId = this.toObjectId(dto.studentId);
+    let teacherId = isTeacherActor ? new Types.ObjectId(userId) : this.toObjectId(dto.teacherId);
+    let parentId = isParentActor ? new Types.ObjectId(userId) : this.toObjectId(dto.parentId);
+
+    if (sessionId) {
+      const session = await this.findSessionContext(sessionId);
+      if (classId && session.classId && classId.toString() !== session.classId.toString()) {
+        throw new BadRequestException('classId khong khop voi sessionId');
+      }
+      if (studentId && session.studentId && studentId.toString() !== session.studentId.toString()) {
+        throw new BadRequestException('studentId khong khop voi sessionId');
+      }
+      if (teacherId && session.teacherId && teacherId.toString() !== session.teacherId.toString()) {
+        throw new BadRequestException('teacherId khong khop voi sessionId');
+      }
+      if (parentId && session.parentUserId && parentId.toString() !== session.parentUserId.toString()) {
+        throw new BadRequestException('parentId khong khop voi sessionId');
+      }
+
+      classId = session.classId ? new Types.ObjectId(session.classId) : classId;
+      studentId = session.studentId ? new Types.ObjectId(session.studentId) : studentId;
+      teacherId = session.teacherId ? new Types.ObjectId(session.teacherId) : teacherId;
+      if (session.parentUserId) {
+        parentId = new Types.ObjectId(session.parentUserId);
+      } else if (studentId) {
+        const parentFromStudent = await this.resolveParentUserIdFromStudent(studentId);
+        if (parentFromStudent) parentId = parentFromStudent;
+      }
+
+      if (isParentActor && !parentId) {
+        throw new ForbiddenException(
+          'Khong xac dinh duoc phu huynh cua session de tao ticket',
+        );
+      }
+    } else if (studentId && !parentId) {
+      const parentFromStudent = await this.resolveParentUserIdFromStudent(studentId);
+      if (parentFromStudent) parentId = parentFromStudent;
+    }
+
+    if (isParentActor && parentId && parentId.toString() !== userId) {
+      throw new ForbiddenException('Phu huynh khong duoc tao ticket cho hoc sinh khong thuoc minh');
+    }
+    if (isTeacherActor && teacherId && teacherId.toString() !== userId) {
+      throw new ForbiddenException('Giao vien khong duoc tao ticket cho nguoi khac');
     }
 
     const ticket = await this.ticketModel.create({
@@ -82,14 +302,14 @@ export class TicketsService {
       type: dto.type,
       subject: dto.subject,
       description: dto.description,
-      priority: dto.priority || TicketPriority.MEDIUM,
+      priority: effectivePriority,
       createdBy: new Types.ObjectId(userId),
       createdByRole: userRole,
-      sessionId: dto.sessionId ? new Types.ObjectId(dto.sessionId) : undefined,
-      classId: dto.classId ? new Types.ObjectId(dto.classId) : undefined,
-      studentId: dto.studentId ? new Types.ObjectId(dto.studentId) : undefined,
-      teacherId: dto.teacherId ? new Types.ObjectId(dto.teacherId) : undefined,
-      parentId: dto.parentId ? new Types.ObjectId(dto.parentId) : undefined,
+      sessionId,
+      classId,
+      studentId,
+      teacherId,
+      parentId,
       payrollId: dto.payrollId ? new Types.ObjectId(dto.payrollId) : undefined,
       ledgerEntryId: dto.ledgerEntryId ? new Types.ObjectId(dto.ledgerEntryId) : undefined,
       substituteTeacherId: dto.substituteTeacherId ? new Types.ObjectId(dto.substituteTeacherId) : undefined,
@@ -97,6 +317,7 @@ export class TicketsService {
       substituteToDate: dto.substituteToDate ? new Date(dto.substituteToDate) : undefined,
       attachments: dto.attachments || [],
       dueDate,
+      isOverdue: false,
     });
 
     this.logger.log(`Ticket created: ${ticketCode} | type: ${dto.type} | priority: ${dto.priority || 'MEDIUM'}`);
@@ -107,13 +328,14 @@ export class TicketsService {
   //  QUERY
   // ══════════════════════════════════════════════════════════════════
 
-  /** Find tickets where user is creator OR a referenced party (teacherId/parentId) */
+  /** Find tickets where user is creator OR a referenced party OR assignee */
   async findMyTickets(userId: string, query: QueryTicketDto) {
     const userOid = new Types.ObjectId(userId);
     const orConditions: FilterQuery<Ticket>[] = [
       { createdBy: userOid },
       { teacherId: userOid },
       { parentId: userOid },
+      { assignedTo: userOid },
     ];
 
     const filter: FilterQuery<Ticket> = { $or: orConditions };
@@ -214,7 +436,8 @@ export class TicketsService {
       const isOwner = ticketObj.createdBy?._id?.toString() === userId;
       const isParty =
         ticketObj.teacherId?._id?.toString() === userId ||
-        ticketObj.parentId?._id?.toString() === userId;
+        ticketObj.parentId?._id?.toString() === userId ||
+        ticketObj.assignedTo?._id?.toString() === userId;
       if (!isOwner && !isParty) {
         throw new NotFoundException('Ticket không tồn tại');
       }
@@ -229,14 +452,37 @@ export class TicketsService {
 
   async update(id: string, dto: UpdateTicketDto): Promise<TicketDocument> {
     const ticket = await this.ticketModel.findById(id);
-    if (!ticket) throw new NotFoundException('Ticket không tồn tại');
+    if (!ticket) throw new NotFoundException('Ticket khong ton tai');
 
     if ([TicketStatus.RESOLVED, TicketStatus.CLOSED, TicketStatus.CANCELLED].includes(ticket.status)) {
-      throw new BadRequestException('Không thể sửa ticket đã đóng/hủy');
+      throw new BadRequestException('Khong the sua ticket da dong/huy');
     }
 
-    if (dto.priority) ticket.priority = dto.priority;
+    if (dto.priority) {
+      ticket.priority = dto.priority;
+      ticket.dueDate = this.computeDueDate(new Date(), dto.priority);
+    }
+
     if (dto.assignedTo) {
+      const assignedUser = await this.ticketModel.db.collection('users').findOne(
+        { _id: new Types.ObjectId(dto.assignedTo) },
+        { projection: { _id: 1, role: 1 } },
+      ) as { _id: Types.ObjectId; role: Role } | null;
+      if (!assignedUser) {
+        throw new BadRequestException('Nguoi duoc phan cong khong ton tai');
+      }
+
+      const isOpsOrDirector = [Role.OPS, Role.DIRECTOR].includes(assignedUser.role);
+      const hasClassAttendancePermission =
+        assignedUser.role === Role.TEACHER &&
+        await this.canTakeAttendanceForTicketClass(ticket, dto.assignedTo);
+
+      if (!isOpsOrDirector && !hasClassAttendancePermission) {
+        throw new BadRequestException(
+          'Chi phan cong duoc cho OPS/DIRECTOR hoac nguoi co quyen diem danh cua lop lien quan',
+        );
+      }
+
       ticket.assignedTo = new Types.ObjectId(dto.assignedTo);
       ticket.assignedAt = new Date();
       if (ticket.status === TicketStatus.OPEN) {
@@ -244,6 +490,7 @@ export class TicketsService {
       }
     }
 
+    ticket.isOverdue = this.shouldBeOverdue(ticket);
     return ticket.save();
   }
 
@@ -260,7 +507,8 @@ export class TicketsService {
       const isOwner = ticket.createdBy?.toString() === actor.sub;
       const isParty =
         (ticket as any).teacherId?.toString() === actor.sub ||
-        (ticket as any).parentId?.toString() === actor.sub;
+        (ticket as any).parentId?.toString() === actor.sub ||
+        (ticket as any).assignedTo?.toString() === actor.sub;
       if (!isOwner && !isParty) {
         throw new NotFoundException('Ticket không tồn tại');
       }
@@ -303,7 +551,8 @@ export class TicketsService {
       const isOwner = ticket.createdBy?.toString() === actor.sub;
       const isParty =
         ticket.teacherId?.toString() === actor.sub ||
-        ticket.parentId?.toString() === actor.sub;
+        ticket.parentId?.toString() === actor.sub ||
+        ticket.assignedTo?.toString() === actor.sub;
       if (!isOwner && !isParty) {
         throw new NotFoundException('Ticket không tồn tại');
       }
@@ -328,38 +577,75 @@ export class TicketsService {
   /** OPS nhận xử lý */
   async startProcessing(id: string, opsUserId: string): Promise<TicketDocument> {
     const ticket = await this.ticketModel.findById(id);
-    if (!ticket) throw new NotFoundException('Ticket không tồn tại');
+    if (!ticket) throw new NotFoundException('Ticket khong ton tai');
 
     if (![TicketStatus.OPEN, TicketStatus.WAITING_INFO].includes(ticket.status)) {
-      throw new BadRequestException('Chỉ nhận xử lý ticket OPEN hoặc WAITING_INFO');
+      throw new BadRequestException('Chi nhan xu ly ticket OPEN hoac WAITING_INFO');
     }
 
     ticket.status = TicketStatus.IN_PROGRESS;
     ticket.assignedTo = new Types.ObjectId(opsUserId);
     ticket.assignedAt = new Date();
+    ticket.isOverdue = this.shouldBeOverdue(ticket);
     return ticket.save();
   }
 
-  /** Yêu cầu thêm thông tin */
   async requestInfo(id: string): Promise<TicketDocument> {
     const ticket = await this.ticketModel.findById(id);
-    if (!ticket) throw new NotFoundException('Ticket không tồn tại');
+    if (!ticket) throw new NotFoundException('Ticket khong ton tai');
 
     if (![TicketStatus.OPEN, TicketStatus.IN_PROGRESS].includes(ticket.status)) {
-      throw new BadRequestException('Chỉ yêu cầu thêm thông tin được khi ticket đang OPEN hoặc IN_PROGRESS');
+      throw new BadRequestException('Chi yeu cau them thong tin khi ticket dang OPEN hoac IN_PROGRESS');
     }
 
     ticket.status = TicketStatus.WAITING_INFO;
+    ticket.isOverdue = this.shouldBeOverdue(ticket);
     return ticket.save();
   }
 
-  /** Giải quyết ticket + hoàn tiền (nếu có) */
   async resolve(id: string, userId: string, dto: ResolveTicketDto): Promise<TicketDocument> {
     const ticket = await this.ticketModel.findById(id);
-    if (!ticket) throw new NotFoundException('Ticket không tồn tại');
+    if (!ticket) throw new NotFoundException('Ticket khong ton tai');
 
     if ([TicketStatus.RESOLVED, TicketStatus.CLOSED, TicketStatus.CANCELLED].includes(ticket.status)) {
-      throw new BadRequestException('Ticket đã được xử lý');
+      throw new BadRequestException('Ticket da duoc xu ly');
+    }
+
+    if (dto.outcome === 'APPROVED' && dto.refundAmount && dto.refundAmount > 0) {
+      const refundPayload = await this.buildRefundPayload(ticket, dto.refundAmount);
+      await this.walletsService.refundForSession(refundPayload, userId);
+      this.logger.log(`Ticket ${ticket.ticketCode} resolved with refund: ${dto.refundAmount}d`);
+    }
+
+    if (
+      ticket.type === TicketType.SUBSTITUTE_TEACHER &&
+      dto.outcome === 'APPROVED' &&
+      ticket.classId &&
+      ticket.substituteTeacherId
+    ) {
+      const fromDate = ticket.substituteFromDate || new Date();
+      const toDate = ticket.substituteToDate || ticket.substituteFromDate || new Date();
+      const payRate = dto.substitutePayRate ?? (ticket as any).substitutePayRate ?? 0;
+      const canCreateLink = dto.substituteCanCreateLink ?? (ticket as any).substituteCanCreateLink ?? true;
+
+      await this.classesService.addSubstituteTeacher(
+        ticket.classId.toString(),
+        {
+          teacherId: ticket.substituteTeacherId.toString(),
+          fromDate,
+          toDate,
+          payRate,
+          canCreateLink,
+          ticketId: ticket._id?.toString(),
+          approvedBy: userId,
+        },
+      );
+
+      ticket.substitutePayRate = payRate;
+      ticket.substituteCanCreateLink = canCreateLink;
+      this.logger.log(
+        `Ticket ${ticket.ticketCode}: Added substitute teacher ${ticket.substituteTeacherId} to class ${ticket.classId} (${fromDate.toISOString().slice(0, 10)} -> ${toDate.toISOString().slice(0, 10)}, pay: ${payRate})`,
+      );
     }
 
     ticket.status = TicketStatus.RESOLVED;
@@ -370,72 +656,10 @@ export class TicketsService {
       resolvedBy: new Types.ObjectId(userId),
       resolvedAt: new Date(),
     };
+    ticket.isOverdue = false;
 
     await ticket.save();
 
-    // ── Auto-process SUBSTITUTE_TEACHER ticket ──
-    if (
-      ticket.type === TicketType.SUBSTITUTE_TEACHER &&
-      dto.outcome === 'APPROVED' &&
-      ticket.classId &&
-      ticket.substituteTeacherId
-    ) {
-      try {
-        const fromDate = ticket.substituteFromDate || new Date();
-        const toDate = ticket.substituteToDate || ticket.substituteFromDate || new Date();
-        const payRate = dto.substitutePayRate ?? (ticket as any).substitutePayRate ?? 0;
-        const canCreateLink = dto.substituteCanCreateLink ?? (ticket as any).substituteCanCreateLink ?? true;
-
-        // Update ticket with resolved pay rate
-        ticket.substitutePayRate = payRate;
-        ticket.substituteCanCreateLink = canCreateLink;
-        await ticket.save();
-
-        await this.classesService.addSubstituteTeacher(
-          ticket.classId.toString(),
-          {
-            teacherId: ticket.substituteTeacherId.toString(),
-            fromDate,
-            toDate,
-            payRate,
-            canCreateLink,
-            ticketId: ticket._id?.toString(),
-            approvedBy: userId,
-          },
-        );
-        this.logger.log(
-          `Ticket ${ticket.ticketCode}: Added substitute teacher ${ticket.substituteTeacherId} to class ${ticket.classId} (${fromDate.toISOString().slice(0,10)} → ${toDate.toISOString().slice(0,10)}, pay: ${payRate})`,
-        );
-      } catch (err) {
-        this.logger.warn(
-          `Ticket ${ticket.ticketCode}: Failed to add substitute teacher: ${(err as Error).message}`,
-        );
-      }
-    }
-
-    // Auto-refund nếu outcome = APPROVED và có refundAmount
-    if (dto.outcome === 'APPROVED' && dto.refundAmount && dto.refundAmount > 0) {
-      // Luôn hoàn tiền cho parent, không phải người tạo ticket
-      const parentUserId = ticket.parentId?.toString();
-      if (!parentUserId) {
-        this.logger.warn(`Ticket ${ticket.ticketCode} refund skipped: no parentId`);
-      } else {
-        try {
-          await this.walletsService.refundForSession({
-            parentUserId,
-            sessionId: ticket.sessionId?.toString() || '',
-            classId: ticket.classId?.toString() || '',
-            studentId: ticket.studentId?.toString() || '',
-            refundAmount: dto.refundAmount,
-          });
-          this.logger.log(`Ticket ${ticket.ticketCode} resolved with refund: ${dto.refundAmount}đ`);
-        } catch (err) {
-          this.logger.warn(`Refund failed for ticket ${ticket.ticketCode}: ${(err as Error).message}`);
-        }
-      }
-    }
-
-    // Return fresh data with populated refs
     return this.ticketModel
       .findById(id)
       .populate('createdBy', 'fullName email phone role')
@@ -448,47 +672,47 @@ export class TicketsService {
       .populate('resolution.resolvedBy', 'fullName') as Promise<TicketDocument>;
   }
 
-  /** Đóng ticket (chỉ sau khi resolved) */
   async close(id: string): Promise<TicketDocument> {
     const ticket = await this.ticketModel.findById(id);
-    if (!ticket) throw new NotFoundException('Ticket không tồn tại');
+    if (!ticket) throw new NotFoundException('Ticket khong ton tai');
 
     if (ticket.status !== TicketStatus.RESOLVED) {
-      throw new BadRequestException('Chỉ đóng được ticket đã RESOLVED');
+      throw new BadRequestException('Chi dong duoc ticket da RESOLVED');
     }
 
     ticket.status = TicketStatus.CLOSED;
+    ticket.isOverdue = false;
     return ticket.save();
   }
 
-  /** Người tạo hủy ticket */
   async cancel(id: string, userId: string): Promise<TicketDocument> {
     const ticket = await this.ticketModel.findById(id);
-    if (!ticket) throw new NotFoundException('Ticket không tồn tại');
+    if (!ticket) throw new NotFoundException('Ticket khong ton tai');
 
     if (ticket.createdBy.toString() !== userId) {
-      throw new BadRequestException('Chỉ người tạo mới hủy được ticket');
+      throw new BadRequestException('Chi nguoi tao moi huy duoc ticket');
     }
 
     if ([TicketStatus.RESOLVED, TicketStatus.CLOSED].includes(ticket.status)) {
-      throw new BadRequestException('Không thể hủy ticket đã xử lý');
+      throw new BadRequestException('Khong the huy ticket da xu ly');
     }
 
     ticket.status = TicketStatus.CANCELLED;
+    ticket.isOverdue = false;
     return ticket.save();
   }
 
-  /** Mở lại ticket đã resolve */
   async reopen(id: string): Promise<TicketDocument> {
     const ticket = await this.ticketModel.findById(id);
-    if (!ticket) throw new NotFoundException('Ticket không tồn tại');
+    if (!ticket) throw new NotFoundException('Ticket khong ton tai');
 
     if (ticket.status !== TicketStatus.RESOLVED && ticket.status !== TicketStatus.CLOSED) {
-      throw new BadRequestException('Chỉ mở lại ticket RESOLVED hoặc CLOSED');
+      throw new BadRequestException('Chi mo lai ticket RESOLVED hoac CLOSED');
     }
 
     ticket.status = TicketStatus.IN_PROGRESS;
     ticket.resolution = undefined;
+    ticket.isOverdue = this.shouldBeOverdue(ticket);
     return ticket.save();
   }
 
@@ -524,18 +748,34 @@ export class TicketsService {
 
   @Cron(CronExpression.EVERY_HOUR)
   async markOverdueTickets(): Promise<number> {
-    const result = await this.ticketModel.updateMany(
+    const now = new Date();
+    const marked = await this.ticketModel.updateMany(
       {
         status: { $nin: [TicketStatus.RESOLVED, TicketStatus.CLOSED, TicketStatus.CANCELLED] },
-        dueDate: { $lt: new Date() },
+        dueDate: { $lt: now },
         isOverdue: false,
       },
       { $set: { isOverdue: true } },
     );
-    if (result.modifiedCount > 0) {
-      this.logger.warn(`Marked ${result.modifiedCount} tickets as overdue`);
+
+    const cleared = await this.ticketModel.updateMany(
+      {
+        isOverdue: true,
+        $or: [
+          { status: { $in: [TicketStatus.RESOLVED, TicketStatus.CLOSED, TicketStatus.CANCELLED] } },
+          { dueDate: { $gte: now } },
+          { dueDate: { $exists: false } },
+          { dueDate: null },
+        ],
+      },
+      { $set: { isOverdue: false } },
+    );
+
+    const changedCount = (marked.modifiedCount || 0) + (cleared.modifiedCount || 0);
+    if (changedCount > 0) {
+      this.logger.warn(`Updated overdue flag for ${changedCount} tickets`);
     }
-    return result.modifiedCount;
+    return changedCount;
   }
 
   // ════════════════════════════════════════════════════════════════════
@@ -560,7 +800,7 @@ export class TicketsService {
 
     const resolutionTimes = resolvedTickets.map((t: any) => {
       const created = new Date(t.createdAt).getTime();
-      const resolved = new Date(t.resolvedAt || t.updatedAt).getTime();
+      const resolved = new Date(t.resolution?.resolvedAt || t.updatedAt).getTime();
       return (resolved - created) / (1000 * 60 * 60); // hours
     });
 
@@ -571,7 +811,7 @@ export class TicketsService {
     // SLA compliance (resolved before dueDate)
     const ticketsWithDue = resolvedTickets.filter((t: any) => t.dueDate);
     const onTimeCount = ticketsWithDue.filter((t: any) => {
-      const resolved = new Date(t.resolvedAt || t.updatedAt);
+      const resolved = new Date(t.resolution?.resolvedAt || t.updatedAt);
       return resolved <= new Date(t.dueDate);
     }).length;
     const slaCompliance = ticketsWithDue.length > 0
@@ -579,7 +819,13 @@ export class TicketsService {
       : 100;
 
     // Overdue
-    const overdueCount = tickets.filter((t: any) => t.isOverdue).length;
+    const now = new Date();
+    const overdueCount = tickets.filter(
+      (t: any) =>
+        ![TicketStatus.RESOLVED, TicketStatus.CLOSED, TicketStatus.CANCELLED].includes(t.status) &&
+        !!t.dueDate &&
+        new Date(t.dueDate) < now,
+    ).length;
     const overdueRate = tickets.length > 0 ? Math.round((overdueCount / tickets.length) * 100) : 0;
 
     // By priority
@@ -596,14 +842,33 @@ export class TicketsService {
     }
 
     // Top assignees
-    const assigneeCounts: Record<string, { name: string; count: number }> = {};
+    const assigneeCounts: Record<string, number> = {};
     for (const t of resolvedTickets) {
-      const aid = (t as any).assigneeId?.toString();
+      const aid = (t as any).assignedTo?.toString();
       if (!aid) continue;
-      if (!assigneeCounts[aid]) assigneeCounts[aid] = { name: (t as any).assigneeName || aid, count: 0 };
-      assigneeCounts[aid].count++;
+      assigneeCounts[aid] = (assigneeCounts[aid] || 0) + 1;
     }
-    const topAssignees = Object.values(assigneeCounts)
+
+    const assigneeIds = Object.keys(assigneeCounts)
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+
+    const userRows = assigneeIds.length > 0
+      ? await this.ticketModel.db.collection('users').find(
+        { _id: { $in: assigneeIds } },
+        { projection: { fullName: 1 } },
+      ).toArray()
+      : [];
+    const userNameById: Record<string, string> = {};
+    for (const u of userRows as any[]) {
+      userNameById[u._id.toString()] = u.fullName || u._id.toString();
+    }
+
+    const topAssignees = Object.entries(assigneeCounts)
+      .map(([id, count]) => ({
+        name: userNameById[id] || id,
+        count,
+      }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 5);
 
