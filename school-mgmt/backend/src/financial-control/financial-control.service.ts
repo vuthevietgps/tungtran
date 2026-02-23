@@ -263,13 +263,13 @@ export class FinancialControlService {
         { $sort: { _id: 1 } },
       ]),
 
-      // Loan disbursements (inflow â€” money received from lenders)
+      // Loan disbursements (inflow - money received from lenders)
       this.loanAggregate.getDisbursementTimeline(
         query.groupBy === 'month' ? 'month' : 'day',
         hasDateFilter ? dateFilter : undefined,
       ),
 
-      // Loan repayments (outflow â€” money paid to lenders)
+      // Loan repayments (outflow - money paid to lenders)
       this.loanAggregate.getRepaymentTimeline(
         query.groupBy === 'month' ? 'month' : 'day',
         hasDateFilter ? dateFilter : undefined,
@@ -385,7 +385,7 @@ export class FinancialControlService {
   }
 
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-  // P&L REPORT â€” Báº£ng cÃ¢n Ä‘á»‘i thu chi
+  // P&L REPORT — Bảng cân đối thu chi
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   async getProfitAndLoss(startDate?: string, endDate?: string, basis?: string): Promise<any> {
@@ -586,7 +586,7 @@ export class FinancialControlService {
   }
 
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-  // RECONCILIATION â€” Äá»‘i soÃ¡t tÃ i chÃ­nh
+  // RECONCILIATION — Đối soát tài chính
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   async getReconciliationReport(startDate?: string, endDate?: string): Promise<any> {
@@ -686,7 +686,7 @@ export class FinancialControlService {
   }
 
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-  // FINANCIAL DASHBOARD â€” Báº£ng chá»‰ sá»‘ tÃ i chÃ­nh quáº£n trá»‹
+  // FINANCIAL DASHBOARD — Bảng chỉ số tài chính quản trị
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   async getFinancialDashboard(): Promise<any> {
@@ -912,7 +912,7 @@ export class FinancialControlService {
   }
 
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-  // FINANCIAL OVERVIEW â€” Tá»•ng quan tÃ i chÃ­nh cho Director
+  // FINANCIAL OVERVIEW — Tổng quan tài chính cho Director
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   async getFinancialOverview(startDate?: string, endDate?: string): Promise<any> {
@@ -937,7 +937,7 @@ export class FinancialControlService {
   }
 
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-  // FINANCIAL ALERTS â€” Cáº£nh bÃ¡o & Chá»‰ dáº«n hÃ nh Ä‘á»™ng
+  // FINANCIAL ALERTS — Cảnh báo & Chỉ dẫn hành động
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   async getFinancialAlerts(): Promise<any> {
@@ -985,7 +985,7 @@ export class FinancialControlService {
 
     const alerts: any[] = [];
 
-    // â”€â”€ 1. Quá»¹ Marketing vs chi phÃ­ ads tá»‘i Æ°u Ä‘á» xuáº¥t â”€â”€
+    // ── 1. Quỹ Marketing vs chi phí ads tối ưu đề xuất ──
     const marketingFundBalance = dashboard.cashPosition.marketingFund || 0;
     const optimalAdsBudget = marketingBudgetNeeded.totalOptimalDailyBudget;
     const optimalMonthlyBudget = optimalAdsBudget * 30;
@@ -1001,8 +1001,8 @@ export class FinancialControlService {
           id: 'MARKETING_FUND_LOW',
           severity: marketingFundBalance < optimalMonthlyBudget * 0.5 ? 'CRITICAL' : 'WARNING',
           category: 'MARKETING',
-          title: 'Quá»¹ Marketing khÃ´ng Ä‘á»§ cho chi phÃ­ QC tá»‘i Æ°u',
-          message: `Quá»¹ Marketing hiá»‡n cÃ³ ${marketingFundBalance.toLocaleString()}Ä‘, nhÆ°ng ngÃ¢n sÃ¡ch QC tá»‘i Æ°u Ä‘á» xuáº¥t lÃ  ${optimalMonthlyBudget.toLocaleString()}Ä‘/thÃ¡ng (${optimalAdsBudget.toLocaleString()}Ä‘/ngÃ y). Chá»‰ Ä‘á»§ cho ${coverageMonths} thÃ¡ng.`,
+          title: 'Quỹ Marketing không đủ cho chi phí QC tối ưu',
+          message: `Quỹ Marketing hiện có ${marketingFundBalance.toLocaleString()}đ, nhưng ngân sách QC tối ưu đề xuất là ${optimalMonthlyBudget.toLocaleString()}đ/tháng (${optimalAdsBudget.toLocaleString()}đ/ngày). Chỉ đủ cho ${coverageMonths} tháng.`,
           data: {
             currentBalance: marketingFundBalance,
             optimalDailyBudget: optimalAdsBudget,
@@ -1012,9 +1012,9 @@ export class FinancialControlService {
             groupBreakdown: marketingBudgetNeeded.groupBreakdown,
           },
           actions: [
-            { label: 'Náº¡p thÃªm quá»¹ Marketing', type: 'FUND_DEPOSIT', target: 'MARKETING', amount: deficit },
-            { label: 'Xem phÃ¢n tÃ­ch QC & Ä‘iá»u chá»‰nh ngÃ¢n sÃ¡ch', type: 'NAVIGATE', target: '/ads-analytics' },
-            { label: 'Giáº£m ngÃ¢n sÃ¡ch QC cÃ¡c nhÃ³m hiá»‡u quáº£ tháº¥p', type: 'NAVIGATE', target: '/ads-management' },
+            { label: 'Nạp thêm quỹ Marketing', type: 'FUND_DEPOSIT', target: 'MARKETING', amount: deficit },
+            { label: 'Xem phân tích QC & điều chỉnh ngân sách', type: 'NAVIGATE', target: '/ads-analytics' },
+            { label: 'Giảm ngân sách QC các nhóm hiệu quả thấp', type: 'NAVIGATE', target: '/ads-management' },
           ],
         });
       } else {
@@ -1022,28 +1022,28 @@ export class FinancialControlService {
           id: 'MARKETING_FUND_OK',
           severity: 'INFO',
           category: 'MARKETING',
-          title: 'Quá»¹ Marketing Ä‘á»§ cho hoáº¡t Ä‘á»™ng QC',
-          message: `Quá»¹ Marketing Ä‘á»§ cho ${coverageMonths} thÃ¡ng QC tá»‘i Æ°u (${optimalMonthlyBudget.toLocaleString()}Ä‘/thÃ¡ng).`,
+          title: 'Quỹ Marketing đủ cho hoạt động QC',
+          message: `Quỹ Marketing đủ cho ${coverageMonths} tháng QC tối ưu (${optimalMonthlyBudget.toLocaleString()}đ/tháng).`,
           data: { currentBalance: marketingFundBalance, optimalMonthlyBudget, coverageMonths },
           actions: [],
         });
       }
     }
 
-    // â”€â”€ 2. Runway cáº£nh bÃ¡o â”€â”€
+    // ── 2. Runway cảnh báo ──
     const { runway, burnRate } = dashboard.obligations;
     if (runway < 2) {
       alerts.push({
         id: 'RUNWAY_CRITICAL',
         severity: 'CRITICAL',
         category: 'CASH_FLOW',
-        title: 'Runway nguy hiá»ƒm â€” dÆ°á»›i 2 thÃ¡ng',
-        message: `Vá»›i tá»‘c Ä‘á»™ chi ${burnRate.toLocaleString()}Ä‘/thÃ¡ng, tiá»n kháº£ dá»¥ng chá»‰ Ä‘á»§ hoáº¡t Ä‘á»™ng ${runway} thÃ¡ng. Cáº§n hÃ nh Ä‘á»™ng ngay.`,
+        title: 'Runway nguy hiểm — dưới 2 tháng',
+        message: `Với tốc độ chi ${burnRate.toLocaleString()}đ/tháng, tiền khả dụng chỉ đủ hoạt động ${runway} tháng. Cần hành động ngay.`,
         data: { runway, burnRate, availableCash: dashboard.cashPosition.availableCash },
         actions: [
-          { label: 'Cáº¯t giáº£m chi phÃ­ váº­n hÃ nh', type: 'NAVIGATE', target: '/expenses' },
-          { label: 'Thu há»“i cÃ´ng ná»£ & hÃ³a Ä‘Æ¡n chá» duyá»‡t', type: 'NAVIGATE', target: '/invoices' },
-          { label: 'Táº¡m dá»«ng chiáº¿n dá»‹ch QC hiá»‡u quáº£ tháº¥p', type: 'NAVIGATE', target: '/ads-management' },
+          { label: 'Cắt giảm chi phí vận hành', type: 'NAVIGATE', target: '/expenses' },
+          { label: 'Thu hồi công nợ & hóa đơn chờ duyệt', type: 'NAVIGATE', target: '/invoices' },
+          { label: 'Tạm dừng chiến dịch QC hiệu quả thấp', type: 'NAVIGATE', target: '/ads-management' },
         ],
       });
     } else if (runway < 4) {
@@ -1051,17 +1051,17 @@ export class FinancialControlService {
         id: 'RUNWAY_WARNING',
         severity: 'WARNING',
         category: 'CASH_FLOW',
-        title: 'Runway tháº¥p â€” dÆ°á»›i 4 thÃ¡ng',
-        message: `Runway hiá»‡n táº¡i ${runway} thÃ¡ng. NÃªn duy trÃ¬ Ã­t nháº¥t 6 thÃ¡ng dá»± phÃ²ng.`,
+        title: 'Runway thấp — dưới 4 tháng',
+        message: `Runway hiện tại ${runway} tháng. Nên duy trì ít nhất 6 tháng dự phòng.`,
         data: { runway, burnRate, availableCash: dashboard.cashPosition.availableCash },
         actions: [
-          { label: 'Tá»‘i Æ°u chi phÃ­', type: 'NAVIGATE', target: '/expenses' },
-          { label: 'Äáº©y máº¡nh thu há»c phÃ­', type: 'NAVIGATE', target: '/orders' },
+          { label: 'Tối ưu chi phí', type: 'NAVIGATE', target: '/expenses' },
+          { label: 'Đẩy mạnh thu học phí', type: 'NAVIGATE', target: '/orders' },
         ],
       });
     }
 
-    // â”€â”€ 3. Dá»± phÃ²ng hoáº¡t Ä‘á»™ng 3 thÃ¡ng â”€â”€
+    // ── 3. Dự phòng hoạt động 3 tháng ──
     if (!dashboard.obligations.reserveHealthy) {
       const { operatingReserve3Months, cashAfterObligations } = dashboard.obligations;
       const shortfall = operatingReserve3Months - dashboard.cashPosition.availableCash;
@@ -1069,40 +1069,40 @@ export class FinancialControlService {
         id: 'RESERVE_INSUFFICIENT',
         severity: 'WARNING',
         category: 'RESERVE',
-        title: 'Tiá»n kháº£ dá»¥ng chÆ°a Ä‘á»§ dá»± phÃ²ng 3 thÃ¡ng',
-        message: `Cáº§n ${operatingReserve3Months.toLocaleString()}Ä‘ dá»± phÃ²ng 3 thÃ¡ng, hiá»‡n thiáº¿u ${shortfall.toLocaleString()}Ä‘.`,
+        title: 'Tiền khả dụng chưa đủ dự phòng 3 tháng',
+        message: `Cần ${operatingReserve3Months.toLocaleString()}đ dự phòng 3 tháng, hiện thiếu ${shortfall.toLocaleString()}đ.`,
         data: { required: operatingReserve3Months, shortfall, available: dashboard.cashPosition.availableCash },
         actions: [
-          { label: 'Náº¡p quá»¹ dá»± phÃ²ng', type: 'FUND_DEPOSIT', target: 'RESERVE', amount: shortfall },
-          { label: 'RÃ  soÃ¡t & cáº¯t chi phÃ­ khÃ´ng cáº§n thiáº¿t', type: 'NAVIGATE', target: '/expenses' },
+          { label: 'Nạp quỹ dự phòng', type: 'FUND_DEPOSIT', target: 'RESERVE', amount: shortfall },
+          { label: 'Rà soát & cắt chi phí không cần thiết', type: 'NAVIGATE', target: '/expenses' },
         ],
       });
     }
 
-    // â”€â”€ 4. Quá»¹ dÆ°á»›i má»©c tá»‘i thiá»ƒu â”€â”€
+    // ── 4. Quỹ dưới mức tối thiểu ──
     for (const warning of (fundsSummary.warnings || [])) {
       alerts.push({
         id: `FUND_BELOW_MIN_${warning.fundCode}`,
         severity: 'WARNING',
         category: 'FUND',
-        title: `Quá»¹ "${warning.name}" dÆ°á»›i má»©c tá»‘i thiá»ƒu`,
-        message: `${warning.name} (${warning.fundCode}): Hiá»‡n cÃ³ ${warning.currentBalance.toLocaleString()}Ä‘, tá»‘i thiá»ƒu ${warning.minimumBalance.toLocaleString()}Ä‘, thiáº¿u ${warning.deficit.toLocaleString()}Ä‘.`,
+        title: `Quỹ "${warning.name}" dưới mức tối thiểu`,
+        message: `${warning.name} (${warning.fundCode}): Hiện có ${warning.currentBalance.toLocaleString()}đ, tối thiểu ${warning.minimumBalance.toLocaleString()}đ, thiếu ${warning.deficit.toLocaleString()}đ.`,
         data: warning,
         actions: [
-          { label: `Náº¡p thÃªm ${warning.deficit.toLocaleString()}Ä‘`, type: 'FUND_DEPOSIT', target: warning.fundCode, amount: warning.deficit },
+          { label: `Nạp thêm ${warning.deficit.toLocaleString()}đ`, type: 'FUND_DEPOSIT', target: warning.fundCode, amount: warning.deficit },
         ],
       });
     }
 
-    // â”€â”€ 5. NghÄ©a vá»¥ thanh toÃ¡n 14 ngÃ y â”€â”€
+    // ── 5. Nghĩa vụ thanh toán 14 ngày ──
     const { totalPayable14Days, cashAfterObligations } = dashboard.obligations;
     if (cashAfterObligations < 0) {
       alerts.push({
         id: 'OBLIGATIONS_EXCEED_CASH',
         severity: 'CRITICAL',
         category: 'OBLIGATIONS',
-        title: 'KhÃ´ng Ä‘á»§ tiá»n thanh toÃ¡n nghÄ©a vá»¥ 14 ngÃ y tá»›i',
-        message: `Tá»•ng pháº£i tráº£ ${totalPayable14Days.toLocaleString()}Ä‘ trong 14 ngÃ y, nhÆ°ng tiá»n kháº£ dá»¥ng chá»‰ ${dashboard.cashPosition.availableCash.toLocaleString()}Ä‘. Thiáº¿u ${Math.abs(cashAfterObligations).toLocaleString()}Ä‘.`,
+        title: 'Không đủ tiền thanh toán nghĩa vụ 14 ngày tới',
+        message: `Tổng phải trả ${totalPayable14Days.toLocaleString()}đ trong 14 ngày, nhưng tiền khả dụng chỉ ${dashboard.cashPosition.availableCash.toLocaleString()}đ. Thiếu ${Math.abs(cashAfterObligations).toLocaleString()}đ.`,
         data: {
           totalPayable: totalPayable14Days,
           available: dashboard.cashPosition.availableCash,
@@ -1113,26 +1113,26 @@ export class FinancialControlService {
           loans: dashboard.obligations.loanPayable,
         },
         actions: [
-          { label: 'Thu há»“i cÃ´ng ná»£ gáº¥p', type: 'NAVIGATE', target: '/invoices' },
-          { label: 'HoÃ£n chi lÆ°Æ¡ng / chi phÃ­ náº¿u cÃ³ thá»ƒ', type: 'INFO' },
-          { label: 'RÃºt quá»¹ dá»± phÃ²ng', type: 'FUND_WITHDRAW', target: 'RESERVE' },
+          { label: 'Thu hồi công nợ gấp', type: 'NAVIGATE', target: '/invoices' },
+          { label: 'Hoãn chi lương / chi phí nếu có thể', type: 'INFO' },
+          { label: 'Rút quỹ dự phòng', type: 'FUND_WITHDRAW', target: 'RESERVE' },
         ],
       });
     }
 
-    // â”€â”€ 6. Current Ratio tháº¥p â”€â”€
+    // ── 6. Current Ratio thấp ──
     const { currentRatio } = dashboard.metrics;
     if (currentRatio < 1) {
       alerts.push({
         id: 'CURRENT_RATIO_DANGER',
         severity: 'CRITICAL',
         category: 'METRICS',
-        title: 'Current Ratio < 1 â€” Rá»§i ro máº¥t kháº£ nÄƒng thanh toÃ¡n',
-        message: `Current Ratio = ${currentRatio}. TÃ i sáº£n ngáº¯n háº¡n nhá» hÆ¡n ná»£ ngáº¯n háº¡n, cáº§n tÄƒng doanh thu hoáº·c giáº£m ná»£.`,
+        title: 'Current Ratio < 1 — Rủi ro mất khả năng thanh toán',
+        message: `Current Ratio = ${currentRatio}. Tài sản ngắn hạn nhỏ hơn nợ ngắn hạn, cần tăng doanh thu hoặc giảm nợ.`,
         data: { currentRatio },
         actions: [
-          { label: 'Äáº©y máº¡nh thu phÃ­ & giáº£m ná»£', type: 'NAVIGATE', target: '/orders' },
-          { label: 'Tá»‘i Æ°u chi phÃ­ VH', type: 'NAVIGATE', target: '/expenses' },
+          { label: 'Đẩy mạnh thu phí & giảm nợ', type: 'NAVIGATE', target: '/orders' },
+          { label: 'Tối ưu chi phí VH', type: 'NAVIGATE', target: '/expenses' },
         ],
       });
     } else if (currentRatio < 1.5) {
@@ -1140,23 +1140,23 @@ export class FinancialControlService {
         id: 'CURRENT_RATIO_LOW',
         severity: 'WARNING',
         category: 'METRICS',
-        title: 'Current Ratio tháº¥p (< 1.5)',
-        message: `Current Ratio = ${currentRatio}. NÃªn duy trÃ¬ >= 1.5 Ä‘á»ƒ Ä‘áº£m báº£o thanh khoáº£n.`,
+        title: 'Current Ratio thấp (< 1.5)',
+        message: `Current Ratio = ${currentRatio}. Nên duy trì >= 1.5 để đảm bảo thanh khoản.`,
         data: { currentRatio },
         actions: [
-          { label: 'Xem chi tiáº¿t tÃ i chÃ­nh', type: 'NAVIGATE', target: '/financial-control' },
+          { label: 'Xem chi tiết tài chính', type: 'NAVIGATE', target: '/financial-control' },
         ],
       });
     }
 
-    // â”€â”€ 7. Lá»£i nhuáº­n rÃ²ng Ã¢m â”€â”€
+    // ── 7. Lợi nhuận ròng âm ──
     if (pnl.summary.netProfit < 0) {
       alerts.push({
         id: 'NET_PROFIT_NEGATIVE',
         severity: pnl.summary.netProfit < -pnl.revenue.total * 0.2 ? 'CRITICAL' : 'WARNING',
         category: 'PROFITABILITY',
-        title: 'Lá»£i nhuáº­n rÃ²ng Ã¢m â€” Ä‘ang lá»—',
-        message: `Lá»— rÃ²ng ${Math.abs(pnl.summary.netProfit).toLocaleString()}Ä‘ (biÃªn lá»£i nhuáº­n ${pnl.summary.netMargin}%). Cáº§n rÃ  soÃ¡t cÆ¡ cáº¥u chi phÃ­.`,
+        title: 'Lợi nhuận ròng âm — đang lỗ',
+        message: `Lỗ ròng ${Math.abs(pnl.summary.netProfit).toLocaleString()}đ (biên lợi nhuận ${pnl.summary.netMargin}%). Cần rà soát cơ cấu chi phí.`,
         data: {
           netProfit: pnl.summary.netProfit,
           netMargin: pnl.summary.netMargin,
@@ -1164,44 +1164,44 @@ export class FinancialControlService {
           totalCosts: pnl.costs.totalCosts,
         },
         actions: [
-          { label: 'Xem P&L chi tiáº¿t', type: 'NAVIGATE', target: '/financial-control?tab=pnl' },
-          { label: 'RÃ  soÃ¡t chi phÃ­ giÃ¡o viÃªn', type: 'NAVIGATE', target: '/sessions' },
-          { label: 'TÄƒng giÃ¡ hoáº·c Ä‘áº©y enrollment', type: 'NAVIGATE', target: '/orders' },
+          { label: 'Xem P&L chi tiết', type: 'NAVIGATE', target: '/financial-control?tab=pnl' },
+          { label: 'Rà soát chi phí giáo viên', type: 'NAVIGATE', target: '/sessions' },
+          { label: 'Tăng giá hoặc đẩy enrollment', type: 'NAVIGATE', target: '/orders' },
         ],
       });
     }
 
-    // â”€â”€ 8. Giao dá»‹ch chÆ°a Ä‘á»‘i soÃ¡t â”€â”€
+    // ── 8. Giao dịch chưa đối soát ──
     if (unreconciledCount > 20) {
       alerts.push({
         id: 'UNRECONCILED_HIGH',
         severity: 'WARNING',
         category: 'RECONCILIATION',
-        title: `${unreconciledCount} giao dá»‹ch chÆ°a Ä‘á»‘i soÃ¡t`,
-        message: `CÃ³ ${unreconciledCount} giao dá»‹ch ngÃ¢n hÃ ng chÆ°a Ä‘Æ°á»£c Ä‘á»‘i soÃ¡t. NÃªn Ä‘á»‘i soÃ¡t Ä‘á»‹nh ká»³ Ä‘á»ƒ Ä‘áº£m báº£o chÃ­nh xÃ¡c sá»• sÃ¡ch.`,
+        title: `${unreconciledCount} giao dịch chưa đối soát`,
+        message: `Có ${unreconciledCount} giao dịch ngân hàng chưa được đối soát. Nên đối soát định kỳ để đảm bảo chính xác sổ sách.`,
         data: { count: unreconciledCount },
         actions: [
-          { label: 'Äá»‘i soÃ¡t giao dá»‹ch', type: 'NAVIGATE', target: '/financial-control?tab=bank' },
+          { label: 'Đối soát giao dịch', type: 'NAVIGATE', target: '/financial-control?tab=bank' },
         ],
       });
     }
 
-    // â”€â”€ 9. Chi phÃ­ chá» thanh toÃ¡n â”€â”€
+    // ── 9. Chi phí chờ thanh toán ──
     if (pendingExpenses > 5) {
       alerts.push({
         id: 'PENDING_EXPENSES',
         severity: 'INFO',
         category: 'EXPENSES',
-        title: `${pendingExpenses} chi phÃ­ Ä‘Ã£ duyá»‡t chÆ°a thanh toÃ¡n`,
-        message: `CÃ³ ${pendingExpenses} khoáº£n chi phÃ­ Ä‘Ã£ Ä‘Æ°á»£c duyá»‡t nhÆ°ng chÆ°a thanh toÃ¡n. NÃªn xá»­ lÃ½ sá»›m.`,
+        title: `${pendingExpenses} chi phí đã duyệt chưa thanh toán`,
+        message: `Có ${pendingExpenses} khoản chi phí đã được duyệt nhưng chưa thanh toán. Nên xử lý sớm.`,
         data: { count: pendingExpenses },
         actions: [
-          { label: 'Xem chi phÃ­ chá» thanh toÃ¡n', type: 'NAVIGATE', target: '/expenses' },
+          { label: 'Xem chi phí chờ thanh toán', type: 'NAVIGATE', target: '/expenses' },
         ],
       });
     }
 
-    // â”€â”€ 10. ÄÆ¡n hÃ ng quÃ¡ háº¡n thanh toÃ¡n â”€â”€
+    // ── 10. Đơn hàng quá hạn thanh toán ──
     const overdueAmount = overdueOrders[0]?.total || 0;
     const overdueCount = overdueOrders[0]?.count || 0;
     if (overdueCount > 0) {
@@ -1209,17 +1209,17 @@ export class FinancialControlService {
         id: 'OVERDUE_PAYMENTS',
         severity: overdueAmount > burnRate * 0.5 ? 'CRITICAL' : 'WARNING',
         category: 'RECEIVABLE',
-        title: `${overdueCount} ká»³ thanh toÃ¡n quÃ¡ háº¡n`,
-        message: `CÃ³ ${overdueCount} ká»³ thanh toÃ¡n quÃ¡ háº¡n, tá»•ng ${overdueAmount.toLocaleString()}Ä‘. Cáº§n nháº¯c nhá»Ÿ phá»¥ huynh.`,
+        title: `${overdueCount} kỳ thanh toán quá hạn`,
+        message: `Có ${overdueCount} kỳ thanh toán quá hạn, tổng ${overdueAmount.toLocaleString()}đ. Cần nhắc nhở phụ huynh.`,
         data: { count: overdueCount, amount: overdueAmount },
         actions: [
-          { label: 'Xem Ä‘Æ¡n hÃ ng quÃ¡ háº¡n', type: 'NAVIGATE', target: '/orders' },
-          { label: 'Gá»­i nháº¯c nhá»Ÿ phá»¥ huynh', type: 'INFO' },
+          { label: 'Xem đơn hàng quá hạn', type: 'NAVIGATE', target: '/orders' },
+          { label: 'Gửi nhắc nhở phụ huynh', type: 'INFO' },
         ],
       });
     }
 
-    // â”€â”€ 11. DÃ²ng tiá»n rÃ²ng Ã¢m liÃªn tá»¥c â”€â”€
+    // ── 11. Dòng tiền ròng âm liên tục ──
     const recentMonths = recentCashFlow.timeline.slice(-3);
     const negativeMonths = recentMonths.filter((m: any) => m.netCashFlow < 0);
     if (negativeMonths.length >= 2) {
@@ -1228,18 +1228,18 @@ export class FinancialControlService {
         id: 'NEGATIVE_CASHFLOW_TREND',
         severity: negativeMonths.length >= 3 ? 'CRITICAL' : 'WARNING',
         category: 'CASH_FLOW',
-        title: `DÃ²ng tiá»n rÃ²ng Ã¢m ${negativeMonths.length}/${recentMonths.length} thÃ¡ng gáº§n Ä‘Ã¢y`,
-        message: `DÃ²ng tiá»n rÃ²ng Ã¢m liÃªn tá»¥c cho tháº¥y chi tiÃªu Ä‘ang vÆ°á»£t thu nháº­p. Tá»•ng Ã¢m: ${totalNegative.toLocaleString()}Ä‘.`,
+        title: `Dòng tiền ròng âm ${negativeMonths.length}/${recentMonths.length} tháng gần đây`,
+        message: `Dòng tiền ròng âm liên tục cho thấy chi tiêu đang vượt thu nhập. Tổng âm: ${totalNegative.toLocaleString()}đ.`,
         data: { negativeMonths: negativeMonths.length, totalNegative, recentMonths },
         actions: [
-          { label: 'PhÃ¢n tÃ­ch dÃ²ng tiá»n chi tiáº¿t', type: 'NAVIGATE', target: '/financial-control?tab=cashflow' },
-          { label: 'RÃ  soÃ¡t cÃ¡c khoáº£n chi lá»›n', type: 'NAVIGATE', target: '/expenses' },
-          { label: 'TÄƒng tuyá»ƒn sinh / marketing', type: 'NAVIGATE', target: '/ads-analytics' },
+          { label: 'Phân tích dòng tiền chi tiết', type: 'NAVIGATE', target: '/financial-control?tab=cashflow' },
+          { label: 'Rà soát các khoản chi lớn', type: 'NAVIGATE', target: '/expenses' },
+          { label: 'Tăng tuyển sinh / marketing', type: 'NAVIGATE', target: '/ads-analytics' },
         ],
       });
     }
 
-    // â”€â”€ 12. Khoáº£n vay quÃ¡ háº¡n â”€â”€
+    // ── 12. Khoản vay quá hạn ──
     const loanOverduePayments = await this.loanAggregate.getOverdueOutstandingSummary();
     const loanOverdueAmount = loanOverduePayments.total || 0;
     const loanOverdueCount = loanOverduePayments.count || 0;
@@ -1248,34 +1248,34 @@ export class FinancialControlService {
         id: 'LOAN_OVERDUE_PAYMENTS',
         severity: loanOverdueAmount > burnRate * 0.3 ? 'CRITICAL' : 'WARNING',
         category: 'LOAN',
-        title: `${loanOverdueCount} ká»³ tráº£ ná»£ vay quÃ¡ háº¡n`,
-        message: `CÃ³ ${loanOverdueCount} ká»³ tráº£ ná»£ vay quÃ¡ háº¡n, tá»•ng ${loanOverdueAmount.toLocaleString()}Ä‘. Cáº§n xá»­ lÃ½ ngay Ä‘á»ƒ trÃ¡nh pháº¡t lÃ£i.`,
+        title: `${loanOverdueCount} kỳ trả nợ vay quá hạn`,
+        message: `Có ${loanOverdueCount} kỳ trả nợ vay quá hạn, tổng ${loanOverdueAmount.toLocaleString()}đ. Cần xử lý ngay để tránh phạt lãi.`,
         data: { count: loanOverdueCount, amount: loanOverdueAmount },
         actions: [
-          { label: 'Xem khoáº£n vay', type: 'NAVIGATE', target: '/loans' },
-          { label: 'Thanh toÃ¡n ngay', type: 'INFO' },
+          { label: 'Xem khoản vay', type: 'NAVIGATE', target: '/loans' },
+          { label: 'Thanh toán ngay', type: 'INFO' },
         ],
       });
     }
 
-    // â”€â”€ 13. Tá»· lá»‡ ná»£ cao â”€â”€
+    // ── 13. Tỷ lệ nợ cao ──
     const loanTotalDebt = dashboard.debtPosition?.totalDebt || 0;
     if (loanTotalDebt > dashboard.cashPosition.availableCash) {
       alerts.push({
         id: 'LOAN_HIGH_DEBT_RATIO',
         severity: loanTotalDebt > dashboard.cashPosition.availableCash * 2 ? 'CRITICAL' : 'WARNING',
         category: 'LOAN',
-        title: 'Tá»•ng ná»£ vay vÆ°á»£t tiá»n kháº£ dá»¥ng',
-        message: `Tá»•ng ná»£ vay ${loanTotalDebt.toLocaleString()}Ä‘ vÆ°á»£t tiá»n kháº£ dá»¥ng ${dashboard.cashPosition.availableCash.toLocaleString()}Ä‘. Cáº§n cÃ¢n nháº¯c chiáº¿n lÆ°á»£c tráº£ ná»£.`,
+        title: 'Tổng nợ vay vượt tiền khả dụng',
+        message: `Tổng nợ vay ${loanTotalDebt.toLocaleString()}đ vượt tiền khả dụng ${dashboard.cashPosition.availableCash.toLocaleString()}đ. Cần cân nhắc chiến lược trả nợ.`,
         data: { totalDebt: loanTotalDebt, availableCash: dashboard.cashPosition.availableCash },
         actions: [
-          { label: 'Xem chi tiáº¿t khoáº£n vay', type: 'NAVIGATE', target: '/loans' },
-          { label: 'Xem dÃ²ng tiá»n', type: 'NAVIGATE', target: '/financial-control?tab=cashflow' },
+          { label: 'Xem chi tiết khoản vay', type: 'NAVIGATE', target: '/loans' },
+          { label: 'Xem dòng tiền', type: 'NAVIGATE', target: '/financial-control?tab=cashflow' },
         ],
       });
     }
 
-    // â”€â”€ 14. Khoáº£n vay sáº¯p Ä‘Ã¡o háº¡n â”€â”€
+    // ── 14. Khoản vay sắp đáo hạn ──
     const in30DaysAlert = new Date(new Date().getTime() + 30 * 24 * 60 * 60 * 1000);
     const nearMaturityLoans = await this.loanAggregate.getNearMaturityLoans(in30DaysAlert);
     for (const loan of nearMaturityLoans) {
@@ -1283,29 +1283,29 @@ export class FinancialControlService {
         id: `LOAN_NEAR_MATURITY_${(loan as any)._id}`,
         severity: 'WARNING',
         category: 'LOAN',
-        title: `Khoáº£n vay ${(loan as any).loanCode} sáº¯p Ä‘Ã¡o háº¡n`,
-        message: `Khoáº£n vay tá»« ${(loan as any).lenderName}, gá»‘c ${(loan as any).principal.toLocaleString()}Ä‘, cÃ²n ná»£ ${(loan as any).remainingBalance.toLocaleString()}Ä‘, Ä‘Ã¡o háº¡n ${new Date((loan as any).endDate).toLocaleDateString('vi-VN')}.`,
+        title: `Khoản vay ${(loan as any).loanCode} sắp đáo hạn`,
+        message: `Khoản vay từ ${(loan as any).lenderName}, gốc ${(loan as any).principal.toLocaleString()}đ, còn nợ ${(loan as any).remainingBalance.toLocaleString()}đ, đáo hạn ${new Date((loan as any).endDate).toLocaleDateString('vi-VN')}.`,
         data: { loanCode: (loan as any).loanCode, remainingBalance: (loan as any).remainingBalance, endDate: (loan as any).endDate },
         actions: [
-          { label: 'Xem khoáº£n vay', type: 'NAVIGATE', target: '/loans' },
+          { label: 'Xem khoản vay', type: 'NAVIGATE', target: '/loans' },
         ],
       });
     }
 
-    // â”€â”€ 15. TÄƒng trÆ°á»Ÿng doanh thu giáº£m â”€â”€
+    // ── 15. Tăng trưởng doanh thu giảm ──
     const { revenueGrowth } = dashboard.metrics;
     if (revenueGrowth < -10) {
       alerts.push({
         id: 'REVENUE_DECLINING',
         severity: revenueGrowth < -30 ? 'CRITICAL' : 'WARNING',
         category: 'REVENUE',
-        title: `Doanh thu giáº£m ${Math.abs(revenueGrowth)}% so vá»›i thÃ¡ng trÆ°á»›c`,
-        message: `ThÃ¡ng trÆ°á»›c: ${dashboard.metrics.lastMonthRevenue.toLocaleString()}Ä‘ â†’ ThÃ¡ng nÃ y: ${dashboard.metrics.thisMonthRevenue.toLocaleString()}Ä‘ (${revenueGrowth}%).`,
+        title: `Doanh thu giảm ${Math.abs(revenueGrowth)}% so với tháng trước`,
+        message: `Tháng trước: ${dashboard.metrics.lastMonthRevenue.toLocaleString()}đ → Tháng này: ${dashboard.metrics.thisMonthRevenue.toLocaleString()}đ (${revenueGrowth}%).`,
         data: { revenueGrowth, thisMonth: dashboard.metrics.thisMonthRevenue, lastMonth: dashboard.metrics.lastMonthRevenue },
         actions: [
-          { label: 'TÄƒng chiáº¿n dá»‹ch QC', type: 'NAVIGATE', target: '/ads-management' },
-          { label: 'Xem phÃ¢n tÃ­ch leads', type: 'NAVIGATE', target: '/leads' },
-          { label: 'Äáº©y máº¡nh tuyá»ƒn sinh', type: 'NAVIGATE', target: '/orders' },
+          { label: 'Tăng chiến dịch QC', type: 'NAVIGATE', target: '/ads-management' },
+          { label: 'Xem phân tích leads', type: 'NAVIGATE', target: '/leads' },
+          { label: 'Đẩy mạnh tuyển sinh', type: 'NAVIGATE', target: '/orders' },
         ],
       });
     }
@@ -1330,8 +1330,8 @@ export class FinancialControlService {
   }
 
   /**
-   * TÃ­nh ngÃ¢n sÃ¡ch marketing tá»‘i Æ°u = tá»•ng chi phÃ­ ads Ä‘á» xuáº¥t tá»‘i Æ°u tá»« cÃ¡c nhÃ³m QC
-   * DÃ¹ng logarithmic curve fitting giá»‘ng ads.service
+   * Tính ngân sách marketing tối ưu = tổng chi phí ads đề xuất tối ưu từ các nhóm QC
+   * Dùng logarithmic curve fitting giống ads.service
    */
   private async calculateOptimalMarketingBudget(): Promise<{
     totalOptimalDailyBudget: number;
@@ -1507,7 +1507,7 @@ export class FinancialControlService {
       const currentAvgSpend = points.length > 0 ? points.reduce((s, p) => s + p.spend, 0) / points.length : 0;
 
       if (points.length < 7) {
-        // Not enough data â€” use current average as suggestion
+        // Not enough data - use current average as suggestion
         groupBreakdown.push({
           adGroupId: gId,
           adGroupName: data.name,
@@ -1515,7 +1515,7 @@ export class FinancialControlService {
           currentDailySpend: Math.round(currentAvgSpend),
           optimalDailySpend: Math.round(currentAvgSpend),
           confidence: 'LOW',
-          reason: 'ChÆ°a Ä‘á»§ dá»¯ liá»‡u (< 7 ngÃ y)',
+          reason: 'Chưa đủ dữ liệu (< 7 ngày)',
         });
         totalOptimal += Math.round(currentAvgSpend);
         continue;
@@ -1555,10 +1555,10 @@ export class FinancialControlService {
         changePercent: currentAvgSpend > 0 ? Math.round(((rounded - currentAvgSpend) / currentAvgSpend) * 100) : 0,
         confidence: orderFit.rSquared >= 0.5 ? 'HIGH' : orderFit.rSquared >= 0.2 ? 'MEDIUM' : 'LOW',
         reason: rounded > currentAvgSpend
-          ? 'TÄƒng ngÃ¢n sÃ¡ch Ä‘á»ƒ tá»‘i Æ°u chuyá»ƒn Ä‘á»•i'
+          ? 'Tăng ngân sách để tối ưu chuyển đổi'
           : rounded < currentAvgSpend
-          ? 'Giáº£m ngÃ¢n sÃ¡ch do hiá»‡u quáº£ biÃªn giáº£m'
-          : 'Giá»¯ nguyÃªn ngÃ¢n sÃ¡ch hiá»‡n táº¡i',
+          ? 'Giảm ngân sách do hiệu quả biên giảm'
+          : 'Giữ nguyên ngân sách hiện tại',
       });
       totalOptimal += rounded;
     }
@@ -1575,7 +1575,7 @@ export class FinancialControlService {
           currentDailySpend: 0,
           optimalDailySpend: dailyBudget,
           confidence: 'LOW',
-          reason: 'ChÆ°a cÃ³ dá»¯ liá»‡u chi phÃ­ â€” dÃ¹ng budget Ä‘Ã£ cÃ i Ä‘áº·t',
+          reason: 'Chưa có dữ liệu chi phí — dùng budget đã cài đặt',
         });
         totalOptimal += dailyBudget;
       }

@@ -109,7 +109,7 @@ export class AttendanceController {
 
   // Tạo link điểm danh cho học sinh
   @Post('generate-link')
-  @Roles(Role.DIRECTOR, Role.OPS)
+  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER)
   generateAttendanceLink(@Body() dto: GenerateAttendanceLinkDto, @Req() req: AuthenticatedRequest) {
     return this.attendanceService.generateAttendanceLink(dto, req.user);
   }

@@ -511,8 +511,18 @@ export class AttendanceComponent {
         : 'Không thể tự động copy. Vui lòng copy link thủ công:';
       alert(`✅ Đã tạo link điểm danh cho ${studentName}!\n\n${copyMessage}\n${result.attendanceUrl}\n\nHạn sử dụng: ${new Date(result.expiresAt).toLocaleString('vi-VN')}`);
     } catch (error: any) {
-      this.error.set(error.message || 'Không thể tạo link điểm danh');
-      alert('❌ ' + this.error());
+      const backendMessage = Array.isArray(error?.error?.message)
+        ? error.error.message.join(', ')
+        : error?.error?.message;
+      let message =
+        backendMessage ||
+        error?.message ||
+        'Không thể tạo link điểm danh';
+      if (error?.status === 403 && /csrf/i.test(message)) {
+        message = 'Phiên bảo mật đã hết hạn. Vui lòng tải lại trang rồi thử lại.';
+      }
+      this.error.set(message);
+      alert('❌ ' + message);
     } finally {
       this.generatingLink = '';
     }
