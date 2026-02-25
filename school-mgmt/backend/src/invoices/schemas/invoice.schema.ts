@@ -21,6 +21,12 @@ export enum InvoiceType {
   OTHER = 'OTHER',           // Thu khác
 }
 
+/** Loại lớp học của hóa đơn */
+export enum ClassType {
+  ONLINE = 'ONLINE',
+  OFFLINE = 'OFFLINE',
+}
+
 export type InvoiceDocument = HydratedDocument<Invoice>;
 
 @Schema({ timestamps: true })
@@ -54,6 +60,10 @@ export class Invoice {
   /** Ledger entry ID khi đã nạp ví (để trace) */
   @Prop({ type: SchemaTypes.ObjectId, ref: 'LedgerEntry', required: false })
   ledgerEntryId?: Types.ObjectId;
+
+  /** Loại lớp học: ONLINE hoặc OFFLINE */
+  @Prop({ type: String, enum: Object.values(ClassType), required: false })
+  classType?: string;
 
   /** Số buổi học đăng ký thanh toán */
   @Prop({ type: Number, min: 0, required: false })
@@ -113,6 +123,10 @@ export class Invoice {
 
   @Prop({ type: Date, required: false })
   approvedAt?: Date;
+
+  /** Ảnh xác nhận duyệt hóa đơn (bắt buộc khi APPROVE) */
+  @Prop({ type: String, trim: true, required: false })
+  approvalImage?: string;
 
   /** Lý do từ chối (nếu REJECTED) */
   @Prop({ type: String, trim: true, required: false })

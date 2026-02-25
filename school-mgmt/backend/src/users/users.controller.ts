@@ -40,7 +40,13 @@ export class UsersController {
 
   @Get('me')
   me(@Req() req: AuthenticatedRequest) {
-    return { id: req.user._id, email: req.user.email, fullName: req.user.fullName, role: req.user.role };
+    return {
+      _id: req.user._id,
+      email: req.user.email,
+      fullName: req.user.fullName,
+      role: req.user.role,
+      userCode: req.user.userCode,
+    };
   }
 
   @Patch(':id')

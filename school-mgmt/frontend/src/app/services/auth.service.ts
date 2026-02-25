@@ -10,6 +10,7 @@ export interface AuthPayload {
   email: string;
   role: string;
   fullName: string;
+  userCode?: string;
 }
 
 export interface LoginResult {
@@ -45,6 +46,7 @@ export class AuthService {
           email: data.email,
           role: data.role,
           fullName: data.fullName,
+          userCode: data.userCode,
         });
         return true;
       }

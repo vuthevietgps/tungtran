@@ -30,20 +30,20 @@ const mongoUri = process.env.MONGODB_URI || DEFAULT_URI;
 const passwordPlain = process.env.SEED_DEFAULT_PASSWORD || '123456789';
 
 const seedUsers = [
-  { email: 'sale1@example.com', fullName: 'Sale One', role: 'SALE' },
-  { email: 'sale2@example.com', fullName: 'Sale Two', role: 'SALE' },
-  { email: 'sale3@example.com', fullName: 'Sale Three', role: 'SALE' },
-  { email: 'teacher1@example.com', fullName: 'Teacher One', role: 'TEACHER' },
-  { email: 'teacher2@example.com', fullName: 'Teacher Two', role: 'TEACHER' },
-  { email: 'teacher3@example.com', fullName: 'Teacher Three', role: 'TEACHER' },
-  { email: 'teacher4@example.com', fullName: 'Teacher Four', role: 'TEACHER' },
-  { email: 'manager1@example.com', fullName: 'Manager One', role: 'MANAGER' },
-  { email: 'manager2@example.com', fullName: 'Manager Two', role: 'MANAGER' },
-  { email: 'hcns1@example.com', fullName: 'HCNS One', role: 'HCNS' },
-  { email: 'hcns2@example.com', fullName: 'HCNS Two', role: 'HCNS' },
-  { email: 'partime1@example.com', fullName: 'Partime One', role: 'PARTIME' },
-  { email: 'partime2@example.com', fullName: 'Partime Two', role: 'PARTIME' },
-  { email: 'partime3@example.com', fullName: 'Partime Three', role: 'PARTIME' },
+  { email: 'sale1@example.com', fullName: 'Sale One', role: 'SALE', userCode: 'SALE001' },
+  { email: 'sale2@example.com', fullName: 'Sale Two', role: 'SALE', userCode: 'SALE002' },
+  { email: 'sale3@example.com', fullName: 'Sale Three', role: 'SALE', userCode: 'SALE003' },
+  { email: 'teacher1@example.com', fullName: 'Teacher One', role: 'TEACHER', userCode: 'GV001' },
+  { email: 'teacher2@example.com', fullName: 'Teacher Two', role: 'TEACHER', userCode: 'GV002' },
+  { email: 'teacher3@example.com', fullName: 'Teacher Three', role: 'TEACHER', userCode: 'GV003' },
+  { email: 'teacher4@example.com', fullName: 'Teacher Four', role: 'TEACHER', userCode: 'GV004' },
+  { email: 'manager1@example.com', fullName: 'Manager One', role: 'MANAGER', userCode: 'QL001' },
+  { email: 'manager2@example.com', fullName: 'Manager Two', role: 'MANAGER', userCode: 'QL002' },
+  { email: 'hcns1@example.com', fullName: 'HCNS One', role: 'HCNS', userCode: 'HCNS001' },
+  { email: 'hcns2@example.com', fullName: 'HCNS Two', role: 'HCNS', userCode: 'HCNS002' },
+  { email: 'partime1@example.com', fullName: 'Partime One', role: 'PARTIME', userCode: 'PT001' },
+  { email: 'partime2@example.com', fullName: 'Partime Two', role: 'PARTIME', userCode: 'PT002' },
+  { email: 'partime3@example.com', fullName: 'Partime Three', role: 'PARTIME', userCode: 'PT003' },
 ];
 
 async function run() {
@@ -66,6 +66,7 @@ async function run() {
         $set: {
           fullName: user.fullName,
           role: user.role,
+          userCode: user.userCode,
           password: passwordHash,
           status: 'ACTIVE',
           updatedAt: now,

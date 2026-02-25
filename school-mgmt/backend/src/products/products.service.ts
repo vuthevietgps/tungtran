@@ -9,10 +9,32 @@ import { UpdateProductDto } from './dto/update-product.dto';
 export class ProductsService {
   constructor(@InjectModel(Product.name) private productModel: Model<ProductDocument>) {}
 
+  private normalizeCode(code?: string | null): string | null {
+    if (!code) return null;
+    const normalized = code.trim().toUpperCase();
+    return normalized || null;
+  }
+
+  private async generateProductCode(): Promise<string> {
+    const prefix = 'PKG';
+    for (let i = 0; i < 1000; i++) {
+      const candidate = `${prefix}${Date.now().toString().slice(-8)}${String(i).padStart(3, '0')}`;
+      const exists = await this.productModel.findOne({ code: candidate }).lean();
+      if (!exists) return candidate;
+    }
+    throw new ConflictException('Cannot generate unique product code');
+  }
+
   async create(dto: CreateProductDto): Promise<Product> {
-    const exists = await this.productModel.findOne({ code: dto.code.toUpperCase() }).lean();
-    if (exists) throw new ConflictException('Product code already exists');
-    const created = new this.productModel({ ...dto, code: dto.code.toUpperCase() });
+    let code = this.normalizeCode(dto.code);
+    if (code) {
+      const exists = await this.productModel.findOne({ code }).lean();
+      if (exists) throw new ConflictException('Product code already exists');
+    } else {
+      code = await this.generateProductCode();
+    }
+
+    const created = new this.productModel({ ...dto, code });
     return created.save();
   }
 
@@ -22,11 +44,12 @@ export class ProductsService {
 
   async update(id: string, dto: UpdateProductDto): Promise<Product> {
     if (dto.code) {
+      const normalizedCode = this.normalizeCode(dto.code);
       const exists = await this.productModel
-        .findOne({ code: dto.code.toUpperCase(), _id: { $ne: id } })
+        .findOne({ code: normalizedCode, _id: { $ne: id } })
         .lean();
       if (exists) throw new ConflictException('Product code already exists');
-      dto.code = dto.code.toUpperCase();
+      dto.code = normalizedCode as string;
     }
     const updated = await this.productModel.findByIdAndUpdate(id, dto, { new: true }).lean();
     if (!updated) throw new NotFoundException('Product not found');

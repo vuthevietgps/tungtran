@@ -133,6 +133,9 @@ interface BankAccountOption {
         <div><span>Tổng trừ:</span><span class="negative">{{formatCurrency(myWallet()!.totalDeducted)}}</span></div>
         <div><span>Hoàn tiền:</span><span>{{formatCurrency(myWallet()!.totalRefunded)}}</span></div>
       </div>
+      <div style="text-align:center;margin-top:18px">
+        <button class="primary" (click)="openParentTopUp()">💳 Nạp tiền vào ví</button>
+      </div>
     </div>
     <h4 style="margin-top:20px">Lịch sử giao dịch</h4>
     <table class="data" *ngIf="myLedger().length; else emptyMyLedger">
@@ -248,6 +251,43 @@ interface BankAccountOption {
       <div class="modal-actions">
         <button class="ghost" (click)="showPendingModal.set(false)">Đóng</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Parent Top-Up Request modal -->
+  <div class="modal-backdrop" *ngIf="showParentTopUpModal()">
+    <div class="modal">
+      <h3>💳 Nạp tiền vào ví</h3>
+      <p class="hint">Điền thông tin và đính kèm ảnh chứng từ. Yêu cầu sẽ được kế toán duyệt trong thời gian sớm nhất.</p>
+      <form (ngSubmit)="submitParentTopUp()">
+        <label>Số tiền nạp (VNĐ)
+          <input type="number" [(ngModel)]="parentTopUpForm.amount" name="amount" required min="10000" step="10000" placeholder="VD: 500000" />
+        </label>
+        <label>Phương thức thanh toán
+          <select [(ngModel)]="parentTopUpForm.paymentMethod" name="paymentMethod" required>
+            <option value="BANK_TRANSFER">Chuyển khoản ngân hàng</option>
+            <option value="CASH">Tiền mặt</option>
+            <option value="MOMO">MoMo</option>
+          </select>
+        </label>
+        <label>Ảnh chứng từ / biên lai {{parentTopUpForm.paymentMethod === 'BANK_TRANSFER' ? '(bắt buộc)' : '(tuỳ chọn)'}}
+          <input type="file" accept="image/*" (change)="handleParentReceiptUpload($event)" name="receiptFile" />
+        </label>
+        <div *ngIf="parentUploadingReceipt()" class="hint">Đang tải ảnh lên...</div>
+        <div *ngIf="parentTopUpForm.receiptImageUrl && !parentUploadingReceipt()" style="margin:6px 0">
+          <img [src]="resolveAssetUrl(parentTopUpForm.receiptImageUrl)" style="max-width:100%;max-height:160px;border-radius:6px;border:1px solid #e2e8f0" />
+        </div>
+        <label>Mã giao dịch / nội dung chuyển khoản (tuỳ chọn)
+          <input [(ngModel)]="parentTopUpForm.transactionRef" name="transactionRef" placeholder="VD: FT123456789" />
+        </label>
+        <label>Ghi chú
+          <textarea [(ngModel)]="parentTopUpForm.description" name="description" rows="2" placeholder="Ghi chú (tuỳ chọn)"></textarea>
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="ghost" (click)="showParentTopUpModal.set(false)">Hủy</button>
+          <button type="submit" class="primary" [disabled]="parentUploadingReceipt()">Gửi yêu cầu</button>
+        </div>
+      </form>
     </div>
   </div>
 
@@ -384,6 +424,8 @@ export class WalletsComponent implements OnInit {
   showTransferModal = signal(false);
   showPendingModal = signal(false);
   showApproveModal = signal(false);
+  showParentTopUpModal = signal(false);
+  parentUploadingReceipt = signal(false);
 
   activeTab: 'wallets' | 'ledger' | 'myWallet' = 'wallets';
 
@@ -391,6 +433,13 @@ export class WalletsComponent implements OnInit {
 
   topUpForm = {
     userId: '',
+    amount: 0,
+    paymentMethod: 'BANK_TRANSFER',
+    transactionRef: '',
+    receiptImageUrl: '',
+    description: '',
+  };
+  parentTopUpForm = {
     amount: 0,
     paymentMethod: 'BANK_TRANSFER',
     transactionRef: '',
@@ -612,6 +661,63 @@ export class WalletsComponent implements OnInit {
   viewWalletLedger(w: WalletItem): void {
     this.activeTab = 'ledger';
     this.loadLedger();
+  }
+
+  // Parent Top-Up
+  openParentTopUp(): void {
+    this.parentTopUpForm = { amount: 0, paymentMethod: 'BANK_TRANSFER', transactionRef: '', receiptImageUrl: '', description: '' };
+    this.showParentTopUpModal.set(true);
+  }
+
+  async handleParentReceiptUpload(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+
+    this.parentUploadingReceipt.set(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await firstValueFrom(
+        this.http.post<{ url: string }>(`${this.apiBase}/wallets/top-up/upload-receipt`, formData, { withCredentials: true }),
+      );
+      this.parentTopUpForm.receiptImageUrl = res.url;
+    } catch (err) {
+      alert('Tải ảnh thất bại. Vui lòng thử lại.');
+    } finally {
+      this.parentUploadingReceipt.set(false);
+    }
+  }
+
+  async submitParentTopUp(): Promise<void> {
+    if (this.parentTopUpForm.amount < 10000) {
+      alert('Số tiền nạp tối thiểu 10,000đ');
+      return;
+    }
+    if (this.parentTopUpForm.paymentMethod === 'BANK_TRANSFER' && !this.parentTopUpForm.receiptImageUrl.trim()) {
+      alert('Chuyển khoản bắt buộc phải đính kèm ảnh biên lai.');
+      return;
+    }
+
+    const userId = this.auth.userSignal()?.sub;
+    if (!userId) { alert('Không xác định được tài khoản.'); return; }
+
+    try {
+      await this.walletSvc.requestTopUp({
+        userId,
+        amount: this.parentTopUpForm.amount,
+        paymentMethod: this.parentTopUpForm.paymentMethod,
+        transactionRef: this.parentTopUpForm.transactionRef || undefined,
+        receiptImageUrl: this.parentTopUpForm.receiptImageUrl || undefined,
+        description: this.parentTopUpForm.description || undefined,
+      });
+      this.showParentTopUpModal.set(false);
+      alert('Yêu cầu nạp tiền đã được gửi. Kế toán sẽ duyệt trong thời gian sớm nhất.');
+      await this.loadMyWallet();
+    } catch (err: any) {
+      alert(err?.error?.message || 'Gửi yêu cầu thất bại. Vui lòng thử lại.');
+    }
   }
 
   // Helpers

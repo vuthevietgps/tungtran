@@ -7,5 +7,9 @@ export class ApproveInvoiceDto {
 
   @IsOptional()
   @IsString()
+  approvalImage?: string;
+
+  @IsOptional()
+  @IsString()
   rejectedReason?: string;
 }

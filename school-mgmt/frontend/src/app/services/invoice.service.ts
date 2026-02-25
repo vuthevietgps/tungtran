@@ -21,17 +21,17 @@ export interface InvoiceItem {
     parentPhone: string;
     studentCode?: string;
   };
-  classId?: {
+  classType?: 'ONLINE' | 'OFFLINE';
+  saleId?: {
     _id: string;
-    name: string;
-    code: string;
-    pricePerSession?: number;
+    fullName: string;
+    email: string;
   };
   sessions?: number;
-  pricePerSession?: number;
   amount: number;
   paymentDate: string;
   receiptImage?: string;
+  approvalImage?: string;
   description?: string;
   status: InvoiceStatus;
   createdBy: {
@@ -46,16 +46,14 @@ export interface InvoiceItem {
 export interface InvoiceUpsertPayload {
   invoiceNumber: string;
   studentId: string;
-  classId?: string;
+  classType?: 'ONLINE' | 'OFFLINE';
+  saleId?: string;
   sessions?: number;
-  pricePerSession?: number;
   amount: number;
   paymentDate: string;
   receiptImage?: string;
   description?: string;
   invoiceType?: 'TUITION' | 'MATERIAL' | 'OTHER';
-  saleId?: string;
-  referenceDuration?: number;
 }
 
 export interface InvoiceMutationResult {
@@ -109,12 +107,13 @@ export class InvoiceService {
     id: string,
     action: 'APPROVE' | 'REJECT',
     rejectedReason?: string,
+    approvalImage?: string,
   ): Promise<InvoiceMutationResult> {
     try {
       await firstValueFrom(
         this.http.post(
           `${environment.apiBase}/invoices/${id}/approve`,
-          { action, rejectedReason },
+          { action, rejectedReason, approvalImage },
           { withCredentials: true },
         ),
       );

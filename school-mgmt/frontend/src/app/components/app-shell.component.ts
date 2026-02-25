@@ -47,11 +47,25 @@ import { Role, ROLE_LABELS } from '../models/role.enum';
             <span class="group-arrow">{{ menuGroups['management'] ? '&#9650;' : '&#9660;' }}</span>
           </button>
           <div class="menu-group-items" [class.collapsed-sidebar]="sidebarCollapsed">
-            <a routerLink="/app/users" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Quản lý User">
+            <a
+              routerLink="/app/users"
+              routerLinkActive="active"
+              [routerLinkActiveOptions]="{ paths: 'exact', queryParams: 'exact', matrixParams: 'ignored', fragment: 'ignored' }"
+              *ngIf="hasRole([Role.DIRECTOR])"
+              title="Quản lý User">
               <span class="icon">&#128100;</span><span class="label">Quản lý User</span>
             </a>
-            <a routerLink="/app/products" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Quản lý Khóa học">
-              <span class="icon">&#128218;</span><span class="label">Quản lý Khóa học</span>
+            <a
+              routerLink="/app/users"
+              [queryParams]="{ role: 'PARENT' }"
+              routerLinkActive="active"
+              [routerLinkActiveOptions]="{ paths: 'exact', queryParams: 'exact', matrixParams: 'ignored', fragment: 'ignored' }"
+              *ngIf="hasRole([Role.DIRECTOR])"
+              title="Tài khoản phụ huynh">
+              <span class="icon">&#128101;</span><span class="label">TK phụ huynh</span>
+            </a>
+            <a routerLink="/app/products" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Quản lý gói sản phẩm">
+              <span class="icon">&#128218;</span><span class="label">Quản lý gói sản phẩm</span>
             </a>
             <a routerLink="/app/students" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE])" title="Quản lý Học sinh">
               <span class="icon">&#127891;</span><span class="label">Quản lý Học sinh</span>

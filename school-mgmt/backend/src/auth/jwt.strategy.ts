@@ -15,11 +15,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (!secret || secret === 'dev_secret') {
       throw new Error('JWT_SECRET must be set to a secure value in environment variables');
     }
-    
+
     super({
       jwtFromRequest: ExtractJwt.fromExtractors([
         (request) => {
-          // Extract JWT from httpOnly cookie instead of Authorization header
           return request?.cookies?.access_token;
         },
       ]),
@@ -29,21 +28,22 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: any) {
-    // Check user still exists, not locked, and get CURRENT role/email/fullName from DB
     const user = await this.userModel
       .findById(payload.sub)
-      .select('status role email fullName')
+      .select('status role email fullName userCode')
       .lean() as any;
-    if (!user) throw new UnauthorizedException('Tài khoản không tồn tại');
-    if (user.status === 'LOCKED') throw new UnauthorizedException('Tài khoản đã bị khóa');
+
+    if (!user) throw new UnauthorizedException('Tai khoan khong ton tai');
+    if (user.status === 'LOCKED') throw new UnauthorizedException('Tai khoan da bi khoa');
 
     return {
       sub: payload.sub,
       _id: payload.sub,
-      userId: payload.sub,   // backward-compatible alias for legacy services
-      email: user.email,       // from DB — always current
-      role: user.role,         // from DB — always current
-      fullName: user.fullName, // from DB — always current
+      userId: payload.sub,
+      email: user.email,
+      role: user.role,
+      fullName: user.fullName,
+      userCode: user.userCode,
     };
   }
 }

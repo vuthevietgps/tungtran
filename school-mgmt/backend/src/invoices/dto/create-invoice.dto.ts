@@ -10,6 +10,11 @@ export class CreateInvoiceDto {
   @IsEnum(['TUITION', 'MATERIAL', 'OTHER'])
   invoiceType?: string;
 
+  /** Loại lớp học: ONLINE hoặc OFFLINE */
+  @IsOptional()
+  @IsEnum(['ONLINE', 'OFFLINE'])
+  classType?: string;
+
   @IsMongoId()
   @IsNotEmpty()
   studentId!: string;

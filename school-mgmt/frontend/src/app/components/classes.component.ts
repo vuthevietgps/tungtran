@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { ClassItem, ClassService } from '../services/class.service';
 import { UserItem, UserService } from '../services/user.service';
 import { StudentItem, StudentService } from '../services/student.service';
+import { ProductItem, ProductService } from '../services/product.service';
 import { AuthService } from '../services/auth.service';
 
 @Component({
@@ -79,9 +80,42 @@ import { AuthService } from '../services/auth.service';
         <label>Ten lop
           <input name="name" [(ngModel)]="form.name" required [readonly]="isSale()" />
         </label>
-        <label>Ma lop
-          <input name="code" [(ngModel)]="form.code" required [readonly]="isSale()" />
+
+        <label *ngIf="canManage()">Loai lop
+          <select name="classMode" [(ngModel)]="form.classMode" (ngModelChange)="onClassModeChange()">
+            <option value="ONLINE">ONLINE</option>
+            <option value="OFFLINE">OFFLINE</option>
+          </select>
         </label>
+
+        <label>Ma lop
+          <ng-container *ngIf="!isSale(); else readonlyCode">
+            <div class="searchable-dropdown">
+              <input
+                name="codeSearch"
+                [(ngModel)]="codeSearch"
+                (focus)="showCodeDropdown = true"
+                (input)="showCodeDropdown = true"
+                (blur)="hideCodeDropdown()"
+                [placeholder]="form.classMode === 'OFFLINE' ? 'Tim san pham offline...' : 'Tim ma hoc sinh...'"
+                autocomplete="off"
+              />
+              <div class="dropdown-list" *ngIf="showCodeDropdown">
+                <div
+                  class="dropdown-item"
+                  *ngFor="let opt of filteredCodeOptions()"
+                  (mousedown)="selectCodeOption(opt.value, opt.label)"
+                >{{opt.label}}</div>
+                <div class="dropdown-empty" *ngIf="!filteredCodeOptions().length">Khong tim thay ket qua</div>
+              </div>
+            </div>
+            <small class="field-hint" *ngIf="form.code">Ma lop da chon: <strong>{{form.code}}</strong></small>
+          </ng-container>
+          <ng-template #readonlyCode>
+            <input name="code" [(ngModel)]="form.code" readonly />
+          </ng-template>
+        </label>
+
         <label>Giao vien phu trach
           <select name="teacherId" [(ngModel)]="form.teacherId" required [disabled]="isSale()">
             <option value="" disabled [selected]="!form.teacherId">-- Chon giao vien --</option>
@@ -92,13 +126,6 @@ import { AuthService } from '../services/auth.service';
           <select name="saleId" [(ngModel)]="form.saleId" [disabled]="isSale()">
             <option value="">-- Khong chon --</option>
             <option *ngFor="let s of sales()" [value]="s._id">{{s.fullName}} ({{s.email}})</option>
-          </select>
-        </label>
-
-        <label *ngIf="canManage()">Loai lop
-          <select name="classMode" [(ngModel)]="form.classMode">
-            <option value="ONLINE">ONLINE</option>
-            <option value="OFFLINE">OFFLINE</option>
           </select>
         </label>
 
@@ -257,6 +284,13 @@ import { AuthService } from '../services/auth.service';
     .profit-positive { color:#059669; font-weight:600; }
     .profit-negative { color:#dc2626; font-weight:600; }
     .profit-zero { color:#6b7280; }
+    .searchable-dropdown { position:relative; }
+    .dropdown-list { position:absolute; top:100%; left:0; right:0; z-index:50; background:#fff; border:1px solid #cbd5e1; border-top:none; border-radius:0 0 4px 4px; max-height:200px; overflow-y:auto; box-shadow:0 4px 12px rgba(15,23,42,.1); }
+    .dropdown-item { padding:8px 10px; cursor:pointer; font-size:14px; border-bottom:1px solid #f1f5f9; }
+    .dropdown-item:hover { background:#eff6ff; color:#1d4ed8; }
+    .dropdown-item:last-child { border-bottom:none; }
+    .dropdown-empty { padding:10px; text-align:center; color:#94a3b8; font-size:13px; }
+    .field-hint { font-size:12px; color:#475569; margin-top:4px; display:block; }
 
     @media (max-width: 1024px) {
       .pricing-grid { grid-template-columns:1fr 1fr; }
@@ -273,7 +307,10 @@ export class ClassesComponent {
   teachers = signal<UserItem[]>([]);
   sales = signal<UserItem[]>([]);
   students = signal<StudentItem[]>([]);
+  products = signal<ProductItem[]>([]);
   studentSearch = '';
+  codeSearch = '';
+  showCodeDropdown = false;
   showModal = signal(false);
   error = signal('');
   editingId: string | null = null;
@@ -285,6 +322,7 @@ export class ClassesComponent {
     private classService: ClassService,
     private userService: UserService,
     private studentService: StudentService,
+    private productService: ProductService,
     private auth: AuthService,
   ) {
     this.loadLookups();
@@ -310,15 +348,49 @@ export class ClassesComponent {
   }
 
   async loadLookups() {
-    const [users, studs] = await Promise.all([this.userService.list(), this.studentService.list()]);
+    const [users, studs, prods] = await Promise.all([
+      this.userService.list(),
+      this.studentService.list(),
+      this.productService.list(),
+    ]);
     this.teachers.set(users.filter((u) => u.role === 'TEACHER'));
     this.sales.set(users.filter((u) => u.role === 'SALE'));
     this.students.set(studs);
+    this.products.set(prods);
   }
 
   async reload() {
     const data = await this.classService.list();
     this.classes.set(data);
+  }
+
+  filteredCodeOptions(): { label: string; value: string }[] {
+    const q = this.codeSearch.trim().toLowerCase();
+    if (this.form.classMode === 'OFFLINE') {
+      return this.products()
+        .filter((p) => p.isActive !== false && (p.teachingMode === 'OFFLINE' || p.teachingMode === 'BOTH'))
+        .filter((p) => !q || p.name.toLowerCase().includes(q) || (p.code || '').toLowerCase().includes(q))
+        .map((p) => ({ label: `${p.name}${p.code ? ' (' + p.code + ')' : ''}`, value: p.name }));
+    }
+    return this.students()
+      .filter((st) => !q || st.studentCode.toLowerCase().includes(q) || st.fullName.toLowerCase().includes(q))
+      .map((st) => ({ label: `${st.studentCode} - ${st.fullName}`, value: st.studentCode }));
+  }
+
+  selectCodeOption(value: string, label: string) {
+    this.form.code = value;
+    this.codeSearch = label;
+    this.showCodeDropdown = false;
+  }
+
+  onClassModeChange() {
+    this.form.code = '';
+    this.codeSearch = '';
+    this.showCodeDropdown = false;
+  }
+
+  hideCodeDropdown() {
+    setTimeout(() => { this.showCodeDropdown = false; }, 150);
   }
 
   openModal() {
@@ -327,6 +399,8 @@ export class ClassesComponent {
     this.editingId = null;
     this.error.set('');
     this.studentSearch = '';
+    this.codeSearch = '';
+    this.showCodeDropdown = false;
     this.submitLabel = 'Luu';
     this.showModal.set(true);
   }
@@ -334,6 +408,8 @@ export class ClassesComponent {
   closeModal() {
     this.showModal.set(false);
     this.editingId = null;
+    this.codeSearch = '';
+    this.showCodeDropdown = false;
     this.submitLabel = 'Luu';
   }
 
@@ -351,6 +427,11 @@ export class ClassesComponent {
       }
       this.closeModal();
       this.reload();
+      return;
+    }
+
+    if (!this.form.code.trim()) {
+      this.error.set('Vui long chon ma lop');
       return;
     }
 
@@ -419,6 +500,8 @@ export class ClassesComponent {
 
     this.error.set('');
     this.studentSearch = '';
+    this.codeSearch = classItem.code;
+    this.showCodeDropdown = false;
     this.submitLabel = this.isSale() ? 'Them hoc vien' : 'Cap nhat';
     this.showModal.set(true);
   }

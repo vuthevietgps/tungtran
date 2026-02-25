@@ -78,7 +78,13 @@ export class AuthService {
   }
 
   async login(user: any) {
-    const payload = { sub: user._id, email: user.email, role: user.role, fullName: user.fullName };
+    const payload = {
+      sub: user._id,
+      email: user.email,
+      role: user.role,
+      fullName: user.fullName,
+      userCode: user.userCode,
+    };
 
     // Ghi nhận chấm công đăng nhập (không block login nếu lỗi)
     try {

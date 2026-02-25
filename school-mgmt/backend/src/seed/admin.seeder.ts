@@ -9,40 +9,39 @@ import { ConfigService } from '@nestjs/config';
 @Injectable()
 export class AdminSeeder implements OnModuleInit {
   private readonly logger = new Logger(AdminSeeder.name);
+
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     private config: ConfigService,
   ) {}
 
   async onModuleInit() {
-    // Check environment - disable demo accounts in production
     const nodeEnv = this.config.get<string>('NODE_ENV', 'development');
-
     if (nodeEnv === 'production') {
-      this.logger.warn('⚠️  Demo account seeding disabled in production environment');
+      this.logger.warn('Demo account seeding disabled in production environment');
       return;
     }
 
     this.logger.log('Creating demo accounts for development...');
 
-    // Validate demo password strength
     const demoPassword = this.config.get<string>('DEMO_PASSWORD');
     if (!demoPassword || demoPassword === '123456') {
-      this.logger.error('❌ DEMO_PASSWORD not set or using default! Skipping demo accounts.');
+      this.logger.error('DEMO_PASSWORD not set or using default. Skipping demo accounts.');
       return;
     }
+
     const syncExisting = (this.config.get<string>('DEMO_SYNC_EXISTING', 'true') || 'true')
       .toLowerCase() !== 'false';
 
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(demoPassword, salt);
 
-    const demoUsers: Array<Pick<User, 'email' | 'fullName' | 'role'>> = [
-      { email: 'director.demo@school.local', fullName: 'Giám đốc Demo', role: Role.DIRECTOR },
-      { email: 'accounting.demo@school.local', fullName: 'Kế toán Demo', role: Role.ACCOUNTING },
-      { email: 'ops.demo@school.local', fullName: 'Vận hành Demo', role: Role.OPS },
-      { email: 'teacher.demo@school.local', fullName: 'Giáo viên Demo', role: Role.TEACHER },
-      { email: 'parent.demo@school.local', fullName: 'Phụ huynh Demo', role: Role.PARENT },
+    const demoUsers: Array<Pick<User, 'email' | 'fullName' | 'role' | 'userCode'>> = [
+      { email: 'director.demo@school.local', fullName: 'Giam doc Demo', role: Role.DIRECTOR, userCode: 'GD_DEMO' },
+      { email: 'accounting.demo@school.local', fullName: 'Ke toan Demo', role: Role.ACCOUNTING, userCode: 'KT_DEMO' },
+      { email: 'ops.demo@school.local', fullName: 'Van hanh Demo', role: Role.OPS, userCode: 'OPS_DEMO' },
+      { email: 'teacher.demo@school.local', fullName: 'Giao vien Demo', role: Role.TEACHER, userCode: 'GV_DEMO' },
+      { email: 'parent.demo@school.local', fullName: 'Phu huynh Demo', role: Role.PARENT, userCode: 'PH_DEMO' },
     ];
 
     for (const demo of demoUsers) {
@@ -56,12 +55,15 @@ export class AdminSeeder implements OnModuleInit {
         const passwordMatches = existing.password
           ? await bcrypt.compare(demoPassword, existing.password)
           : false;
+
         const needsProfileSync =
           existing.fullName !== demo.fullName ||
+          existing.userCode !== demo.userCode ||
           existing.role !== demo.role ||
           existing.status !== 'ACTIVE' ||
           (existing.failedLoginAttempts || 0) !== 0 ||
           !!existing.lastFailedLoginAt;
+
         const needsPasswordSync = !passwordMatches;
 
         if (!needsProfileSync && !needsPasswordSync) {
@@ -74,6 +76,7 @@ export class AdminSeeder implements OnModuleInit {
           {
             $set: {
               fullName: demo.fullName,
+              userCode: demo.userCode,
               role: demo.role,
               status: 'ACTIVE',
               failedLoginAttempts: 0,
@@ -82,9 +85,11 @@ export class AdminSeeder implements OnModuleInit {
             $unset: { lastFailedLoginAt: 1 },
           },
         );
+
         this.logger.log(`Synced demo account: ${demo.email}${needsPasswordSync ? ' (password reset)' : ''}`);
         continue;
       }
+
       await this.userModel.create({ ...demo, password: hashedPassword });
       this.logger.log(`Seeded demo account: ${demo.email} (${demo.role})`);
     }

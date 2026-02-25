@@ -6,9 +6,13 @@ import {
   Param,
   Query,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
   Req,
   ForbiddenException,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { WalletsService } from './wallets.service';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -86,6 +90,15 @@ export class WalletsController {
       throw new ForbiddenException('Bạn chỉ có thể nạp tiền cho ví của mình');
     }
     return this.walletsService.requestTopUp(dto, req.user.sub);
+  }
+
+  /** PH / OPS tải ảnh chứng từ nạp tiền */
+  @Post('top-up/upload-receipt')
+  @Roles(Role.PARENT, Role.OPS, Role.ACCOUNTING, Role.DIRECTOR)
+  @UseInterceptors(FileInterceptor('file'))
+  uploadTopUpReceipt(@UploadedFile() file: Express.Multer.File) {
+    if (!file) throw new BadRequestException('Không có file được tải lên');
+    return { url: `/uploads/wallets/${file.filename}` };
   }
 
   /** ACCOUNTING xem danh sách nạp tiền chờ duyệt */

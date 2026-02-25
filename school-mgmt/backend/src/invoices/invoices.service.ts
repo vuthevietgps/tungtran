@@ -221,6 +221,12 @@ export class InvoicesService {
   /** Duyá»‡t hoáº·c tá»« chá»‘i hÃ³a Ä‘Æ¡n (DIRECTOR / ACCOUNTING) */
   async approveInvoice(id: string, dto: ApproveInvoiceDto, actor: JwtPayload) {
     const actorId = this.getActorId(actor);
+    const approvalImage = dto.approvalImage?.trim();
+
+    if (dto.action === 'APPROVE' && !approvalImage) {
+      throw new BadRequestException('Phai tai anh xac nhan truoc khi duyet hoa don');
+    }
+
     if (dto.action === 'APPROVE') {
       // Wrap approve + wallet top-up trong transaction Ä‘á»ƒ Ä‘áº£m báº£o atomic
       const mongoSession = await this.connection.startSession();
@@ -238,6 +244,7 @@ export class InvoicesService {
               status: InvoiceStatus.APPROVED,
               approvedBy: approvedByOid,
               approvedAt: now,
+              approvalImage,
               paymentDate: { $ifNull: ['$paymentDate', now] },
             },
           }],

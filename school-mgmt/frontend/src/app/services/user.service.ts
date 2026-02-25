@@ -5,11 +5,22 @@ import { environment } from '../../environments/environment';
 
 export interface UserItem {
   _id: string;
+  userCode?: string;
   email: string;
   fullName: string;
   role: string;
   status?: string;
 }
+
+export interface CreateUserPayload {
+  userCode: string;
+  email: string;
+  password: string;
+  fullName: string;
+  role: string;
+}
+
+export type UpdateUserPayload = Partial<CreateUserPayload>;
 
 @Injectable({ providedIn: 'root' })
 export class UserService {
@@ -45,14 +56,14 @@ export class UserService {
     }
   }
 
-  async create(payload: { email: string; password: string; fullName: string; role: string }): Promise<boolean> {
+  async create(payload: CreateUserPayload): Promise<boolean> {
     await firstValueFrom(
       this.http.post(`${environment.apiBase}/users`, payload, { withCredentials: true }),
     );
     return true;
   }
 
-  async update(id: string, payload: Partial<{ email: string; password: string; fullName: string; role: string }>): Promise<boolean> {
+  async update(id: string, payload: UpdateUserPayload): Promise<boolean> {
     await firstValueFrom(
       this.http.patch(`${environment.apiBase}/users/${id}`, payload, { withCredentials: true }),
     );
