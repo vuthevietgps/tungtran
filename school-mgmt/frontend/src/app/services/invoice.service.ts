@@ -28,6 +28,7 @@ export interface InvoiceItem {
     email: string;
   };
   sessions?: number;
+  paymentRound?: number;
   amount: number;
   paymentDate: string;
   receiptImage?: string;
@@ -49,6 +50,7 @@ export interface InvoiceUpsertPayload {
   classType?: 'ONLINE' | 'OFFLINE';
   saleId?: string;
   sessions?: number;
+  paymentRound?: number;
   amount: number;
   paymentDate: string;
   receiptImage?: string;

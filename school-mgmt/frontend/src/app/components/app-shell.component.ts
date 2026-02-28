@@ -302,11 +302,21 @@ import { Role, ROLE_LABELS } from '../models/role.enum';
   </div>
   `,
   styles: [`
-    .layout { display:flex; min-height:100vh; background:#e2e8f0; font-family:'Segoe UI',sans-serif; }
+    :host { display:block; height:100vh; overflow:hidden; }
+    .layout {
+      display:flex;
+      height:100%;
+      min-height:0;
+      overflow:hidden;
+      background:#e2e8f0;
+      font-family:'Segoe UI',sans-serif;
+    }
     .sidebar {
       width:250px; background:#0f172a; color:#e2e8f0; padding:16px;
       display:flex; flex-direction:column; position:relative; transition:width 0.2s ease;
+      min-height:0;
       overflow-y:auto;
+      overflow-x:hidden;
     }
     .sidebar.collapsed { width:60px; align-items:center; padding:16px 8px; }
     .toggle {
@@ -372,7 +382,7 @@ import { Role, ROLE_LABELS } from '../models/role.enum';
     }
     .logout:hover { background:#b91c1c; }
     .logout.compact { padding:8px; font-size:16px; }
-    .content { flex:1; overflow-y:auto; }
+    .content { flex:1; min-width:0; min-height:0; overflow-y:auto; }
   `]
 })
 export class AppShellComponent {

@@ -2,7 +2,7 @@ import { CommonModule } from '@angular/common';
 import { Component, computed, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { StudentItem, StudentService } from '../services/student.service';
-import { ProductItem, ProductService } from '../services/product.service';
+import { UserItem, UserService } from '../services/user.service';
 import { AuthService } from '../services/auth.service';
 
 interface StudentForm {
@@ -11,10 +11,11 @@ interface StudentForm {
   age: number;
   studentBirthMonth: number | null;
   parentBirthMonth: number | null;
+  parentUserId: string;
   parentName: string;
   parentPhone: string;
+  paymentCount: number;
   faceImage: string;
-  productPackage: string;
 }
 
 @Component({
@@ -24,30 +25,30 @@ interface StudentForm {
   template: `
     <header class="page-header">
       <div>
-        <h2>Quản lý học sinh</h2>
-        <p>Theo dõi thông tin phụ huynh và ảnh nhận diện.</p>
+        <h2>Quan ly hoc sinh</h2>
+        <p>Theo doi thong tin phu huynh va anh nhan dien.</p>
       </div>
-      <button class="primary" (click)="openModal()">+ Thêm học sinh</button>
+      <button class="primary" (click)="openModal()">+ Them hoc sinh</button>
     </header>
 
     <section class="filters">
-      <input placeholder="Tìm theo tên hoặc mã học sinh" [(ngModel)]="keyword" />
-      <button (click)="reload()">Làm mới</button>
+      <input placeholder="Tim theo ten hoac ma hoc sinh" [(ngModel)]="keyword" />
+      <button (click)="reload()">Lam moi</button>
     </section>
 
     <table class="data" *ngIf="filtered().length; else empty">
       <thead>
         <tr>
-          <th>Ảnh</th>
-          <th>Mã học sinh</th>
-          <th>Họ và tên</th>
-          <th>Tuổi</th>
-          <th>Tháng sinh HS</th>
-          <th>Tên phụ huynh</th>
-          <th>Tháng sinh PH</th>
-          <th>Điện thoại</th>
-          <th>Gói sản phẩm</th>
-          <th>Hành động</th>
+          <th>Anh</th>
+          <th>Ma hoc sinh</th>
+          <th>Ho va ten</th>
+          <th>Tuoi</th>
+          <th>Thang sinh HS</th>
+          <th>Ten phu huynh</th>
+          <th>Thang sinh PH</th>
+          <th>Dien thoai</th>
+          <th>So lan TT</th>
+          <th>Hanh dong</th>
         </tr>
       </thead>
       <tbody>
@@ -60,64 +61,83 @@ interface StudentForm {
           <td>{{s.parentName}}</td>
           <td>{{ s.parentBirthMonth ? 'T' + s.parentBirthMonth : '-' }}</td>
           <td>{{s.parentPhone}}</td>
-          <td>{{ s.productPackage?.name || '-' }}</td>
+          <td>{{ s.payments?.length || 0 }}</td>
           <td class="actions-cell">
-            <button class="ghost" (click)="edit(s)">Sửa</button>
-            <button class="ghost" (click)="remove(s)" *ngIf="canDeleteStudents">Xóa</button>
+            <button class="ghost" (click)="edit(s)">Sua</button>
+            <button class="ghost" (click)="remove(s)" *ngIf="canDeleteStudents">Xoa</button>
           </td>
         </tr>
       </tbody>
     </table>
-    <ng-template #empty><p>Chưa có học sinh.</p></ng-template>
+    <ng-template #empty><p>Chua co hoc sinh.</p></ng-template>
 
     <div class="modal-backdrop" *ngIf="showModal()">
       <div class="modal">
-        <h3>{{ editingStudent ? 'Sửa học sinh' : 'Thêm học sinh' }}</h3>
-        <form (ngSubmit)="submit()" #f="ngForm">
-          <label>Mã học sinh
-            <input name="studentCode" [(ngModel)]="form.studentCode" placeholder="Ví dụ: HS001" required />
+        <h3>{{ editingStudent ? 'Sua hoc sinh' : 'Them hoc sinh' }}</h3>
+        <form (ngSubmit)="submit()">
+          <label>Ma hoc sinh
+            <input name="studentCode" [(ngModel)]="form.studentCode" placeholder="Vi du: HS001" required />
           </label>
-          <label>Họ và tên
+          <label>Ho va ten
             <input name="fullName" [(ngModel)]="form.fullName" required />
           </label>
-          <label>Tuổi
+          <label>Tuoi
             <input name="age" type="number" min="3" max="25" [(ngModel)]="form.age" required />
           </label>
-          <label>Tháng sinh học sinh
+          <label>Thang sinh hoc sinh
             <select name="studentBirthMonth" [(ngModel)]="form.studentBirthMonth">
-              <option [ngValue]="null">-- Chọn tháng --</option>
-              <option *ngFor="let m of monthOptions" [ngValue]="m">Tháng {{ m }}</option>
+              <option [ngValue]="null">-- Chon thang --</option>
+              <option *ngFor="let m of monthOptions" [ngValue]="m">Thang {{ m }}</option>
             </select>
           </label>
-          <label>Tên phụ huynh
-            <input name="parentName" [(ngModel)]="form.parentName" required />
+          <label>Ma phu huynh
+            <select name="parentUserId" [(ngModel)]="form.parentUserId" (ngModelChange)="onParentChange($event)">
+              <option value="">-- Chon ma phu huynh --</option>
+              <option *ngFor="let p of parents()" [value]="p._id">
+                {{ p.userCode || 'N/A' }} - {{ p.fullName }}
+              </option>
+            </select>
           </label>
-          <label>Tháng sinh phụ huynh
+          <label>Ten phu huynh
+            <input
+              name="parentName"
+              [(ngModel)]="form.parentName"
+              required />
+          </label>
+          <label>Thang sinh phu huynh
             <select name="parentBirthMonth" [(ngModel)]="form.parentBirthMonth">
-              <option [ngValue]="null">-- Chọn tháng --</option>
-              <option *ngFor="let m of monthOptions" [ngValue]="m">Tháng {{ m }}</option>
+              <option [ngValue]="null">-- Chon thang --</option>
+              <option *ngFor="let m of monthOptions" [ngValue]="m">Thang {{ m }}</option>
             </select>
           </label>
-          <label>Điện thoại phụ huynh
-            <input name="parentPhone" [(ngModel)]="form.parentPhone" required />
+          <label>Dien thoai phu huynh
+            <input
+              name="parentPhone"
+              [(ngModel)]="form.parentPhone"
+              required />
           </label>
-          <label>Ảnh nhận diện
+          <label>So lan thanh toan
+            <input
+              name="paymentCount"
+              type="number"
+              min="0"
+              max="10"
+              [(ngModel)]="form.paymentCount"
+              [disabled]="!!editingStudent"
+              required />
+          </label>
+          <small *ngIf="editingStudent">So lan thanh toan chi ap dung khi tao moi hoc sinh.</small>
+          <label>Anh nhan dien
             <input type="file" accept="image/*" (change)="handleFileChange($event)" />
           </label>
-          <label>Gói sản phẩm
-            <select name="productPackage" [(ngModel)]="form.productPackage">
-              <option value="">-- Chọn gói --</option>
-              <option *ngFor="let p of products()" [value]="p._id">{{ p.name }}</option>
-            </select>
-          </label>
           <div class="upload-status">
-            <span *ngIf="uploading()">Đang tải ảnh...</span>
+            <span *ngIf="uploading()">Dang tai anh...</span>
             <span class="error" *ngIf="uploadError()">{{uploadError()}}</span>
-            <img *ngIf="form.faceImage && !uploading()" [src]="form.faceImage" alt="Xem trước" class="preview" />
+            <img *ngIf="form.faceImage && !uploading()" [src]="form.faceImage" alt="Xem truoc" class="preview" />
           </div>
           <div class="actions">
-            <button type="submit" class="primary" [disabled]="uploading() || !form.faceImage">Lưu</button>
-            <button type="button" (click)="closeModal()">Hủy</button>
+            <button type="submit" class="primary" [disabled]="uploading() || !form.faceImage">Luu</button>
+            <button type="button" (click)="closeModal()">Huy</button>
           </div>
           <p class="error" *ngIf="error()">{{error()}}</p>
         </form>
@@ -148,7 +168,7 @@ interface StudentForm {
 })
 export class StudentsComponent {
   items = signal<StudentItem[]>([]);
-  products = signal<ProductItem[]>([]);
+  parents = signal<UserItem[]>([]);
   keyword = '';
   showModal = signal(false);
   error = signal('');
@@ -161,11 +181,11 @@ export class StudentsComponent {
 
   constructor(
     private studentService: StudentService,
-    private productService: ProductService,
+    private userService: UserService,
     private auth: AuthService
   ) {
     this.reload();
-    this.loadProducts();
+    this.loadParents();
     this.canDeleteStudents = this.auth.userSignal()?.role === 'DIRECTOR';
   }
 
@@ -183,9 +203,31 @@ export class StudentsComponent {
     this.items.set(data);
   }
 
-  async loadProducts() {
-    const data = await this.productService.list();
-    this.products.set(data);
+  async loadParents() {
+    const data = await this.userService.listParents();
+    const parentData = data
+      .filter((u) => u.role === 'PARENT')
+      .sort((a, b) => {
+        const aCode = (a.userCode || '').trim();
+        const bCode = (b.userCode || '').trim();
+        if (aCode && bCode) return aCode.localeCompare(bCode);
+        if (aCode) return -1;
+        if (bCode) return 1;
+        return a.fullName.localeCompare(b.fullName);
+      });
+    this.parents.set(parentData);
+  }
+
+  onParentChange(parentId: string) {
+    if (!parentId) {
+      this.form.parentName = '';
+      this.form.parentPhone = '';
+      return;
+    }
+    const selectedParent = this.parents().find((p) => p._id === parentId);
+    if (!selectedParent) return;
+    this.form.parentName = selectedParent.fullName || '';
+    this.form.parentPhone = selectedParent.phone || '';
   }
 
   openModal() {
@@ -205,10 +247,11 @@ export class StudentsComponent {
       age: student.age,
       studentBirthMonth: student.studentBirthMonth || null,
       parentBirthMonth: student.parentBirthMonth || null,
+      parentUserId: student.parentUserId || '',
       parentName: student.parentName,
       parentPhone: student.parentPhone,
+      paymentCount: student.payments?.length || 0,
       faceImage: student.faceImage,
-      productPackage: student.productPackage?._id || '',
     };
     this.error.set('');
     this.uploadError.set('');
@@ -230,6 +273,9 @@ export class StudentsComponent {
       faceImage: this.form.faceImage.trim(),
     };
 
+    if (this.form.parentUserId) {
+      payload.parentUserId = this.form.parentUserId;
+    }
     if (this.form.studentBirthMonth) {
       payload.studentBirthMonth = Number(this.form.studentBirthMonth);
     }
@@ -237,8 +283,14 @@ export class StudentsComponent {
       payload.parentBirthMonth = Number(this.form.parentBirthMonth);
     }
 
-    if (this.form.productPackage) {
-      payload.productPackage = this.form.productPackage;
+    if (!this.editingStudent) {
+      const paymentCount = Number(this.form.paymentCount || 0);
+      if (paymentCount > 0) {
+        payload.payments = Array.from({ length: paymentCount }, (_, i) => ({
+          frameIndex: i + 1,
+          confirmStatus: 'PENDING',
+        }));
+      }
     }
 
     try {
@@ -250,7 +302,7 @@ export class StudentsComponent {
       this.closeModal();
       this.reload();
     } catch (e: any) {
-      this.error.set(e?.message || 'Không thể lưu học sinh');
+      this.error.set(e?.message || 'Khong the luu hoc sinh');
     }
   }
 
@@ -266,23 +318,23 @@ export class StudentsComponent {
       const result = await this.studentService.uploadFace(file);
       this.uploading.set(false);
       if (!result.url) {
-        this.uploadError.set('Tải ảnh thất bại');
+        this.uploadError.set('Tai anh that bai');
         return;
       }
       this.form.faceImage = result.url;
     } catch (e: any) {
       this.uploading.set(false);
-      this.uploadError.set(e?.message || 'Tải ảnh thất bại');
+      this.uploadError.set(e?.message || 'Tai anh that bai');
     }
   }
 
   async remove(student: StudentItem) {
-    if (!confirm(`Xóa học sinh ${student.fullName}?`)) return;
+    if (!confirm(`Xoa hoc sinh ${student.fullName}?`)) return;
     try {
       await this.studentService.remove(student._id);
       this.reload();
     } catch (e: any) {
-      alert(e?.message || 'Không thể xóa học sinh');
+      alert(e?.message || 'Khong the xoa hoc sinh');
     }
   }
 
@@ -293,10 +345,11 @@ export class StudentsComponent {
       age: 6,
       studentBirthMonth: null,
       parentBirthMonth: null,
+      parentUserId: '',
       parentName: '',
       parentPhone: '',
+      paymentCount: 0,
       faceImage: '',
-      productPackage: '',
     };
   }
 }

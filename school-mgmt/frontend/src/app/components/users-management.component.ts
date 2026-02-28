@@ -86,6 +86,20 @@ interface RoleOption {
             <option *ngFor="let r of roleOptions" [value]="r.value">{{ r.label }}</option>
           </select>
         </label>
+        <ng-container *ngIf="isParentRole(form.role)">
+          <label>Link Facebook
+            <input
+              [(ngModel)]="form.facebookLink"
+              name="facebookLink"
+              placeholder="https://facebook.com/..." />
+          </label>
+          <label>Dia chi
+            <input
+              [(ngModel)]="form.address"
+              name="address"
+              placeholder="Nhap dia chi phu huynh" />
+          </label>
+        </ng-container>
         <small class="hint" *ngIf="isSelfEditing()">Khong the doi role cua tai khoan dang dang nhap.</small>
         <div class="actions">
           <button type="submit" class="primary">{{ editingId ? 'Cap nhat' : 'Luu' }}</button>
@@ -104,7 +118,7 @@ interface RoleOption {
     .scope-tabs button { border:1px solid #cbd5e1; background:#fff; padding:6px 10px; border-radius:999px; cursor:pointer; font-weight:500; }
     .scope-tabs button.active { border-color:#2563eb; color:#1d4ed8; background:#eff6ff; }
     .filters { display:flex; gap:10px; margin-bottom:16px; }
-    input, select { padding:6px 8px; border:1px solid #cbd5e1; border-radius:4px; }
+    input, select, textarea { padding:6px 8px; border:1px solid #cbd5e1; border-radius:4px; }
     .data { width:100%; border-collapse:collapse; background:#fff; }
     th, td { padding:8px; border:1px solid #e2e8f0; text-align:left; }
     thead { background:#f1f5f9; }
@@ -131,7 +145,15 @@ export class UsersManagementComponent {
 
   search = '';
   roleFilter = '';
-  form = { userCode: '', email: '', password: '', fullName: '', role: 'DIRECTOR' };
+  form = {
+    userCode: '',
+    email: '',
+    password: '',
+    fullName: '',
+    role: 'DIRECTOR',
+    facebookLink: '',
+    address: '',
+  };
   editingId: string | null = null;
 
   roleOptions: RoleOption[] = [
@@ -193,6 +215,10 @@ export class UsersManagementComponent {
     return !!current && current.sub === this.editingId;
   }
 
+  isParentRole(role: string): boolean {
+    return role === this.parentRole;
+  }
+
   async reload() {
     const data = await this.userService.list();
     this.users.set(data);
@@ -222,6 +248,8 @@ export class UsersManagementComponent {
       password: '',
       fullName: '',
       role: this.parentMode() ? this.parentRole : 'DIRECTOR',
+      facebookLink: '',
+      address: '',
     };
     this.editingId = null;
     this.showModal.set(true);
@@ -241,12 +269,15 @@ export class UsersManagementComponent {
     }
 
     try {
+      const isParentRole = this.isParentRole(this.form.role);
       const payload = {
         userCode,
         email: this.form.email.trim(),
         password: this.form.password.trim(),
         fullName: this.form.fullName.trim(),
         role: this.form.role,
+        facebookLink: isParentRole ? this.form.facebookLink.trim() : undefined,
+        address: isParentRole ? this.form.address.trim() : undefined,
       };
 
       if (this.editingId) {
@@ -255,6 +286,8 @@ export class UsersManagementComponent {
           email: payload.email,
           fullName: payload.fullName,
           role: payload.role,
+          facebookLink: payload.facebookLink,
+          address: payload.address,
         };
         if (payload.password) updatePayload.password = payload.password;
 
@@ -282,6 +315,8 @@ export class UsersManagementComponent {
       password: '',
       fullName: user.fullName,
       role: user.role,
+      facebookLink: user.facebookLink || '',
+      address: user.address || '',
     };
     this.error.set('');
     this.showModal.set(true);

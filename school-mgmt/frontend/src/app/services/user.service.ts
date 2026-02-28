@@ -10,6 +10,9 @@ export interface UserItem {
   fullName: string;
   role: string;
   status?: string;
+  phone?: string;
+  facebookLink?: string;
+  address?: string;
 }
 
 export interface CreateUserPayload {
@@ -18,6 +21,8 @@ export interface CreateUserPayload {
   password: string;
   fullName: string;
   role: string;
+  facebookLink?: string;
+  address?: string;
 }
 
 export type UpdateUserPayload = Partial<CreateUserPayload>;
@@ -50,6 +55,16 @@ export class UserService {
     try {
       return await firstValueFrom(
         this.http.get<UserItem[]>(`${environment.apiBase}/users/sales`, { withCredentials: true }),
+      );
+    } catch {
+      return [];
+    }
+  }
+
+  async listParents(): Promise<UserItem[]> {
+    try {
+      return await firstValueFrom(
+        this.http.get<UserItem[]>(`${environment.apiBase}/users/parents`, { withCredentials: true }),
       );
     } catch {
       return [];

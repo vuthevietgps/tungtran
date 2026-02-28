@@ -28,6 +28,12 @@ export class UsersService {
     return normalized || null;
   }
 
+  private normalizeOptionalText(value?: string | null): string | null {
+    if (value === undefined || value === null) return null;
+    const normalized = value.trim();
+    return normalized || null;
+  }
+
   private async ensureEmailUnique(email: string, excludeId?: string): Promise<void> {
     const query: any = { email };
     if (excludeId) query._id = { $ne: excludeId };
@@ -47,6 +53,9 @@ export class UsersService {
 
     const email = this.normalizeEmail(dto.email);
     const userCode = this.normalizeUserCode(dto.userCode);
+    const facebookLink = this.normalizeOptionalText(dto.facebookLink);
+    const address = this.normalizeOptionalText(dto.address);
+    const isParent = dto.role === Role.PARENT;
     if (!userCode) throw new BadRequestException('Ma tai khoan la bat buoc');
 
     await this.ensureEmailUnique(email);
@@ -58,6 +67,8 @@ export class UsersService {
       email,
       userCode,
       password,
+      facebookLink: isParent ? (facebookLink || undefined) : undefined,
+      address: isParent ? (address || undefined) : undefined,
     });
 
     const saved = await user.save();
@@ -87,6 +98,7 @@ export class UsersService {
     if (actor.role !== Role.DIRECTOR) throw new ForbiddenException('Chi giam doc moi co quyen');
 
     const update: any = {};
+    const unset: Record<string, 1> = {};
 
     if (dto.email !== undefined) {
       const email = this.normalizeEmail(dto.email);
@@ -104,8 +116,31 @@ export class UsersService {
     if (dto.fullName !== undefined) update.fullName = dto.fullName;
     if (dto.role !== undefined) update.role = dto.role;
 
+    if (dto.facebookLink !== undefined) {
+      const facebookLink = this.normalizeOptionalText(dto.facebookLink);
+      if (facebookLink) update.facebookLink = facebookLink;
+      else unset.facebookLink = 1;
+    }
+
+    if (dto.address !== undefined) {
+      const address = this.normalizeOptionalText(dto.address);
+      if (address) update.address = address;
+      else unset.address = 1;
+    }
+
+    if (dto.role !== undefined && dto.role !== Role.PARENT) {
+      unset.facebookLink = 1;
+      unset.address = 1;
+      delete update.facebookLink;
+      delete update.address;
+    }
+
     if (dto.password) {
       update.password = await this.hashPassword(dto.password);
+    }
+
+    if (Object.keys(unset).length) {
+      update.$unset = unset;
     }
 
     const user = await this.userModel.findByIdAndUpdate(id, update, { new: true }).select('-password').lean();

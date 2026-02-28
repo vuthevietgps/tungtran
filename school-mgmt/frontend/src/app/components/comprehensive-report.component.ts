@@ -1,9 +1,13 @@
-import { Component, OnInit, signal, computed, inject } from '@angular/core';
+import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { StudentService, ComprehensiveReportRow, ComprehensiveReportResponse, SessionCell } from '../services/student.service';
-import { ClassService, ClassItem } from '../services/class.service';
-import { environment } from '../../environments/environment';
+import {
+  ComprehensiveReportResponse,
+  ComprehensiveReportRow,
+  SessionCell,
+  StudentService,
+} from '../services/student.service';
+import { ClassItem, ClassService } from '../services/class.service';
 
 @Component({
   selector: 'app-comprehensive-report',
@@ -11,244 +15,316 @@ import { environment } from '../../environments/environment';
   imports: [CommonModule, FormsModule],
   template: `
     <div class="report-container">
-      <h1>Báo cáo tổng hợp học sinh</h1>
+      <h1>Bang diem danh tong hop</h1>
 
-      <!-- Filters -->
-      <div class="filters">
-        <div class="filter-group">
-          <label>Lọc theo lớp:</label>
+      <div class="filters compact">
+        <div class="filter-item">
+          <label>Lop</label>
           <select [(ngModel)]="selectedClassId" (change)="loadReport()">
-            <option value="">Tất cả lớp</option>
+            <option value="">Tat ca lop</option>
             <option *ngFor="let cls of classes()" [value]="cls._id">
               {{ cls.code }} - {{ cls.name }}
             </option>
           </select>
         </div>
 
-        <div class="filter-group">
-          <label>Tìm kiếm:</label>
+        <div class="filter-item filter-item-search">
+          <label>Tim kiem</label>
           <input
             type="text"
             [(ngModel)]="searchTerm"
             (input)="onSearchInput()"
-            placeholder="Tên HS, mã HS, phụ huynh, SĐT..."
+            placeholder="Ten HS, ma HS, phu huynh, SDT..."
           />
         </div>
 
-        <button class="btn btn-primary" (click)="loadReport()">
-          Tìm kiếm
-        </button>
-
-        <button class="btn btn-export" (click)="exportCSV()">
-          Xuất CSV
-        </button>
+        <div class="filter-actions">
+          <button class="btn btn-primary" (click)="loadReport()">Tim kiem</button>
+          <button class="btn btn-export" (click)="exportCSV()">Xuat CSV</button>
+        </div>
       </div>
 
-      <!-- Loading & Error -->
-      <div *ngIf="loading()" class="loading">Đang tải dữ liệu...</div>
+      <div *ngIf="loading()" class="loading">Dang tai du lieu...</div>
       <div *ngIf="error()" class="error">{{ error() }}</div>
 
-      <!-- Summary -->
       <div *ngIf="!loading() && reportRows().length > 0" class="report-summary">
         <div class="summary-card">
-          <h3>Tổng số dòng</h3>
+          <h3>Tong so dong</h3>
           <p class="summary-number">{{ reportRows().length }}</p>
         </div>
         <div class="summary-card">
-          <h3>Số lớp</h3>
+          <h3>So lop</h3>
           <p class="summary-number">{{ uniqueClasses() }}</p>
         </div>
         <div class="summary-card">
-          <h3>Buổi tối đa</h3>
+          <h3>Buoi toi da</h3>
           <p class="summary-number">{{ maxSessions() }}</p>
         </div>
         <div class="summary-card">
-          <h3>Tổng lượt có mặt</h3>
+          <h3>Tong luot co mat</h3>
           <p class="summary-number">{{ totalAttended() }}</p>
+        </div>
+        <div class="summary-card">
+          <h3>So bang</h3>
+          <p class="summary-number">{{ sessionChunks().length }}</p>
         </div>
       </div>
 
-      <!-- Tables: split every 20 sessions -->
-      <ng-container *ngFor="let chunk of sessionChunks(); let ci = index">
-        <h2 class="chunk-title" *ngIf="sessionChunks().length > 1">
-          Buổi {{ chunk.start + 1 }} – {{ chunk.end }}
-        </h2>
-        <div class="report-table-container">
-          <table class="report-table">
-            <thead>
-              <tr>
-                <!-- fixed cols only in first chunk, otherwise just STT + code + name -->
-                <th class="sticky-col col-stt">STT</th>
-                <th class="sticky-col col-code">Mã HS</th>
-                <th class="sticky-col col-name">Tên học sinh</th>
-                <ng-container *ngIf="ci === 0">
-                  <th>Tuổi</th>
-                  <th>Phụ huynh</th>
-                  <th>SĐT</th>
-                  <th>Mã lớp</th>
-                  <th>Tên lớp</th>
-                  <th>Môn học</th>
-                  <th>Giáo viên</th>
-                  <th>Giá/buổi</th>
-                  <th>Tổng buổi</th>
-                  <th>Đã học</th>
-                  <th>Có mặt</th>
-                  <th>Vắng</th>
-                </ng-container>
-                <th
-                  *ngFor="let si of chunk.indices"
-                  class="session-col"
-                >
-                  Buổi {{ si + 1 }}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr *ngFor="let row of reportRows(); let i = index">
-                <td class="sticky-col col-stt">{{ i + 1 }}</td>
-                <td class="sticky-col col-code">{{ row.studentCode }}</td>
-                <td class="sticky-col col-name"><strong>{{ row.fullName }}</strong></td>
-                <ng-container *ngIf="ci === 0">
-                  <td>{{ row.age || '-' }}</td>
-                  <td>{{ row.parentName }}</td>
-                  <td>{{ row.parentPhone }}</td>
-                  <td class="class-code">{{ row.classCode }}</td>
-                  <td>{{ row.className }}</td>
-                  <td>{{ row.subject || '-' }}</td>
-                  <td>{{ row.teacherName }}</td>
-                  <td class="number-cell">{{ formatCurrency(row.pricePerSession) }}</td>
+      <ng-container *ngIf="!loading() && reportRows().length > 0">
+        <div *ngFor="let chunk of sessionChunks()" class="table-block">
+          <h3 class="table-title">Bang buoi {{ chunk.start + 1 }} - {{ chunk.end }}</h3>
+
+          <div class="report-table-container">
+            <table class="report-table">
+              <thead>
+                <tr>
+                  <th class="sticky-col col-stt">STT</th>
+                  <th class="sticky-col col-type">Loai lop</th>
+                  <th class="sticky-col col-code">Ma HS</th>
+                  <th class="sticky-col col-name">Ten HS</th>
+                  <th>Level</th>
+                  <th>Ngay sinh</th>
+                  <th>Ten PH</th>
+                  <th>SDT</th>
+                  <th>Ngay sinh me</th>
+                  <th>Ma lop</th>
+                  <th>Ma GV + ten GV</th>
+                  <th>Luong GV</th>
+                  <th>So Hoa Don</th>
+                  <th>Tong buoi</th>
+                  <th>Da Hoc</th>
+                  <th>Sale</th>
+                  <th>Tinh Trang Data</th>
+                  <th *ngFor="let si of chunk.indices" class="session-col">Buoi {{ si + 1 }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let row of reportRows(); let i = index">
+                  <td class="sticky-col col-stt">{{ i + 1 }}</td>
+                  <td class="sticky-col col-type">{{ getClassModeLabel(row.classMode) }}</td>
+                  <td class="sticky-col col-code">{{ row.studentCode || '-' }}</td>
+                  <td class="sticky-col col-name"><strong>{{ row.fullName || '-' }}</strong></td>
+                  <td>{{ row.level || row.grade || '-' }}</td>
+                  <td>{{ formatBirthDate(row.dateOfBirth, row.studentBirthMonth) }}</td>
+                  <td>{{ row.parentName || '-' }}</td>
+                  <td>{{ row.parentPhone || '-' }}</td>
+                  <td>{{ formatMonthBirth(row.parentBirthMonth) }}</td>
+                  <td class="class-code">{{ row.classCode || '-' }}</td>
+                  <td [title]="row.teacherCodeAndName || row.teacherName">{{ row.teacherCodeAndName || row.teacherName || '-' }}</td>
+                  <td class="number-cell">{{ formatTeacherSalary(row) }}</td>
+                  <td>{{ row.invoiceNumber || '-' }}</td>
                   <td class="number-cell">{{ row.totalSessions || '-' }}</td>
-                  <td class="number-cell">{{ row.sessionsCompleted }}</td>
-                  <td class="number-cell">
-                    <span class="badge badge-success">{{ row.attendedCount }}</span>
+                  <td class="number-cell">{{ row.sessionsCompleted || 0 }}</td>
+                  <td>{{ row.saleName || '-' }}</td>
+                  <td>
+                    <span class="badge" [ngClass]="getDataStatusClass(row.dataStatus)">
+                      {{ getDataStatusLabel(row.dataStatus) }}
+                    </span>
                   </td>
-                  <td class="number-cell">
-                    <span class="badge badge-danger" *ngIf="row.absentCount > 0">{{ row.absentCount }}</span>
-                    <span *ngIf="row.absentCount === 0">0</span>
+
+                  <td
+                    *ngFor="let si of chunk.indices"
+                    class="session-cell"
+                    [ngClass]="getSessionCellClass(row.sessions[si])"
+                  >
+                    <ng-container *ngIf="row.sessions[si] as s">
+                      <div class="cell-status">{{ getStatusLabel(s.status) }}</div>
+                      <div class="cell-date">{{ formatDateShort(s.date) }}</div>
+                    </ng-container>
+                    <ng-container *ngIf="!row.sessions[si]">
+                      <span class="cell-empty">-</span>
+                    </ng-container>
                   </td>
-                </ng-container>
-                <td
-                  *ngFor="let si of chunk.indices"
-                  class="session-cell"
-                  [ngClass]="getSessionCellClass(row.sessions[si])"
-                >
-                  <ng-container *ngIf="row.sessions[si] as s">
-                    <div class="cell-status">{{ getStatusLabel(s.status) }}</div>
-                    <div class="cell-date">{{ formatDateShort(s.date) }}</div>
-                    <div class="cell-detail">{{ s.duration }}p</div>
-                    <div class="cell-teacher" [title]="s.teacherCode">{{ truncate(s.teacherCode, 10) }}</div>
-                  </ng-container>
-                  <ng-container *ngIf="!row.sessions[si]">
-                    <span class="cell-empty">-</span>
-                  </ng-container>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </ng-container>
 
       <div *ngIf="!loading() && reportRows().length === 0 && !error()" class="no-data">
-        Không tìm thấy dữ liệu phù hợp. Hãy chọn lớp hoặc thay đổi từ khóa tìm kiếm.
+        Khong tim thay du lieu phu hop. Hay chon lop hoac thay doi tu khoa tim kiem.
       </div>
     </div>
   `,
   styles: [`
     .report-container { padding: 2rem; max-width: 100%; margin: 0 auto; }
     h1 { color: #1f2937; margin-bottom: 1.5rem; }
-    .chunk-title { color: #374151; margin: 24px 0 12px; font-size: 18px; }
 
     .filters {
-      display: flex; gap: 16px; flex-wrap: wrap;
-      background: white; padding: 20px; border-radius: 8px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 24px;
-      align-items: flex-end;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: end;
+      gap: 10px;
+      background: white;
+      padding: 10px 12px;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      margin-bottom: 16px;
     }
-    .filter-group {
-      display: flex; flex-direction: column; gap: 8px;
-      flex: 1; min-width: 200px;
+
+    .filter-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 200px;
+      flex: 0 1 auto;
     }
-    .filter-group label { font-weight: 600; color: #374151; font-size: 14px; }
-    .filter-group select, .filter-group input {
-      padding: 10px 12px; border: 1px solid #d1d5db;
-      border-radius: 6px; font-size: 14px;
+
+    .filter-item-search { flex: 1 1 320px; }
+
+    .filter-item label {
+      font-weight: 600;
+      color: #4b5563;
+      font-size: 12px;
+    }
+
+    .filter-item select,
+    .filter-item input {
+      height: 34px;
+      padding: 6px 10px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+
+    .filter-actions {
+      display: flex;
+      gap: 8px;
+      margin-left: auto;
     }
 
     .btn {
-      padding: 10px 20px; border: none; border-radius: 6px;
-      cursor: pointer; font-weight: 600; font-size: 14px;
+      height: 34px;
+      padding: 0 14px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 13px;
       white-space: nowrap;
     }
+
     .btn-primary { background: #3b82f6; color: white; }
     .btn-primary:hover { background: #2563eb; }
     .btn-export { background: #10b981; color: white; }
     .btn-export:hover { background: #059669; }
 
-    .loading, .error, .no-data {
-      text-align: center; padding: 40px; background: white;
-      border-radius: 8px; margin: 20px 0;
+    .loading,
+    .error,
+    .no-data {
+      text-align: center;
+      padding: 40px;
+      background: white;
+      border-radius: 8px;
+      margin: 20px 0;
     }
+
     .error { color: #dc2626; }
 
     .report-summary {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 16px; margin-bottom: 24px;
+      gap: 16px;
+      margin-bottom: 24px;
     }
+
     .summary-card {
-      background: white; padding: 20px; border-radius: 8px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.1); text-align: center;
+      background: white;
+      padding: 14px;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      text-align: center;
     }
+
     .summary-card h3 {
-      font-size: 12px; color: #6b7280; margin-bottom: 8px;
-      font-weight: 600; text-transform: uppercase;
+      font-size: 12px;
+      color: #6b7280;
+      margin-bottom: 8px;
+      font-weight: 600;
+      text-transform: uppercase;
     }
-    .summary-number { font-size: 28px; font-weight: 700; color: #1f2937; margin: 0; }
+
+    .summary-number { font-size: 24px; font-weight: 700; color: #1f2937; margin: 0; }
+
+    .table-block { margin-bottom: 18px; }
+
+    .table-title {
+      margin: 0 0 8px;
+      font-size: 15px;
+      font-weight: 700;
+      color: #1f2937;
+    }
 
     .report-table-container {
-      background: white; border-radius: 8px;
+      background: white;
+      border-radius: 8px;
       box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-      overflow-x: auto; max-width: 100%;
+      overflow: auto;
+      max-height: 72vh;
+      max-width: 100%;
       margin-bottom: 24px;
     }
 
     .report-table { width: max-content; min-width: 100%; border-collapse: collapse; }
-
     .report-table thead { background: #f9fafb; border-bottom: 2px solid #e5e7eb; }
+
     .report-table th {
-      padding: 10px 8px; text-align: center; font-weight: 600;
-      color: #374151; font-size: 12px; text-transform: uppercase;
-      letter-spacing: 0.3px; white-space: nowrap;
+      position: sticky;
+      top: 0;
+      z-index: 4;
+      background: #f9fafb;
+      padding: 10px 8px;
+      text-align: center;
+      font-weight: 600;
+      color: #374151;
+      font-size: 12px;
+      white-space: nowrap;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
     }
+
     .report-table td {
-      padding: 6px 8px; border-bottom: 1px solid #e5e7eb;
-      color: #1f2937; font-size: 13px; white-space: nowrap;
+      padding: 6px 8px;
+      border-bottom: 1px solid #e5e7eb;
+      color: #1f2937;
+      font-size: 13px;
+      white-space: nowrap;
+      text-align: center;
     }
+
     .report-table tbody tr:hover { background: #f9fafb; }
 
-    /* Sticky first 3 columns */
     .sticky-col { position: sticky; background: white; z-index: 2; }
-    thead .sticky-col { background: #f9fafb; z-index: 3; }
-    .col-stt { left: 0; min-width: 44px; }
-    .col-code { left: 44px; min-width: 90px; }
-    .col-name { left: 134px; min-width: 150px; border-right: 2px solid #e5e7eb; }
+    thead .sticky-col { background: #f9fafb; z-index: 6; }
+
+    .col-stt { left: 0; min-width: 48px; }
+    .col-type { left: 48px; min-width: 92px; }
+    .col-code { left: 140px; min-width: 96px; }
+    .col-name {
+      left: 236px;
+      min-width: 170px;
+      text-align: left;
+      border-right: 2px solid #e5e7eb;
+    }
 
     .class-code { font-weight: 600; color: #2563eb; }
     .number-cell { text-align: center; }
 
     .session-col {
-      min-width: 110px; text-align: center; font-size: 12px;
+      min-width: 86px;
+      text-align: center;
       background: #eef2ff;
     }
 
     .session-cell {
-      text-align: center; min-width: 110px; vertical-align: top;
-      padding: 4px 6px !important; line-height: 1.3;
+      min-width: 86px;
+      line-height: 1.25;
+      padding: 4px 6px !important;
     }
+
     .cell-status { font-size: 12px; font-weight: 700; }
     .cell-date { font-size: 11px; color: #6b7280; }
-    .cell-detail { font-size: 11px; color: #374151; font-weight: 600; }
-    .cell-teacher { font-size: 10px; color: #6b7280; overflow: hidden; text-overflow: ellipsis; }
     .cell-empty { color: #d1d5db; }
 
     .sc-present { background: #d1fae5; }
@@ -258,15 +334,24 @@ import { environment } from '../../environments/environment';
     .sc-empty { background: #f9fafb; }
 
     .badge {
-      padding: 4px 10px; border-radius: 10px; font-weight: 600; font-size: 12px;
+      padding: 4px 8px;
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 12px;
+      display: inline-block;
     }
-    .badge-success { background: #d1fae5; color: #065f46; }
-    .badge-danger { background: #fee2e2; color: #991b1b; }
-  `]
+
+    .badge-ok { background: #d1fae5; color: #065f46; }
+    .badge-pending { background: #fef3c7; color: #92400e; }
+    .badge-rejected { background: #fee2e2; color: #991b1b; }
+    .badge-other { background: #e5e7eb; color: #374151; }
+  `],
 })
 export class ComprehensiveReportComponent implements OnInit {
   private studentService = inject(StudentService);
   private classService = inject(ClassService);
+
+  readonly sessionColumnCount = 20;
 
   reportRows = signal<ComprehensiveReportRow[]>([]);
   maxSessions = signal(0);
@@ -279,23 +364,26 @@ export class ComprehensiveReportComponent implements OnInit {
 
   private searchTimeout: any;
 
-  /** Split session indices into chunks of 40 for display */
   sessionChunks = computed(() => {
-    const max = this.maxSessions();
-    if (max === 0) return [];
-    const chunks: { start: number; end: number; indices: number[] }[] = [];
-    for (let i = 0; i < max; i += 40) {
-      const end = Math.min(i + 20, max);
-      const indices: number[] = [];
-      for (let j = i; j < end; j++) indices.push(j);
-      chunks.push({ start: i, end, indices });
+    const totalSessions = Math.max(this.maxSessions(), this.sessionColumnCount);
+    const chunks: Array<{ start: number; end: number; indices: number[] }> = [];
+
+    for (let start = 0; start < totalSessions; start += this.sessionColumnCount) {
+      const endExclusive = Math.min(start + this.sessionColumnCount, totalSessions);
+      const indices = Array.from({ length: endExclusive - start }, (_, offset) => start + offset);
+      chunks.push({
+        start,
+        end: endExclusive,
+        indices,
+      });
     }
+
     return chunks;
   });
 
   async ngOnInit() {
-    this.loadClasses();
-    this.loadReport();
+    await this.loadClasses();
+    await this.loadReport();
   }
 
   async loadClasses(): Promise<void> {
@@ -319,103 +407,174 @@ export class ComprehensiveReportComponent implements OnInit {
     try {
       const data: ComprehensiveReportResponse = await this.studentService.getComprehensiveReport(
         this.selectedClassId || undefined,
-        this.searchTerm || undefined
+        this.searchTerm || undefined,
       );
       this.maxSessions.set(data.maxSessions);
       this.reportRows.set(data.rows);
     } catch (err: any) {
-      this.error.set(err.message || 'Không thể tải báo cáo');
+      this.error.set(err.message || 'Khong the tai bao cao');
     } finally {
       this.loading.set(false);
     }
   }
 
   uniqueClasses(): number {
-    return new Set(this.reportRows().map(r => r.classCode)).size;
+    return new Set(this.reportRows().map((r) => r.classCode)).size;
   }
 
   totalAttended(): number {
-    return this.reportRows().reduce((sum, r) => sum + r.attendedCount, 0);
+    return this.reportRows().reduce((sum, r) => sum + (r.attendedCount || 0), 0);
   }
 
   formatDateShort(dateStr: string | null): string {
     if (!dateStr) return '-';
-    const d = new Date(dateStr + 'T00:00:00');
+    const d = new Date(`${dateStr}T00:00:00`);
+    if (Number.isNaN(d.getTime())) return '-';
     return `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}`;
   }
 
-  formatCurrency(value: number): string {
-    if (!value) return '-';
-    return value.toLocaleString('vi-VN') + 'đ';
+  formatBirthDate(dateOfBirth?: string | null, birthMonth?: number | null): string {
+    if (dateOfBirth) {
+      const d = new Date(dateOfBirth);
+      if (!Number.isNaN(d.getTime())) {
+        return `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1)
+          .toString()
+          .padStart(2, '0')}/${d.getFullYear()}`;
+      }
+    }
+    if (birthMonth) return `Thang ${birthMonth}`;
+    return '-';
+  }
+
+  formatMonthBirth(month?: number | null): string {
+    if (!month) return '-';
+    return `Thang ${month}`;
+  }
+
+  getClassModeLabel(classMode?: string): string {
+    return classMode === 'OFFLINE' ? 'Offline' : 'Online';
+  }
+
+  formatTeacherSalary(row: ComprehensiveReportRow): string {
+    const amount = Number(row.teacherSalary || 0);
+    if (!amount) return '-';
+    const suffix = row.teacherSalaryType === 'PER_STUDENT' ? '/HS' : '/buoi';
+    return `${amount.toLocaleString('vi-VN')}d${suffix}`;
+  }
+
+  getDataStatusLabel(status?: string): string {
+    switch (status) {
+      case 'OK':
+        return 'OK';
+      case 'PAYMENT_PENDING':
+        return 'Payment Pending';
+      case 'PAYMENT_REJECTED':
+        return 'Payment Rejected';
+      case 'NO_PAYMENT':
+        return 'No Payment';
+      case 'APPROVED':
+        return 'Approved';
+      case 'PENDING':
+        return 'Pending';
+      case 'REJECTED':
+        return 'Rejected';
+      default:
+        return status || '-';
+    }
+  }
+
+  getDataStatusClass(status?: string): string {
+    if (status === 'OK' || status === 'APPROVED') return 'badge-ok';
+    if (status === 'PAYMENT_PENDING' || status === 'PENDING' || status === 'NO_PAYMENT') return 'badge-pending';
+    if (status === 'PAYMENT_REJECTED' || status === 'REJECTED') return 'badge-rejected';
+    return 'badge-other';
   }
 
   getStatusLabel(status: string | null): string {
     switch (status) {
-      case 'PRESENT': return 'CM';
-      case 'ABSENT': return 'V';
-      case 'LATE': return 'M';
-      case 'EXCUSED': return 'CP';
-      default: return '-';
+      case 'PRESENT':
+        return 'CM';
+      case 'ABSENT':
+        return 'V';
+      case 'LATE':
+        return 'M';
+      case 'EXCUSED':
+        return 'CP';
+      default:
+        return '-';
     }
   }
 
   getSessionCellClass(session?: SessionCell): string {
     if (!session) return 'sc-empty';
     switch (session.status) {
-      case 'PRESENT': return 'sc-present';
-      case 'ABSENT': return 'sc-absent';
-      case 'LATE': return 'sc-late';
-      case 'EXCUSED': return 'sc-excused';
-      default: return 'sc-empty';
+      case 'PRESENT':
+        return 'sc-present';
+      case 'ABSENT':
+        return 'sc-absent';
+      case 'LATE':
+        return 'sc-late';
+      case 'EXCUSED':
+        return 'sc-excused';
+      default:
+        return 'sc-empty';
     }
-  }
-
-  truncate(value: string, max: number): string {
-    if (!value) return '';
-    return value.length > max ? value.substring(0, max) + '…' : value;
   }
 
   exportCSV() {
     const rows = this.reportRows();
-    const max = this.maxSessions();
+    const max = Math.max(this.maxSessions(), this.sessionColumnCount);
     if (rows.length === 0) return;
 
     const headers = [
-      'STT', 'Mã HS', 'Tên học sinh', 'Tuổi', 'Phụ huynh', 'SĐT',
-      'Mã lớp', 'Tên lớp', 'Môn học', 'Giáo viên', 'Giá/buổi',
-      'Tổng buổi', 'Đã học', 'Có mặt', 'Vắng',
+      'STT',
+      'Loai lop (Online/Offline)',
+      'Ma HS',
+      'Ten HS',
+      'Level',
+      'Ngay sinh',
+      'Ten PH',
+      'SDT',
+      'Ngay sinh me',
+      'Ma lop',
+      'Ma GV + ten GV',
+      'Luong GV',
+      'So Hoa Don',
+      'Tong buoi',
+      'Da Hoc',
+      'Sale',
+      'Tinh Trang Data',
     ];
     for (let i = 1; i <= max; i++) {
-      headers.push(`Buổi ${i} - Ngày`, `Buổi ${i} - TT`, `Buổi ${i} - Thời lượng`, `Buổi ${i} - GV`);
+      headers.push(`Buoi ${i}`);
     }
 
     const csvRows = [headers.join(',')];
     rows.forEach((row, idx) => {
       const cells: (string | number)[] = [
         idx + 1,
-        this.csvEscape(row.studentCode),
-        this.csvEscape(row.fullName),
-        row.age || '',
-        this.csvEscape(row.parentName),
-        this.csvEscape(row.parentPhone),
-        this.csvEscape(row.classCode),
-        this.csvEscape(row.className),
-        this.csvEscape(row.subject),
-        this.csvEscape(row.teacherName),
-        row.pricePerSession || '',
+        this.csvEscape(this.getClassModeLabel(row.classMode)),
+        this.csvEscape(row.studentCode || ''),
+        this.csvEscape(row.fullName || ''),
+        this.csvEscape(row.level || row.grade || ''),
+        this.csvEscape(this.formatBirthDate(row.dateOfBirth, row.studentBirthMonth)),
+        this.csvEscape(row.parentName || ''),
+        this.csvEscape(row.parentPhone || ''),
+        this.csvEscape(this.formatMonthBirth(row.parentBirthMonth)),
+        this.csvEscape(row.classCode || ''),
+        this.csvEscape(row.teacherCodeAndName || row.teacherName || ''),
+        this.csvEscape(this.formatTeacherSalary(row)),
+        this.csvEscape(row.invoiceNumber || ''),
         row.totalSessions || '',
-        row.sessionsCompleted,
-        row.attendedCount,
-        row.absentCount,
+        row.sessionsCompleted || 0,
+        this.csvEscape(row.saleName || ''),
+        this.csvEscape(this.getDataStatusLabel(row.dataStatus)),
       ];
+
       for (let i = 0; i < max; i++) {
-        const s = row.sessions[i];
-        if (s) {
-          cells.push(s.date || '', s.status || '', s.duration ? `${s.duration}p` : '', this.csvEscape(s.teacherCode));
-        } else {
-          cells.push('', '', '', '');
-        }
+        cells.push(this.csvEscape(this.formatSessionForExport(row.sessions[i])));
       }
+
       csvRows.push(cells.join(','));
     });
 
@@ -427,6 +586,14 @@ export class ComprehensiveReportComponent implements OnInit {
     a.download = `bao-cao-tong-hop-${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  private formatSessionForExport(session?: SessionCell): string {
+    if (!session) return '';
+    const status = this.getStatusLabel(session.status);
+    const date = this.formatDateShort(session.date);
+    if (date === '-') return status;
+    return `${status} ${date}`;
   }
 
   private csvEscape(value: string): string {

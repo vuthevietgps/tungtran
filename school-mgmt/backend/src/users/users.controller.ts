@@ -38,6 +38,12 @@ export class UsersController {
     return this.usersService.findByRole(Role.SALE);
   }
 
+  @Get('parents')
+  @Roles(Role.DIRECTOR, Role.OPS, Role.SALE, Role.ACCOUNTING)
+  findParents() {
+    return this.usersService.findByRole(Role.PARENT);
+  }
+
   @Get('me')
   me(@Req() req: AuthenticatedRequest) {
     return {

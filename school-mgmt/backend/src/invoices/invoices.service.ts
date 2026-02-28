@@ -50,6 +50,15 @@ export class InvoicesService {
       throw new ConflictException('Sá»‘ hÃ³a Ä‘Æ¡n Ä‘Ã£ tá»“n táº¡i');
     }
 
+    let paymentRound = dto.paymentRound;
+    if (!paymentRound) {
+      const previousCount = await this.invoiceModel.countDocuments({
+        studentId: new Types.ObjectId(dto.studentId),
+        status: { $nin: [InvoiceStatus.CANCELLED, InvoiceStatus.REJECTED] },
+      });
+      paymentRound = previousCount + 1;
+    }
+
     // â”€â”€ Resolve class info for pricing â”€â”€
     let classroom: any = null;
     if (dto.classId) {
@@ -101,8 +110,9 @@ export class InvoicesService {
     // Má»i hÃ³a Ä‘Æ¡n Ä‘á»u pháº£i chá» duyá»‡t
     const status = InvoiceStatus.PENDING_APPROVAL;
 
-    const entity = new this.invoiceModel({ 
-      ...dto, 
+    const entity = new this.invoiceModel({
+      ...dto,
+      paymentRound,
       amount,
       pricePerSession,
       referenceDuration,
@@ -576,3 +586,4 @@ export class InvoicesService {
   }
 
 }
+

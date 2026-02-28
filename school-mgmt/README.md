@@ -50,6 +50,39 @@ Pop-Location
 
 Features: JWT login, sidebar layout, DIRECTOR-only user management (list/search/filter/add). Update `src/environments/environment.ts` if backend URL changes.
 
+## Docker (Docker Desktop)
+This repo now includes:
+- `docker-compose.yml`
+- `backend/Dockerfile`
+- `frontend/Dockerfile`
+- `frontend/nginx.conf` (proxies `/api/*` to backend)
+
+### Quick Start
+From `school-mgmt/`:
+
+```powershell
+Copy-Item .\.env.docker.example .\.env
+docker compose up --build -d
+```
+
+Open:
+- Frontend: `http://localhost:4200`
+- Backend API: `http://localhost:3000`
+- MongoDB (optional host access): `mongodb://localhost:27018`
+
+### Useful Commands
+```powershell
+docker compose logs -f
+docker compose down
+docker compose down -v   # also remove volumes
+```
+
+### Notes
+- Backend uses `NODE_ENV=development` in Docker so auth cookies work over local HTTP.
+- Uploaded files are persisted in Docker volume `backend_uploads`.
+- MongoDB data is persisted in Docker volume `mongo_data`.
+- You can override secrets by editing `.env` (loaded automatically by `docker compose`).
+
 ## Demo Accounts
 Seeder creates the following demo users (all passwords `123456` or override via `DEMO_PASSWORD` in `.env`):
 

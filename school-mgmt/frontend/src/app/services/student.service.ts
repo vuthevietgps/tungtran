@@ -10,9 +10,14 @@ export interface StudentItem {
   age: number;
   studentBirthMonth?: number;
   parentBirthMonth?: number;
+  parentUserId?: string;
   parentName: string;
   parentPhone: string;
   faceImage: string;
+  payments?: Array<{
+    frameIndex: number;
+    confirmStatus?: 'PENDING' | 'CONFIRMED' | 'REJECTED';
+  }>;
   productPackage?: {
     _id: string;
     name: string;
@@ -52,12 +57,24 @@ export interface ComprehensiveReportRow {
   parentName: string;
   parentPhone: string;
   faceImage: string;
+  classMode?: 'ONLINE' | 'OFFLINE';
   classId: string;
   classCode: string;
   className: string;
   subject: string;
   grade: string;
+  level?: string;
+  dateOfBirth?: string | null;
+  studentBirthMonth?: number | null;
+  parentBirthMonth?: number | null;
   teacherName: string;
+  teacherCode?: string;
+  teacherCodeAndName?: string;
+  teacherSalary?: number;
+  teacherSalaryType?: 'PER_SESSION' | 'PER_STUDENT';
+  invoiceNumber?: string;
+  saleName?: string;
+  dataStatus?: string;
   pricePerSession: number;
   totalSessions: number;
   sessionsCompleted: number;

@@ -34,6 +34,12 @@ export class User {
   @Prop({ type: String, trim: true })
   phone?: string;
 
+  @Prop({ type: String, trim: true })
+  facebookLink?: string;
+
+  @Prop({ type: String, trim: true })
+  address?: string;
+
   @Prop({ type: Boolean, default: false })
   enableEmailNotif?: boolean;
 

@@ -95,7 +95,7 @@ import { Role } from '../models/role.enum';
 
           <div class="card card-orange">
             <div class="card-number">{{ preview.summary.pendingFinalize }}</div>
-            <div class="card-label">Chờ chốt</div>
+            <div class="card-label">Chờ OPS xác nhận</div>
             <div class="card-amount">{{ formatMoney(preview.amounts.totalPendingFinalize) }}</div>
           </div>
 
@@ -141,7 +141,7 @@ import { Role } from '../models/role.enum';
             <div class="bar-segment finalize"
                  [style.flex]="preview.summary.pendingFinalize"
                  *ngIf="preview.summary.pendingFinalize > 0"
-                 title="Chờ chốt: {{ preview.summary.pendingFinalize }} buổi">
+                 title="Chờ OPS xác nhận: {{ preview.summary.pendingFinalize }} buổi">
               {{ preview.summary.pendingFinalize }}
             </div>
           </div>
@@ -150,7 +150,7 @@ import { Role } from '../models/role.enum';
             <span class="legend-item"><span class="dot eligible"></span> Sẵn sàng TT</span>
             <span class="legend-item"><span class="dot blocked"></span> Thiếu báo cáo</span>
             <span class="legend-item"><span class="dot waiting"></span> Chờ PH</span>
-            <span class="legend-item"><span class="dot finalize"></span> Chờ chốt</span>
+            <span class="legend-item"><span class="dot finalize"></span> Chờ OPS xác nhận</span>
           </div>
         </div>
 
@@ -204,7 +204,7 @@ import { Role } from '../models/role.enum';
             Chờ PH ({{ preview.summary.pendingParentConfirm }})
           </button>
           <button [class.active]="sessionFilter === 'WAITING_FINALIZE'" (click)="sessionFilter = 'WAITING_FINALIZE'">
-            Chờ chốt ({{ preview.summary.pendingFinalize }})
+            Chờ OPS xác nhận ({{ preview.summary.pendingFinalize }})
           </button>
         </div>
 
@@ -242,7 +242,7 @@ import { Role } from '../models/role.enum';
               <td class="reason-col">
                 <span *ngIf="s.payrollStatus === 'BLOCKED_NO_REPORT'" class="reason-text">Thiếu báo cáo giảng dạy</span>
                 <span *ngIf="s.payrollStatus === 'WAITING_PARENT'" class="reason-text">Chờ phụ huynh xác nhận</span>
-                <span *ngIf="s.payrollStatus === 'WAITING_FINALIZE'" class="reason-text">Chờ OPS chốt buổi học</span>
+                <span *ngIf="s.payrollStatus === 'WAITING_FINALIZE'" class="reason-text">Chờ OPS xác nhận điểm danh/chốt</span>
                 <span *ngIf="s.payrollStatus === 'PAID'" class="reason-text paid-text">&#10003; Đã thanh toán</span>
                 <span *ngIf="s.payrollStatus === 'ELIGIBLE'" class="reason-text eligible-text">Sẵn sàng thanh toán</span>
                 <span *ngIf="s.payrollStatus === 'CANCELLED'" class="reason-text">Đã hủy</span>
@@ -912,7 +912,7 @@ export class PayrollComponent implements OnInit {
       ELIGIBLE: 'Sẵn sàng TT',
       BLOCKED_NO_REPORT: 'Thiếu báo cáo',
       WAITING_PARENT: 'Chờ PH xác nhận',
-      WAITING_FINALIZE: 'Chờ chốt',
+      WAITING_FINALIZE: 'Chờ OPS xác nhận',
       CANCELLED: 'Đã hủy',
       NO_SHOW: 'Vắng mặt',
       OTHER: 'Khác',

@@ -1969,23 +1969,36 @@ export class SessionsService {
       .find({
         sessionId: { $in: candidateIds },
         status: { $in: [AttendanceStatus.PRESENT, AttendanceStatus.LATE] },
-        checkedBy: { $exists: true, $ne: null }, // OPS/DIRECTOR confirmed attendance
       })
-      .select('sessionId');
+      .select('sessionId checkedBy');
     if (mongoSession) attendanceQuery = attendanceQuery.session(mongoSession);
     const attendanceRows = await attendanceQuery.lean();
 
-    const attendanceQualifiedSessionIds = new Set(
-      attendanceRows
-        .map((row: any) => row?.sessionId?.toString())
-        .filter((id: string | undefined): id is string => !!id),
-    );
+    const attendanceBySessionId = new Map<
+      string,
+      { hasAttendance: boolean; hasOpsConfirmation: boolean }
+    >();
+    for (const row of attendanceRows as any[]) {
+      const sid = row?.sessionId?.toString();
+      if (!sid) continue;
+      const previous = attendanceBySessionId.get(sid) || {
+        hasAttendance: false,
+        hasOpsConfirmation: false,
+      };
+      attendanceBySessionId.set(sid, {
+        hasAttendance: true,
+        hasOpsConfirmation: previous.hasOpsConfirmation || !!row?.checkedBy,
+      });
+    }
 
     const sessions = candidateSessions.filter((session) => {
       const sid = (session._id as Types.ObjectId).toString();
-      const confirmedByOpsInAttendance = attendanceQualifiedSessionIds.has(sid);
+      const attendanceMeta = attendanceBySessionId.get(sid);
+      const hasQualifiedAttendance = !!attendanceMeta?.hasAttendance;
+      const confirmedByOpsInAttendance = !!attendanceMeta?.hasOpsConfirmation;
       const confirmedByOpsInSession = !!session.confirmation?.finalizedBy;
-      return confirmedByOpsInAttendance || confirmedByOpsInSession;
+      const hasOpsConfirmation = confirmedByOpsInAttendance || confirmedByOpsInSession;
+      return hasQualifiedAttendance && hasOpsConfirmation;
     });
 
     const totalPayout = sessions.reduce((acc, s) => acc + s.teacherPayout, 0);

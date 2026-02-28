@@ -35,6 +35,11 @@ export class CreateInvoiceDto {
   @IsOptional()
   sessions?: number;
 
+  @IsNumber()
+  @Min(1)
+  @IsOptional()
+  paymentRound?: number;
+
   /** Giá mỗi buổi tại thời điểm lập hóa đơn (cho referenceDuration phút) */
   @IsNumber()
   @Min(0)

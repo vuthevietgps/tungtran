@@ -69,6 +69,9 @@ export class Invoice {
   @Prop({ type: Number, min: 0, required: false })
   sessions?: number;
 
+  @Prop({ type: Number, min: 1, required: false })
+  paymentRound?: number;
+
   /** Giá mỗi buổi tại thời điểm lập hóa đơn (cho referenceDuration phút) */
   @Prop({ type: Number, min: 0, required: false })
   pricePerSession?: number;

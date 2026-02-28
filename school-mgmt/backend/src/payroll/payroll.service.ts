@@ -806,6 +806,11 @@ export class PayrollService {
       teacherId,
       cutoffExclusive,
     );
+    const eligibleSessionIds = new Set(
+      (eligibleSnapshot.sessions || [])
+        .map((s: any) => s?._id?.toString())
+        .filter((id: string | undefined): id is string => !!id),
+    );
 
     const SessionModel = this.connection.model('Session');
 
@@ -827,7 +832,7 @@ export class PayrollService {
     const alreadyPaid: any[] = []; // isTeacherPaid = true
     const cancelled: any[] = []; // CANCELLED
     const noShow: any[] = []; // NO_SHOW
-    const pendingFinalize: any[] = []; // PARENT_CONFIRMED but not yet FINALIZED
+    const pendingFinalize: any[] = []; // Missing OPS confirmation and/or attendance for payroll
     const finalizedNoReport: any[] = []; // FINALIZED but !hasTeachingReport
 
     for (const s of sessions) {
@@ -835,6 +840,8 @@ export class PayrollService {
       const status = session.status;
       const hasReport = !!session.hasTeachingReport;
       const isPaid = !!session.isTeacherPaid;
+      const sid = session?._id?.toString?.() ?? String(session?._id);
+      const isEligibleByRules = eligibleSessionIds.has(sid);
 
       // Attended = all sessions where teacher completed teaching
       if (['TEACHER_COMPLETED', 'PARENT_CONFIRMED', 'FINALIZED'].includes(status)) {
@@ -863,8 +870,11 @@ export class PayrollService {
         pendingParentConfirm.push(session);
       }
 
-      // PARENT_CONFIRMED but not yet finalized
-      if (status === 'PARENT_CONFIRMED') {
+      // Waiting OPS confirmation / attendance for payroll
+      if (
+        status === 'PARENT_CONFIRMED' ||
+        (status === 'FINALIZED' && hasReport && !isEligibleByRules)
+      ) {
         pendingFinalize.push(session);
       }
 
@@ -939,19 +949,18 @@ export class PayrollService {
           : null,
         payrollStatus: s.isTeacherPaid
           ? 'PAID'
-          : s.status === 'FINALIZED' && s.hasTeachingReport
-            ? 'ELIGIBLE'
-            : s.status === 'FINALIZED' && !s.hasTeachingReport
-              ? 'BLOCKED_NO_REPORT'
-              : s.status === 'TEACHER_COMPLETED'
-                ? 'WAITING_PARENT'
-                : s.status === 'PARENT_CONFIRMED'
-                  ? 'WAITING_FINALIZE'
-                  : s.status === 'CANCELLED'
-                    ? 'CANCELLED'
-                    : s.status === 'NO_SHOW'
-                      ? 'NO_SHOW'
-                      : 'OTHER',
+          : (() => {
+              const sid = s?._id?.toString?.() ?? String(s?._id);
+              const isEligibleByRules = eligibleSessionIds.has(sid);
+              if (isEligibleByRules) return 'ELIGIBLE';
+              if (s.status === 'FINALIZED' && !s.hasTeachingReport) return 'BLOCKED_NO_REPORT';
+              if (s.status === 'TEACHER_COMPLETED') return 'WAITING_PARENT';
+              if (s.status === 'PARENT_CONFIRMED') return 'WAITING_FINALIZE';
+              if (s.status === 'FINALIZED' && s.hasTeachingReport) return 'WAITING_FINALIZE';
+              if (s.status === 'CANCELLED') return 'CANCELLED';
+              if (s.status === 'NO_SHOW') return 'NO_SHOW';
+              return 'OTHER';
+            })(),
       })),
 
       existingPayrolls,

@@ -74,6 +74,10 @@ export class CreateStudentDto {
   @Matches(/^[0-9+\-()\s]{6,20}$/)
   parentPhone!: string;
 
+  @IsOptional()
+  @IsMongoId()
+  parentUserId?: string;
+
   @IsString()
   @IsNotEmpty()
   faceImage!: string;

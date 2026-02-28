@@ -1,0 +1,40 @@
+name: school-mgmt
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      MONGODB_URI: ${MONGODB_URI}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:4200}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:4200}
+      JWT_SECRET: ${JWT_SECRET:-replace_with_strong_jwt_secret_for_local}
+      JWT_EXPIRES: ${JWT_EXPIRES:-7d}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-ChangeMe123!}
+      ADMIN_FULLNAME: ${ADMIN_FULLNAME:-Director Admin}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-ChangeThisDemoPass2024!}
+      DEMO_SYNC_EXISTING: ${DEMO_SYNC_EXISTING:-true}
+    ports:
+      - "3000:3000"
+    volumes:
+      - backend_uploads:/app/uploads
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      - "4200:80"
+
+volumes:
+  backend_uploads:
