@@ -10,16 +10,30 @@ export enum ApiTokenStatus {
   REVOKED = 'REVOKED',
 }
 
+export enum ApiTokenType {
+  ACCOUNT = 'ACCOUNT',
+  FACEBOOK_SYSTEM_USER = 'FACEBOOK_SYSTEM_USER',
+}
+
 @Schema({ timestamps: true })
 export class ApiToken {
-  @Prop({ type: SchemaTypes.ObjectId, ref: 'AdAccount', required: true })
-  adAccountId!: Types.ObjectId;
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'AdAccount' })
+  adAccountId?: Types.ObjectId;
 
   @Prop({ type: String, trim: true })
   adAccountName?: string;
 
   @Prop({ type: String, enum: Object.values(AdPlatform), required: true })
   platform!: string;
+
+  @Prop({ type: String, enum: Object.values(ApiTokenType), default: ApiTokenType.ACCOUNT })
+  tokenType!: string;
+
+  @Prop({ type: String, trim: true })
+  businessId?: string;
+
+  @Prop({ type: String, trim: true })
+  businessName?: string;
 
   @Prop({ required: true })
   accessToken!: string;
@@ -36,6 +50,9 @@ export class ApiToken {
   @Prop({ type: Date })
   lastUsedAt?: Date;
 
+  @Prop({ type: Date })
+  lastSyncedAt?: Date;
+
   @Prop({ type: String, trim: true })
   label?: string;
 
@@ -45,6 +62,8 @@ export class ApiToken {
 
 export const ApiTokenSchema = SchemaFactory.createForClass(ApiToken);
 
-ApiTokenSchema.index({ adAccountId: 1 });
-ApiTokenSchema.index({ platform: 1, status: 1 });
-ApiTokenSchema.index({ adAccountId: 1, status: 1, expiresAt: -1, createdAt: -1 });
+ApiTokenSchema.index({ adAccountId: 1 }, { sparse: true });
+ApiTokenSchema.index({ businessId: 1 }, { sparse: true });
+ApiTokenSchema.index({ platform: 1, tokenType: 1, status: 1 });
+ApiTokenSchema.index({ adAccountId: 1, status: 1, expiresAt: -1, createdAt: -1 }, { sparse: true });
+ApiTokenSchema.index({ businessId: 1, tokenType: 1, status: 1, createdAt: -1 }, { sparse: true });

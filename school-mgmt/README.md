@@ -30,6 +30,19 @@ Pop-Location
 
 The server listens on `http://localhost:3000`.
 
+### Backend Automated Tests (Jest + Supertest)
+From `school-mgmt/backend`:
+
+```powershell
+npm install
+npm run test       # unit tests (src/**/*.spec.ts)
+npm run test:e2e   # e2e tests (test/**/*.e2e-spec.ts)
+```
+
+Notes:
+- E2E tests use `mongodb-memory-server` (isolated in-memory MongoDB).
+- Test env auto-sets `JWT_SECRET`, `THROTTLE_LIMIT`, and `THROTTLE_TTL_MS`.
+
 ### Auth Quick Test
 - Seeded DIRECTOR account from env (defaults: `admin@local` / `ChangeMe123!`).
 - Login:

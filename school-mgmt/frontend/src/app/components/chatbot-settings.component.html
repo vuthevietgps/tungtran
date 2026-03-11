@@ -1,0 +1,244 @@
+<header class="page-header">
+  <div>
+    <h2>Cai dat Chatbot</h2>
+    <p>Quan ly fanpage, page token va OpenAI token cho hoi thoai.</p>
+  </div>
+</header>
+
+<div class="tabs">
+  <button [class.active]="activeTab === 'fanpages'" (click)="switchTab('fanpages')">Fanpages</button>
+  <button *ngIf="canManageTokenLibrary()" [class.active]="activeTab === 'tokens'" (click)="switchTab('tokens')">OpenAI Tokens</button>
+</div>
+
+<section *ngIf="activeTab === 'fanpages'">
+  <div class="sync-note">
+    <strong>Luong Facebook moi:</strong>
+    Fanpage Facebook va page access token duoc dong bo tu
+    <strong>Quan ly quang cao &gt; API Token</strong> bang Facebook BM / System User token.
+    Sau khi dong bo, danh sach fanpage se duoc dung chung cho chuc nang fanpage va hoi thoai.
+  </div>
+
+  <div class="toolbar">
+    <div class="filters">
+      <input placeholder="Tim ten, ma, page id..." [(ngModel)]="fpKeyword" (ngModelChange)="loadFanpages()" />
+      <select [(ngModel)]="fpFilterPlatform" (ngModelChange)="loadFanpages()">
+        <option value="">Tat ca nen tang</option>
+        <option value="FACEBOOK">Facebook</option>
+        <option value="TIKTOK">TikTok</option>
+      </select>
+      <select [(ngModel)]="fpFilterStatus" (ngModelChange)="loadFanpages()">
+        <option value="">Tat ca trang thai</option>
+        <option value="ACTIVE">Hoat dong</option>
+        <option value="INACTIVE">Ngung</option>
+      </select>
+      <select [(ngModel)]="fpFilterSyncSource" (ngModelChange)="loadFanpages()">
+        <option value="">Tat ca nguon</option>
+        <option value="FACEBOOK_BM">Dong bo BM</option>
+        <option value="MANUAL">Nhap tay</option>
+      </select>
+    </div>
+    <button *ngIf="canCreateFanpages()" class="primary" (click)="openFanpageModal()">+ Them fanpage</button>
+  </div>
+
+  <div class="helper-inline" *ngIf="!canManageTokenLibrary()">
+    Ban co the sua mo ta fanpage, bat/tat AI va gan token OpenAI da duoc Director tao san.
+  </div>
+
+  <table class="data-table" *ngIf="fanpages().length; else emptyFanpages">
+    <thead>
+      <tr>
+        <th>Ma</th>
+        <th>Ten</th>
+        <th>Nen tang</th>
+        <th>Page ID</th>
+        <th>Mo ta AI</th>
+        <th>OpenAI</th>
+        <th>Nguon</th>
+        <th>Business</th>
+        <th>Token sync</th>
+        <th>Dong bo cuoi</th>
+        <th>AI auto</th>
+        <th>Trang thai</th>
+        <th>Hanh dong</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr *ngFor="let fanpage of fanpages()">
+        <td><strong>{{ fanpage.fanpageCode }}</strong></td>
+        <td>{{ fanpage.name }}</td>
+        <td><span class="badge platform">{{ platformLabel(fanpage.platform) }}</span></td>
+        <td class="mono">{{ fanpage.pageId }}</td>
+        <td class="description-cell" [title]="fanpage.description || ''">{{ descriptionPreview(fanpage.description) }}</td>
+        <td>{{ openAITokenLabel(fanpage) }}</td>
+        <td>{{ syncSourceLabel(fanpage.syncSource) }}</td>
+        <td>{{ fanpage.businessName || fanpage.businessId || '-' }}</td>
+        <td>{{ fanpage.syncTokenLabel || '-' }}</td>
+        <td>{{ formatDate(fanpage.lastSyncedAt) }}</td>
+        <td><span class="badge" [style.background]="fanpage.aiAutoReplyEnabled ? '#15803d' : '#64748b'">{{ fanpage.aiAutoReplyEnabled ? 'Bat' : 'Tat' }}</span></td>
+        <td><span class="badge" [style.background]="statusColor(fanpage.status)">{{ statusLabel(fanpage.status) }}</span></td>
+        <td class="actions">
+          <button *ngIf="canEditFanpages()" class="link-btn" (click)="editFanpage(fanpage)">Sua</button>
+          <button *ngIf="canCreateFanpages()" class="link-btn danger" (click)="removeFanpage(fanpage)">Xoa</button>
+          <span *ngIf="!canEditFanpages()">-</span>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <ng-template #emptyFanpages>
+    <div class="empty-state">Chua co fanpage nao.</div>
+  </ng-template>
+</section>
+
+<section *ngIf="activeTab === 'tokens' && canManageTokenLibrary()">
+  <div class="toolbar">
+    <div class="helper-inline">
+      Quan ly OpenAI token de gan cho tung fanpage/luong tra loi tu dong.
+    </div>
+    <button class="primary" (click)="openTokenModal()">+ Them token</button>
+  </div>
+
+  <table class="data-table" *ngIf="tokens().length; else emptyTokens">
+    <thead>
+      <tr>
+        <th>Label</th>
+        <th>API Key</th>
+        <th>Model</th>
+        <th>Temperature</th>
+        <th>Max Tokens</th>
+        <th>Trang thai</th>
+        <th>Lan dung cuoi</th>
+        <th>Hanh dong</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr *ngFor="let token of tokens()">
+        <td><strong>{{ token.label }}</strong></td>
+        <td class="mono">{{ token.apiKey }}</td>
+        <td>{{ token.model }}</td>
+        <td>{{ token.temperature }}</td>
+        <td>{{ token.maxTokens }}</td>
+        <td><span class="badge" [style.background]="statusColor(token.status)">{{ statusLabel(token.status) }}</span></td>
+        <td>{{ formatDate(token.lastUsedAt) }}</td>
+        <td class="actions">
+          <button class="link-btn" (click)="editToken(token)">Sua</button>
+          <button class="link-btn danger" (click)="removeToken(token)">Xoa</button>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <ng-template #emptyTokens>
+    <div class="empty-state">Chua co token OpenAI nao.</div>
+  </ng-template>
+</section>
+
+<div class="modal-backdrop" *ngIf="showFpModal()">
+  <div class="modal">
+    <h3>{{ editingFanpage ? 'Sua fanpage' : 'Them fanpage' }}</h3>
+
+    <div class="sync-warning" *ngIf="isSyncedFacebookFanpage()">
+      Fanpage nay duoc dong bo tu BM token. He thong se giu lai ten, page ID va page access token theo lan sync gan nhat.
+      Ban chi nen sua cac cai dat chatbot, webhook va AI.
+    </div>
+
+    <label>Ten fanpage <input [(ngModel)]="fpForm.name" [disabled]="isSyncedFacebookFanpage()" /></label>
+    <label>
+      Nen tang
+      <select [(ngModel)]="fpForm.platform" [disabled]="!!editingFanpage">
+        <option value="">-- Chon --</option>
+        <option value="FACEBOOK">Facebook</option>
+        <option value="TIKTOK">TikTok</option>
+      </select>
+    </label>
+    <label>Page ID <input [(ngModel)]="fpForm.pageId" [disabled]="isSyncedFacebookFanpage()" /></label>
+
+    <label *ngIf="!isSyncedFacebookFanpage()">
+      Page access token
+      <input type="password" [(ngModel)]="fpForm.pageAccessToken" placeholder="Chi nhap tay neu khong dung BM sync" />
+    </label>
+
+    <div class="readonly-note" *ngIf="isSyncedFacebookFanpage()">
+      Page access token dang duoc lay tu API Token dong bo BM.
+    </div>
+
+    <label>Mo ta fanpage <textarea rows="4" [(ngModel)]="fpForm.description"></textarea></label>
+    <label>
+      Tai khoan quang cao lien ket
+      <select [(ngModel)]="fpForm.adAccountId">
+        <option value="">-- Khong lien ket --</option>
+        <option *ngFor="let account of adAccounts()" [value]="account._id">{{ account.name }} ({{ platformLabel(account.platform) }})</option>
+      </select>
+    </label>
+    <label>
+      OpenAI token
+      <select [(ngModel)]="fpForm.openaiTokenId">
+        <option value="">-- Khong dung AI --</option>
+        <option *ngFor="let token of tokens()" [value]="token._id">{{ token.label }} ({{ token.model }})</option>
+      </select>
+    </label>
+    <div class="readonly-note" *ngIf="!tokens().length">
+      Chua co token OpenAI nao kha dung. Hay tao token truoc khi bat AI auto-reply cho fanpage nay.
+    </div>
+    <label>Webhook verify token <input [(ngModel)]="fpForm.webhookVerifyToken" /></label>
+    <label>App secret <input type="password" [(ngModel)]="fpForm.appSecret" /></label>
+    <label class="check-row">
+      <input type="checkbox" [(ngModel)]="fpForm.aiAutoReplyEnabled" />
+      Bat AI tu dong tra loi
+    </label>
+
+    <label *ngIf="editingFanpage">
+      Trang thai
+      <select [(ngModel)]="fpForm.status">
+        <option value="ACTIVE">Hoat dong</option>
+        <option value="INACTIVE">Ngung</option>
+      </select>
+    </label>
+
+    <div class="modal-actions">
+      <button class="secondary" (click)="closeFpModal()">Huy</button>
+      <button class="primary" [disabled]="saving()" (click)="saveFanpage()">
+        {{ saving() ? 'Dang luu...' : 'Luu' }}
+      </button>
+    </div>
+    <p class="error" *ngIf="fpError()">{{ fpError() }}</p>
+  </div>
+</div>
+
+<div class="modal-backdrop" *ngIf="showTokenModal()">
+  <div class="modal">
+    <h3>{{ editingToken ? 'Sua OpenAI token' : 'Them OpenAI token' }}</h3>
+
+    <label>Label <input [(ngModel)]="tokenForm.label" /></label>
+    <label>API key <input type="password" [(ngModel)]="tokenForm.apiKey" /></label>
+    <label>
+      Model
+      <select [(ngModel)]="tokenForm.model">
+        <option value="gpt-4o-mini">gpt-4o-mini</option>
+        <option value="gpt-4o">gpt-4o</option>
+        <option value="gpt-4-turbo">gpt-4-turbo</option>
+        <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
+      </select>
+    </label>
+    <label>Temperature <input type="number" min="0" max="2" step="0.1" [(ngModel)]="tokenForm.temperature" /></label>
+    <label>Max tokens <input type="number" min="100" max="16000" [(ngModel)]="tokenForm.maxTokens" /></label>
+    <label>System prompt prefix <textarea rows="4" [(ngModel)]="tokenForm.systemPromptPrefix"></textarea></label>
+
+    <label *ngIf="editingToken">
+      Trang thai
+      <select [(ngModel)]="tokenForm.status">
+        <option value="ACTIVE">Hoat dong</option>
+        <option value="EXPIRED">Het han</option>
+        <option value="REVOKED">Da thu hoi</option>
+      </select>
+    </label>
+
+    <div class="modal-actions">
+      <button class="secondary" (click)="closeTokenModal()">Huy</button>
+      <button class="primary" [disabled]="saving()" (click)="saveToken()">
+        {{ saving() ? 'Dang luu...' : 'Luu' }}
+      </button>
+    </div>
+    <p class="error" *ngIf="tokenError()">{{ tokenError() }}</p>
+  </div>
+</div>

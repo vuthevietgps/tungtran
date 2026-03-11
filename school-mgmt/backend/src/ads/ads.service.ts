@@ -11,9 +11,24 @@ import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import * as crypto from 'crypto';
 
-import { AdAccount, AdAccountDocument } from './schemas/ad-account.schema';
-import { AdGroup, AdGroupDocument } from './schemas/ad-group.schema';
-import { ApiToken, ApiTokenDocument, ApiTokenStatus } from './schemas/api-token.schema';
+import {
+  AdAccount,
+  AdAccountDocument,
+  AdAccountStatus,
+  AdAccountSyncSource,
+} from './schemas/ad-account.schema';
+import {
+  AdGroup,
+  AdGroupDocument,
+  AdGroupStatus,
+  AdGroupSyncSource,
+} from './schemas/ad-group.schema';
+import {
+  ApiToken,
+  ApiTokenDocument,
+  ApiTokenStatus,
+  ApiTokenType,
+} from './schemas/api-token.schema';
 import { AdCost, AdCostDocument, AdCostSource } from './schemas/ad-cost.schema';
 
 import { CreateAdAccountDto } from './dto/create-ad-account.dto';
@@ -33,6 +48,13 @@ import { Session, SessionDocument, SessionStatus } from '../sessions/schemas/ses
 import { Expense, ExpenseDocument, PaymentStatus } from '../expenses/schemas/expense.schema';
 import { Student, StudentDocument } from '../students/schemas/student.schema';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
+import {
+  Fanpage,
+  FanpageDocument,
+  FanpagePlatform,
+  FanpageStatus,
+  FanpageSyncSource,
+} from '../chatbot/schemas/fanpage.schema';
 
 type NetProfitDailyRow = {
   date: string;
@@ -67,6 +89,53 @@ type SuggestionModel = {
   coeffB: number | null;
 };
 
+type FacebookBusinessRef = {
+  id: string;
+  name?: string;
+};
+
+type FacebookAdAccountRow = {
+  id?: string;
+  account_id?: string;
+  name?: string;
+  account_status?: number | string;
+  currency?: string;
+  business?: { id?: string; name?: string };
+};
+
+type FacebookPageRow = {
+  id?: string;
+  name?: string;
+  access_token?: string;
+  link?: string;
+};
+
+type FacebookAdsetRow = {
+  id?: string;
+  name?: string;
+  effective_status?: string;
+  daily_budget?: string;
+  start_time?: string;
+  end_time?: string;
+};
+
+type FacebookInsightRow = {
+  adset_id?: string;
+  adset_name?: string;
+  spend?: string;
+  impressions?: string;
+  clicks?: string;
+  actions?: Array<{ action_type?: string; value?: string | number }>;
+};
+
+type FacebookBusinessSyncResult = {
+  synced: number;
+  adAccountsSynced: number;
+  adGroupsSynced: number;
+  fanpagesSynced: number;
+  errors: string[];
+};
+
 @Injectable()
 export class AdsService {
   private readonly logger = new Logger(AdsService.name);
@@ -84,6 +153,7 @@ export class AdsService {
     @InjectModel(Session.name) private sessionModel: Model<SessionDocument>,
     @InjectModel(Expense.name) private expenseModel: Model<ExpenseDocument>,
     @InjectModel(Student.name) private studentModel: Model<StudentDocument>,
+    @InjectModel(Fanpage.name) private fanpageModel: Model<FanpageDocument>,
     private configService: ConfigService,
   ) {
     const key = this.configService.get<string>('TOKEN_ENCRYPTION_KEY');
@@ -220,6 +290,18 @@ export class AdsService {
     return `${prefix}${Date.now()}`;
   }
 
+  private async generateFanpageCode(): Promise<string> {
+    const year = new Date().getFullYear();
+    const prefix = `FP-${year}-`;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const count = await this.fanpageModel.countDocuments({ fanpageCode: { $regex: `^${prefix}` } });
+      const code = `${prefix}${String(count + 1 + attempt).padStart(4, '0')}`;
+      const exists = await this.fanpageModel.exists({ fanpageCode: code });
+      if (!exists) return code;
+    }
+    return `${prefix}${Date.now()}`;
+  }
+
   async createGroup(dto: CreateAdGroupDto, user: JwtPayload): Promise<AdGroup> {
     const account = await this.findOneAccount(dto.adAccountId);
     if (String(account.platform) !== String(dto.platform)) {
@@ -335,25 +417,57 @@ export class AdsService {
   // â”€â”€â”€ API Token Management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   async createToken(dto: CreateApiTokenDto, user: JwtPayload): Promise<ApiToken> {
-    const account = await this.findOneAccount(dto.adAccountId);
-    if (String(account.platform) !== String(dto.platform)) {
-      throw new BadRequestException('API token platform must match ad account platform.');
-    }
-
-    await this.revokeOtherActiveTokens(dto.adAccountId);
-
-    const token = new this.apiTokenModel({
-      ...dto,
-      adAccountName: account.name,
+    const tokenType = dto.tokenType || (dto.adAccountId ? ApiTokenType.ACCOUNT : ApiTokenType.FACEBOOK_SYSTEM_USER);
+    const tokenData: any = {
+      platform: dto.platform,
+      tokenType,
+      businessId: dto.businessId?.trim() || undefined,
+      businessName: dto.businessName?.trim() || undefined,
+      label: dto.label?.trim() || undefined,
       accessToken: this.encrypt(dto.accessToken),
       refreshToken: dto.refreshToken ? this.encrypt(dto.refreshToken) : undefined,
+      expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : undefined,
       createdById: user._id,
-    });
+    };
+
+    if (tokenType === ApiTokenType.ACCOUNT) {
+      if (!dto.adAccountId) {
+        throw new BadRequestException('API token theo tài khoản phải chọn tài khoản quảng cáo.');
+      }
+      const account = await this.findOneAccount(dto.adAccountId);
+      if (String(account.platform) !== String(dto.platform)) {
+        throw new BadRequestException('API token platform must match ad account platform.');
+      }
+      tokenData.adAccountId = account._id;
+      tokenData.adAccountName = account.name;
+      await this.revokeOtherActiveTokens(this.buildTokenScopeFilter({
+        adAccountId: account._id,
+        tokenType,
+        platform: dto.platform,
+      }));
+    } else {
+      if (dto.platform !== 'FACEBOOK') {
+        throw new BadRequestException('Hiện chỉ hỗ trợ system user token cho Facebook.');
+      }
+      await this.revokeOtherActiveTokens(this.buildTokenScopeFilter({
+        businessId: tokenData.businessId,
+        tokenType,
+        platform: dto.platform,
+      }));
+    }
+
+    const token = new this.apiTokenModel(tokenData);
     return token.save();
+  }
+
+  async findAllTokens(): Promise<any[]> {
+    const tokens = await this.apiTokenModel.find().sort({ createdAt: -1 }).lean();
+    return tokens.map((token) => this.formatTokenForDisplay(token));
   }
 
   async findTokensByAccount(accountId: string): Promise<any[]> {
     const tokens = await this.apiTokenModel.find({ adAccountId: accountId }).sort({ createdAt: -1 }).lean();
+    return tokens.map((token) => this.formatTokenForDisplay(token));
     // Mask tokens for display
     return tokens.map(t => ({
       ...t,
@@ -366,15 +480,49 @@ export class AdsService {
     const token = await this.apiTokenModel.findById(id).exec();
     if (!token) throw new NotFoundException('Token not found');
 
-    if (dto.status === ApiTokenStatus.ACTIVE) {
-      await this.revokeOtherActiveTokens(String(token.adAccountId), id);
+    const nextTokenType = dto.tokenType || token.tokenType || ApiTokenType.ACCOUNT;
+    if (dto.tokenType) token.tokenType = dto.tokenType;
+
+    if (nextTokenType === ApiTokenType.ACCOUNT) {
+      const nextAccountId = dto.adAccountId || token.adAccountId?.toString();
+      if (!nextAccountId) {
+        throw new BadRequestException('API token theo tài khoản phải có tài khoản quảng cáo.');
+      }
+      const account = await this.findOneAccount(nextAccountId);
+      if (String(account.platform) !== String(token.platform)) {
+        throw new BadRequestException('API token platform must match ad account platform.');
+      }
+      token.adAccountId = account._id;
+      token.adAccountName = account.name;
+      token.businessId = undefined;
+      token.businessName = undefined;
+    } else {
+      if (token.platform !== 'FACEBOOK') {
+        throw new BadRequestException('Hiện chỉ hỗ trợ system user token cho Facebook.');
+      }
+      token.adAccountId = undefined;
+      token.adAccountName = undefined;
+      if (dto.businessId !== undefined) token.businessId = dto.businessId?.trim() || undefined;
+      if (dto.businessName !== undefined) token.businessName = dto.businessName?.trim() || undefined;
     }
 
     if (dto.accessToken) token.accessToken = this.encrypt(dto.accessToken);
     if (dto.refreshToken) token.refreshToken = this.encrypt(dto.refreshToken);
     if (dto.expiresAt) token.expiresAt = new Date(dto.expiresAt);
     if (dto.status) token.status = dto.status;
-    if (dto.label !== undefined) token.label = dto.label;
+    if (dto.label !== undefined) token.label = dto.label?.trim() || undefined;
+
+    if (token.status === ApiTokenStatus.ACTIVE) {
+      await this.revokeOtherActiveTokens(
+        this.buildTokenScopeFilter({
+          adAccountId: token.adAccountId,
+          businessId: token.businessId,
+          tokenType: token.tokenType,
+          platform: token.platform,
+        }),
+        id,
+      );
+    }
 
     return token.save();
   }
@@ -385,9 +533,67 @@ export class AdsService {
     await this.apiTokenModel.findByIdAndDelete(id).exec();
   }
 
-  private async getDecryptedToken(accountId: string): Promise<string | null> {
+  private formatTokenForDisplay(token: any) {
+    return {
+      ...token,
+      accessToken: this.maskEncryptedSecret(token.accessToken),
+      refreshToken: token.refreshToken ? this.maskEncryptedSecret(token.refreshToken) : undefined,
+    };
+  }
+
+  private maskEncryptedSecret(secret?: string): string | undefined {
+    if (!secret) return undefined;
+    try {
+      const raw = this.decrypt(secret);
+      if (!raw) return undefined;
+      if (raw.length <= 8) return '****';
+      return `****${raw.slice(-6)}`;
+    } catch {
+      return '****';
+    }
+  }
+
+  private buildTokenScopeFilter(scope: {
+    adAccountId?: string | Types.ObjectId;
+    businessId?: string;
+    tokenType?: string;
+    platform?: string;
+  }): Record<string, any> | null {
+    if (scope.tokenType === ApiTokenType.ACCOUNT && scope.adAccountId) {
+      return {
+        adAccountId: scope.adAccountId,
+        tokenType: ApiTokenType.ACCOUNT,
+        status: ApiTokenStatus.ACTIVE,
+      };
+    }
+
+    if (scope.tokenType === ApiTokenType.FACEBOOK_SYSTEM_USER) {
+      if (!scope.businessId) return null;
+      const filter: Record<string, any> = {
+        platform: scope.platform || 'FACEBOOK',
+        tokenType: ApiTokenType.FACEBOOK_SYSTEM_USER,
+        status: ApiTokenStatus.ACTIVE,
+      };
+      if (scope.businessId) filter.businessId = scope.businessId;
+      return filter;
+    }
+
+    return null;
+  }
+
+  private async revokeOtherActiveTokens(filter: Record<string, any> | null, excludeTokenId?: string): Promise<void> {
+    if (!filter) return;
+    const finalFilter: Record<string, any> = { ...filter };
+    if (excludeTokenId) finalFilter._id = { $ne: excludeTokenId };
+    await this.apiTokenModel.updateMany(
+      finalFilter,
+      { $set: { status: ApiTokenStatus.REVOKED } },
+    ).exec();
+  }
+
+  private async findBestActiveToken(filter: Record<string, any>): Promise<ApiTokenDocument | null> {
     const activeTokens = await this.apiTokenModel.find({
-      adAccountId: accountId,
+      ...filter,
       status: ApiTokenStatus.ACTIVE,
     }).sort({ createdAt: -1 }).exec();
     if (!activeTokens.length) return null;
@@ -425,11 +631,36 @@ export class AdsService {
       return bCreated - aCreated;
     });
 
-    const token = validTokens[0];
-    token.lastUsedAt = now;
-    await token.save();
+    const selectedToken = validTokens[0];
+    selectedToken.lastUsedAt = now;
+    await selectedToken.save();
+    return selectedToken;
+  }
 
-    return this.decrypt(token.accessToken);
+  private async getTokenByIdForUse(id: string): Promise<ApiTokenDocument> {
+    const token = await this.apiTokenModel.findById(id).exec();
+    if (!token) {
+      throw new NotFoundException('Token khÃ´ng tá»“n táº¡i');
+    }
+    if (token.status !== ApiTokenStatus.ACTIVE) {
+      throw new BadRequestException('Token khÃ´ng cÃ²n hoáº¡t Ä‘á»™ng.');
+    }
+    if (token.expiresAt && token.expiresAt < new Date()) {
+      token.status = ApiTokenStatus.EXPIRED;
+      await token.save();
+      throw new BadRequestException('Token Ä‘Ã£ háº¿t háº¡n.');
+    }
+    token.lastUsedAt = new Date();
+    await token.save();
+    return token;
+  }
+
+  private async getDecryptedToken(accountId: string): Promise<string | null> {
+    const token = await this.findBestActiveToken({
+      adAccountId: accountId,
+      tokenType: ApiTokenType.ACCOUNT,
+    });
+    return token ? this.decrypt(token.accessToken) : null;
   }
 
   /**
@@ -537,7 +768,7 @@ export class AdsService {
     }
   }
 
-  private async revokeOtherActiveTokens(
+  private async legacyRevokeOtherActiveTokens(
     adAccountId: string | Types.ObjectId,
     excludeTokenId?: string,
   ): Promise<void> {
@@ -640,16 +871,567 @@ export class AdsService {
 
   // â”€â”€â”€ Ad Cost Sync â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+  async syncFacebookBusinessToken(tokenId: string, dateStr?: string): Promise<FacebookBusinessSyncResult> {
+    const tokenDoc = await this.getTokenByIdForUse(tokenId);
+    if (tokenDoc.platform !== 'FACEBOOK' || tokenDoc.tokenType !== ApiTokenType.FACEBOOK_SYSTEM_USER) {
+      throw new BadRequestException('Token này không phải Facebook system user token.');
+    }
+
+    const accessToken = this.decrypt(tokenDoc.accessToken);
+    const syncDates = dateStr
+      ? [this.normalizeToUtcDay(dateStr)]
+      : this.buildRollingSyncDates(this.getSyncLookbackDays());
+
+    const result = await this.runFacebookBusinessTokenSync(tokenDoc, accessToken, syncDates);
+    tokenDoc.lastSyncedAt = new Date();
+    await tokenDoc.save();
+    return result;
+  }
+
+  private buildFacebookGraphUrl(
+    path: string,
+    params: Record<string, string | number | undefined>,
+  ): string {
+    const url = new URL(`https://graph.facebook.com/v25.0${path}`);
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === '') return;
+      url.searchParams.set(key, String(value));
+    });
+    return url.toString();
+  }
+
+  private async fetchFacebookCollection<T>(url: string, accessToken: string): Promise<T[]> {
+    const results: T[] = [];
+    const visited = new Set<string>();
+    let nextUrl: string | null = url;
+
+    while (nextUrl) {
+      if (visited.has(nextUrl)) break;
+      visited.add(nextUrl);
+
+      const response = await this.fetchWithRetry(nextUrl, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const pageData = Array.isArray(response?.data) ? response.data as T[] : [];
+      results.push(...pageData);
+      nextUrl = response?.paging?.next || null;
+    }
+
+    return results;
+  }
+
+  private normalizeFacebookAdAccountId(raw?: string): string {
+    return String(raw || '').replace(/^act_/, '').trim();
+  }
+
+  private mapFacebookAccountStatus(raw?: number | string): string {
+    const status = Number(raw);
+    if ([2, 101, 201].includes(status)) return AdAccountStatus.DISABLED;
+    if ([3, 7, 8, 9, 100].includes(status)) return AdAccountStatus.PAUSED;
+    return AdAccountStatus.ACTIVE;
+  }
+
+  private mapFacebookAdGroupStatus(raw?: string): string {
+    const normalized = String(raw || '').trim().toUpperCase();
+    if (!normalized || normalized.includes('ACTIVE')) return AdGroupStatus.ACTIVE;
+    if (normalized.includes('PAUSED')) return AdGroupStatus.PAUSED;
+    return AdGroupStatus.ARCHIVED;
+  }
+
+  private convertSpendToVnd(amount: number, currency?: string): number {
+    const normalized = String(currency || '').trim().toUpperCase();
+    if (!normalized || normalized === 'VND') return amount;
+    if (normalized === 'USD') return amount * this.getExchangeRate('USD');
+    return amount;
+  }
+
+  private async resolveFacebookBusinesses(
+    tokenDoc: ApiTokenDocument,
+    accessToken: string,
+  ): Promise<FacebookBusinessRef[]> {
+    const businesses = new Map<string, FacebookBusinessRef>();
+    if (tokenDoc.businessId) {
+      businesses.set(tokenDoc.businessId, {
+        id: tokenDoc.businessId,
+        name: tokenDoc.businessName || undefined,
+      });
+    }
+
+    try {
+      const discovered = await this.fetchFacebookCollection<FacebookBusinessRef>(
+        this.buildFacebookGraphUrl('/me/businesses', {
+          fields: 'id,name',
+          limit: 100,
+        }),
+        accessToken,
+      );
+      discovered.forEach((business) => {
+        if (!business?.id) return;
+        businesses.set(business.id, { id: business.id, name: business.name });
+      });
+    } catch (err: any) {
+      if (!businesses.size) {
+        this.logger.warn(`Cannot resolve Facebook businesses from system token: ${err.message}`);
+      }
+    }
+
+    return Array.from(businesses.values());
+  }
+
+  private async fetchFacebookBusinessAdAccounts(
+    accessToken: string,
+    businesses: FacebookBusinessRef[],
+  ): Promise<FacebookAdAccountRow[]> {
+    const accounts = new Map<string, FacebookAdAccountRow>();
+    const addAccount = (row: FacebookAdAccountRow, business?: FacebookBusinessRef) => {
+      const accountId = this.normalizeFacebookAdAccountId(row.account_id || row.id);
+      if (!accountId) return;
+      accounts.set(accountId, {
+        ...row,
+        account_id: accountId,
+        business: row.business?.id
+          ? row.business
+          : business
+            ? { id: business.id, name: business.name }
+            : undefined,
+      });
+    };
+
+    for (const business of businesses) {
+      for (const edge of ['owned_ad_accounts', 'client_ad_accounts']) {
+        try {
+          const rows = await this.fetchFacebookCollection<FacebookAdAccountRow>(
+            this.buildFacebookGraphUrl(`/${business.id}/${edge}`, {
+              fields: 'id,account_id,name,account_status,currency,business',
+              limit: 250,
+            }),
+            accessToken,
+          );
+          rows.forEach((row) => addAccount(row, business));
+        } catch (err: any) {
+          this.logger.warn(`Cannot fetch ${edge} for business ${business.id}: ${err.message}`);
+        }
+      }
+    }
+
+    if (!accounts.size) {
+      const fallbackRows = await this.fetchFacebookCollection<FacebookAdAccountRow>(
+        this.buildFacebookGraphUrl('/me/adaccounts', {
+          fields: 'id,account_id,name,account_status,currency,business',
+          limit: 250,
+        }),
+        accessToken,
+      );
+      fallbackRows.forEach((row) => addAccount(row));
+    }
+
+    return Array.from(accounts.values());
+  }
+
+  private async fetchFacebookPages(
+    accessToken: string,
+    businesses: FacebookBusinessRef[],
+  ): Promise<FacebookPageRow[]> {
+    const pages = new Map<string, FacebookPageRow>();
+    const addPage = (row: FacebookPageRow) => {
+      const pageId = String(row.id || '').trim();
+      if (!pageId) return;
+      const existing = pages.get(pageId);
+      pages.set(pageId, {
+        ...(existing || {}),
+        ...row,
+        id: pageId,
+        access_token: row.access_token || existing?.access_token,
+      });
+    };
+
+    for (const business of businesses) {
+      try {
+        const rows = await this.fetchFacebookCollection<FacebookPageRow>(
+          this.buildFacebookGraphUrl(`/${business.id}/owned_pages`, {
+            fields: 'id,name,link',
+            limit: 250,
+          }),
+          accessToken,
+        );
+        rows.forEach(addPage);
+      } catch (err: any) {
+        this.logger.warn(`Cannot fetch owned_pages for business ${business.id}: ${err.message}`);
+      }
+    }
+
+    try {
+      const accessiblePages = await this.fetchFacebookCollection<FacebookPageRow>(
+        this.buildFacebookGraphUrl('/me/accounts', {
+          fields: 'id,name,access_token,link',
+          limit: 250,
+        }),
+        accessToken,
+      );
+      accessiblePages.forEach(addPage);
+    } catch (err: any) {
+      if (!pages.size) {
+        this.logger.warn(`Cannot fetch /me/accounts for Facebook pages: ${err.message}`);
+      }
+    }
+
+    for (const page of pages.values()) {
+      if (!page.access_token && page.id) {
+        page.access_token = await this.resolveFacebookPageAccessToken(page.id, accessToken);
+      }
+    }
+
+    return Array.from(pages.values());
+  }
+
+  private async resolveFacebookPageAccessToken(pageId: string, accessToken: string): Promise<string | undefined> {
+    try {
+      const response = await this.fetchWithRetry(
+        this.buildFacebookGraphUrl(`/${pageId}`, { fields: 'access_token' }),
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      return response?.access_token || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async upsertFacebookAdAccount(
+    row: FacebookAdAccountRow,
+    tokenDoc: ApiTokenDocument,
+  ): Promise<AdAccountDocument | null> {
+    const platformAccountId = this.normalizeFacebookAdAccountId(row.account_id || row.id);
+    if (!platformAccountId) return null;
+
+    const businessId = row.business?.id || tokenDoc.businessId || undefined;
+    const businessName = row.business?.name || tokenDoc.businessName || undefined;
+    const now = new Date();
+    const status = this.mapFacebookAccountStatus(row.account_status);
+    const currency = row.currency?.toUpperCase();
+
+    let account = await this.adAccountModel.findOne({
+      platform: 'FACEBOOK',
+      platformAccountId,
+    }).exec();
+
+    if (!account) {
+      account = new this.adAccountModel({
+        accountCode: await this.generateAccountCode(),
+        name: row.name || `Facebook Ads ${platformAccountId}`,
+        platform: 'FACEBOOK',
+        platformAccountId,
+        status,
+        currency,
+        businessId,
+        businessName,
+        syncSource: AdAccountSyncSource.FACEBOOK_BM,
+        lastSyncedAt: now,
+        createdById: tokenDoc.createdById,
+        createdByName: tokenDoc.label || 'Facebook BM Sync',
+      });
+      return account.save();
+    }
+
+    account.name = row.name || account.name;
+    account.status = status;
+    account.currency = currency || account.currency;
+    account.businessId = businessId;
+    account.businessName = businessName;
+    account.syncSource = AdAccountSyncSource.FACEBOOK_BM;
+    account.lastSyncedAt = now;
+    return account.save();
+  }
+
+  private async upsertFacebookAdGroup(
+    account: AdAccountDocument,
+    row: FacebookAdsetRow,
+    tokenDoc: ApiTokenDocument,
+  ): Promise<AdGroupDocument | null> {
+    const externalId = String(row.id || '').trim();
+    if (!externalId) return null;
+
+    const now = new Date();
+    const status = this.mapFacebookAdGroupStatus(row.effective_status);
+    const startDate = row.start_time ? new Date(row.start_time) : undefined;
+    const endDate = row.end_time ? new Date(row.end_time) : undefined;
+
+    let group = await this.adGroupModel.findOne({
+      adAccountId: account._id,
+      platformCampaignId: externalId,
+    }).exec();
+
+    if (!group) {
+      group = new this.adGroupModel({
+        groupCode: await this.generateGroupCode(),
+        name: row.name || `Facebook Ad Set ${externalId}`,
+        adAccountId: account._id,
+        adAccountName: account.name,
+        platform: 'FACEBOOK',
+        platformCampaignId: externalId,
+        status,
+        startDate,
+        endDate,
+        syncSource: AdGroupSyncSource.FACEBOOK_BM,
+        lastSyncedAt: now,
+        createdById: tokenDoc.createdById,
+        createdByName: tokenDoc.label || 'Facebook BM Sync',
+      });
+      return group.save();
+    }
+
+    group.name = row.name || group.name;
+    group.adAccountName = account.name;
+    group.status = status;
+    group.startDate = startDate || group.startDate;
+    group.endDate = endDate || group.endDate;
+    group.syncSource = AdGroupSyncSource.FACEBOOK_BM;
+    group.lastSyncedAt = now;
+    return group.save();
+  }
+
+  private async upsertFacebookFanpage(
+    row: FacebookPageRow,
+    tokenDoc: ApiTokenDocument,
+  ): Promise<FanpageDocument | null> {
+    const pageId = String(row.id || '').trim();
+    if (!pageId) return null;
+
+    const now = new Date();
+    const encryptedPageToken = row.access_token ? this.encrypt(row.access_token) : undefined;
+    let fanpage = await this.fanpageModel.findOne({
+      platform: FanpagePlatform.FACEBOOK,
+      pageId,
+    }).exec();
+
+    if (!fanpage) {
+      fanpage = new this.fanpageModel({
+        fanpageCode: await this.generateFanpageCode(),
+        name: row.name || `Facebook Page ${pageId}`,
+        platform: FanpagePlatform.FACEBOOK,
+        pageId,
+        pageAccessToken: encryptedPageToken,
+        syncSource: FanpageSyncSource.FACEBOOK_BM,
+        businessId: tokenDoc.businessId,
+        businessName: tokenDoc.businessName,
+        syncTokenId: tokenDoc._id,
+        syncTokenLabel: tokenDoc.label,
+        lastSyncedAt: now,
+        status: FanpageStatus.ACTIVE,
+        aiAutoReplyEnabled: true,
+        createdById: tokenDoc.createdById,
+        createdByName: tokenDoc.label || 'Facebook BM Sync',
+      });
+      return fanpage.save();
+    }
+
+    fanpage.name = row.name || fanpage.name;
+    if (encryptedPageToken) fanpage.pageAccessToken = encryptedPageToken;
+    fanpage.syncSource = FanpageSyncSource.FACEBOOK_BM;
+    fanpage.businessId = tokenDoc.businessId;
+    fanpage.businessName = tokenDoc.businessName;
+    fanpage.syncTokenId = tokenDoc._id;
+    fanpage.syncTokenLabel = tokenDoc.label;
+    fanpage.lastSyncedAt = now;
+    return fanpage.save();
+  }
+
+  private async syncFacebookAdsetsForAccount(
+    accessToken: string,
+    account: AdAccountDocument,
+    tokenDoc: ApiTokenDocument,
+  ): Promise<{ groupsSynced: number; groupsByExternalId: Map<string, AdGroupDocument> }> {
+    const rows = await this.fetchFacebookCollection<FacebookAdsetRow>(
+      this.buildFacebookGraphUrl(`/act_${account.platformAccountId}/adsets`, {
+        fields: 'id,name,effective_status,start_time,end_time',
+        limit: 250,
+      }),
+      accessToken,
+    );
+
+    const groupsByExternalId = new Map<string, AdGroupDocument>();
+    let groupsSynced = 0;
+
+    for (const row of rows) {
+      const group = await this.upsertFacebookAdGroup(account, row, tokenDoc);
+      if (!group) continue;
+      groupsByExternalId.set(group.platformCampaignId, group);
+      groupsSynced += 1;
+    }
+
+    return { groupsSynced, groupsByExternalId };
+  }
+
+  private async syncFacebookInsightsForAccount(
+    accessToken: string,
+    account: AdAccountDocument,
+    tokenDoc: ApiTokenDocument,
+    groupsByExternalId: Map<string, AdGroupDocument>,
+    date: Date,
+  ): Promise<{ synced: number; groupsSynced: number }> {
+    const dateStr = this.toUtcDateOnlyString(date);
+    const rows = await this.fetchFacebookCollection<FacebookInsightRow>(
+      this.buildFacebookGraphUrl(`/act_${account.platformAccountId}/insights`, {
+        fields: 'adset_id,adset_name,spend,impressions,clicks,actions',
+        level: 'adset',
+        time_range: JSON.stringify({ since: dateStr, until: dateStr }),
+        limit: 250,
+      }),
+      accessToken,
+    );
+
+    let synced = 0;
+    let groupsSynced = 0;
+
+    for (const row of rows) {
+      const externalId = String(row.adset_id || '').trim();
+      if (!externalId) continue;
+
+      let group: AdGroupDocument | null | undefined = groupsByExternalId.get(externalId);
+      if (!group) {
+        group = await this.upsertFacebookAdGroup(account, {
+          id: externalId,
+          name: row.adset_name,
+          effective_status: 'ACTIVE',
+        }, tokenDoc);
+        if (group) {
+          groupsByExternalId.set(externalId, group);
+          groupsSynced += 1;
+        }
+      }
+      if (!group) continue;
+
+      const conversions = (row.actions || [])
+        .filter((action) => action.action_type === 'offsite_conversion')
+        .reduce((sum, action) => sum + Number(action.value || 0), 0);
+
+      await this.createOrUpdateCost({
+        adGroupId: group._id.toString(),
+        adAccountId: account._id.toString(),
+        platform: 'FACEBOOK',
+        date: dateStr,
+        spend: this.convertSpendToVnd(Number(row.spend || 0), account.currency),
+        impressions: Number(row.impressions || 0),
+        clicks: Number(row.clicks || 0),
+        conversions,
+        source: AdCostSource.SYNCED,
+      });
+      synced += 1;
+    }
+
+    return { synced, groupsSynced };
+  }
+
+  private async runFacebookBusinessTokenSync(
+    tokenDoc: ApiTokenDocument,
+    accessToken: string,
+    syncDates: Date[],
+  ): Promise<FacebookBusinessSyncResult> {
+    const errors: string[] = [];
+    let synced = 0;
+    let adAccountsSynced = 0;
+    let adGroupsSynced = 0;
+    let fanpagesSynced = 0;
+
+    const businesses = await this.resolveFacebookBusinesses(tokenDoc, accessToken);
+    if (!tokenDoc.businessId && businesses.length === 1) {
+      tokenDoc.businessId = businesses[0].id;
+      tokenDoc.businessName = businesses[0].name;
+    }
+
+    const accountRows = await this.fetchFacebookBusinessAdAccounts(accessToken, businesses);
+    const pages = await this.fetchFacebookPages(accessToken, businesses);
+    const accounts: AdAccountDocument[] = [];
+
+    for (const row of accountRows) {
+      try {
+        const account = await this.upsertFacebookAdAccount(row, tokenDoc);
+        if (!account) continue;
+        accounts.push(account);
+        adAccountsSynced += 1;
+      } catch (err: any) {
+        errors.push(`Ad account ${row.name || row.account_id || row.id}: ${err.message}`);
+      }
+    }
+
+    for (const row of pages) {
+      try {
+        const fanpage = await this.upsertFacebookFanpage(row, tokenDoc);
+        if (!fanpage) continue;
+        fanpagesSynced += 1;
+        if (!row.access_token) {
+          errors.push(`Fanpage ${row.name || row.id}: chưa lấy được page access token.`);
+        }
+      } catch (err: any) {
+        errors.push(`Fanpage ${row.name || row.id}: ${err.message}`);
+      }
+    }
+
+    for (const account of accounts) {
+      try {
+        const groupResult = await this.syncFacebookAdsetsForAccount(accessToken, account, tokenDoc);
+        adGroupsSynced += groupResult.groupsSynced;
+
+        for (const syncDate of syncDates) {
+          const syncResult = await this.syncFacebookInsightsForAccount(
+            accessToken,
+            account,
+            tokenDoc,
+            groupResult.groupsByExternalId,
+            syncDate,
+          );
+          synced += syncResult.synced;
+          adGroupsSynced += syncResult.groupsSynced;
+        }
+      } catch (err: any) {
+        errors.push(`Account ${account.name}: ${err.message}`);
+      }
+    }
+
+    return {
+      synced,
+      adAccountsSynced,
+      adGroupsSynced,
+      fanpagesSynced,
+      errors,
+    };
+  }
+
   @Cron('0 6 * * *')
   async syncAllAdCosts(): Promise<{ synced: number; errors: string[] }> {
     const lookbackDays = this.getSyncLookbackDays();
     const syncDates = this.buildRollingSyncDates(lookbackDays);
     this.logger.log(`Starting daily ad cost sync (lookback ${lookbackDays} day(s))...`);
+    const businessTokens = await this.apiTokenModel.find({
+      platform: 'FACEBOOK',
+      tokenType: ApiTokenType.FACEBOOK_SYSTEM_USER,
+      status: ApiTokenStatus.ACTIVE,
+    }).sort({ createdAt: -1 }).exec();
     const accounts = await this.adAccountModel.find({ status: 'ACTIVE' }).exec();
     let synced = 0;
     const errors: string[] = [];
 
+    for (const token of businessTokens) {
+      try {
+        const result = await this.runFacebookBusinessTokenSync(token, this.decrypt(token.accessToken), syncDates);
+        token.lastUsedAt = new Date();
+        token.lastSyncedAt = new Date();
+        await token.save();
+        synced += result.synced;
+        errors.push(...result.errors);
+      } catch (err: any) {
+        const msg = `${token.label || token.businessName || token._id} (FACEBOOK_BM): ${err.message}`;
+        errors.push(msg);
+        this.logger.error(msg);
+      }
+    }
+
     for (const account of accounts) {
+      const hasAccountToken = await this.findBestActiveToken({
+        adAccountId: account._id,
+        tokenType: ApiTokenType.ACCOUNT,
+      });
+      if (!hasAccountToken) continue;
+
       try {
         const count = await this.syncAccountCostsForDates(account._id.toString(), syncDates);
         synced += count;

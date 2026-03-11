@@ -1,14 +1,27 @@
 import { IsString, IsNotEmpty, IsEnum, IsOptional, IsDateString, IsMongoId } from 'class-validator';
 import { AdPlatform } from '../schemas/ad-account.schema';
+import { ApiTokenType } from '../schemas/api-token.schema';
 
 export class CreateApiTokenDto {
   @IsString()
-  @IsNotEmpty()
   @IsMongoId()
-  adAccountId!: string;
+  @IsOptional()
+  adAccountId?: string;
 
   @IsEnum(AdPlatform)
   platform!: string;
+
+  @IsEnum(ApiTokenType)
+  @IsOptional()
+  tokenType?: string;
+
+  @IsString()
+  @IsOptional()
+  businessId?: string;
+
+  @IsString()
+  @IsOptional()
+  businessName?: string;
 
   @IsString()
   @IsNotEmpty()

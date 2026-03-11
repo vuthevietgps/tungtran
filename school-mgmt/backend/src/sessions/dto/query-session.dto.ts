@@ -1,6 +1,7 @@
 import {
   IsDateString,
   IsEnum,
+  IsIn,
   IsMongoId,
   IsOptional,
   IsString,
@@ -27,6 +28,10 @@ export class QuerySessionDto {
   @IsEnum(SessionStatus)
   @IsOptional()
   status?: SessionStatus;
+
+  @IsIn(['true', 'false'])
+  @IsOptional()
+  hasReport?: 'true' | 'false';
 
   @IsDateString()
   @IsOptional()

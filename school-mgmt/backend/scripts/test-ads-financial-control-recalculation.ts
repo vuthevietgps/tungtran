@@ -485,11 +485,13 @@ async function main() {
     createModel(() => state.orders) as any,
     createModel(() => state.leads) as any,
     createModel(() => state.students) as any,
+    empty as any,
     {} as any,
     payrollAggregate as any,
     expenseAggregate as any,
     loanAggregate as any,
     bankFundService as any,
+    undefined,
   );
 
   const adsService = new AdsService(
@@ -502,6 +504,7 @@ async function main() {
     createModel(() => state.sessions) as any,
     createModel(() => state.expenses) as any,
     createModel(() => state.students) as any,
+    empty as any,
     { get: (_key: string, fallback?: string) => fallback } as any,
   );
 

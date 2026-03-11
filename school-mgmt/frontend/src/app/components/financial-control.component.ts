@@ -6,7 +6,7 @@ import {
   FinancialControlService,
   BankAccount, BankTransaction, Fund, FundTransaction,
   FinancialOverview, CashFlowData, ProfitAndLoss, FinancialDashboard,
-  FinancialAlertsResponse, FinancialAlert,
+  FinancialAlertsResponse, FinancialAlert, ProvisionalGrossProfit,
 } from '../services/financial-control.service';
 import { AuthService } from '../services/auth.service';
 import { Role } from '../models/role.enum';
@@ -254,6 +254,50 @@ const EXPENSE_CAT_LABELS: Record<string, string> = {
 
     </ng-container>
     <p class="empty-text" *ngIf="!dashboard()">Đang tải dữ liệu dashboard...</p>
+  </div>
+
+  <!-- ═══ TAB: Lợi nhuận gộp tạm tính ═══ -->
+  <div *ngIf="activeTab === 'provisional-gross-profit'" class="tab-content">
+    <div class="section-header">
+      <h3>Lợi nhuận gộp tạm tính</h3>
+      <div class="filters inline provisional-filter">
+        <span>Tháng</span>
+        <input type="month" [(ngModel)]="provisionalMonth" />
+        <button class="primary" (click)="loadProvisionalGrossProfit()">Xem</button>
+      </div>
+    </div>
+
+    <ng-container *ngIf="provisionalGrossProfit() as provisional; else provisionalLoading">
+      <div class="overview-grid">
+        <div class="ov-card inflow">
+          <div class="ov-icon">IN</div>
+          <div class="ov-value">{{provisional.cashInflow.approvedInvoiceAmount | number}}đ</div>
+          <div class="ov-label">Dòng tiền vào trong tháng (hóa đơn đã duyệt)</div>
+          <div class="ov-detail"><small>{{provisional.cashInflow.approvedInvoiceCount}} hóa đơn</small></div>
+        </div>
+        <div class="ov-card inflow">
+          <div class="ov-icon">REV</div>
+          <div class="ov-value">{{provisional.provisional.revenueAmount | number}}đ</div>
+          <div class="ov-label">Doanh thu tạm tính (trừ ví theo điểm danh)</div>
+          <div class="ov-detail"><small>{{provisional.provisional.attendanceCount}} buổi điểm danh</small></div>
+        </div>
+        <div class="ov-card outflow">
+          <div class="ov-icon">PAY</div>
+          <div class="ov-value">{{provisional.provisional.teacherPayoutAmount | number}}đ</div>
+          <div class="ov-label">Lương phải trả giáo viên tạm tính</div>
+          <div class="ov-detail"><small>Dựa trên các buổi đã điểm danh</small></div>
+        </div>
+        <div class="ov-card" [class.profit]="provisional.grossProfitAmount >= 0" [class.loss]="provisional.grossProfitAmount < 0">
+          <div class="ov-icon">GP</div>
+          <div class="ov-value">{{provisional.grossProfitAmount | number}}đ</div>
+          <div class="ov-label">Lợi nhuận gộp tạm tính</div>
+          <div class="ov-detail"><small>= Doanh thu tạm tính - Lương giáo viên tạm tính</small></div>
+        </div>
+      </div>
+    </ng-container>
+    <ng-template #provisionalLoading>
+      <p class="empty-text">Đang tải dữ liệu lợi nhuận gộp tạm tính...</p>
+    </ng-template>
   </div>
 
   <!-- â•â•â• TAB: Bank Accounts â•â•â• -->
@@ -980,6 +1024,8 @@ const EXPENSE_CAT_LABELS: Record<string, string> = {
     .filters { display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; }
     .filters.inline { display:inline-flex; }
     .filters select, .filters input { padding:6px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; }
+    .provisional-filter { align-items:center; margin-bottom:0; }
+    .provisional-filter span { font-size:13px; color:#475569; font-weight:600; }
     .empty-text { text-align:center; color:#94a3b8; padding:32px; font-size:14px; }
 
     .data { width:100%; border-collapse:collapse; background:#fff; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,0.08); }
@@ -1061,6 +1107,7 @@ export class FinancialControlComponent implements OnInit {
   Math = Math;
   tabs = [
     { key: 'overview', label: 'Tổng quan', icon: '📊' },
+    { key: 'provisional-gross-profit', label: 'Lợi nhuận gộp tạm tính', icon: '📉' },
     { key: 'alerts', label: 'Cảnh báo', icon: '🚨' },
     { key: 'bank', label: 'Ngân hàng', icon: '🏦' },
     { key: 'funds', label: 'Quỹ', icon: '🏛️' },
@@ -1085,12 +1132,14 @@ export class FinancialControlComponent implements OnInit {
   pnl = signal<ProfitAndLoss | null>(null);
   reconciliation = signal<any>(null);
   alertsData = signal<FinancialAlertsResponse | null>(null);
+  provisionalGrossProfit = signal<ProvisionalGrossProfit | null>(null);
 
   // Selection
   selectedBankAccount = signal<BankAccount | null>(null);
   selectedFund = signal<Fund | null>(null);
 
   // Filter states
+  provisionalMonth = this.currentMonthValue();
   bankTxType = '';
   bankTxKeyword = '';
   cashFlowGroupBy = 'month';
@@ -1120,6 +1169,11 @@ export class FinancialControlComponent implements OnInit {
   txTypeLabel(t: string) { return TX_TYPE_LABELS[t] || t; }
   categoryLabel(c: string) { return CATEGORY_LABELS[c] || c; }
   expenseCatLabel(c: string) { return EXPENSE_CAT_LABELS[c] || c; }
+  private currentMonthValue(): string {
+    const now = new Date();
+    const month = `${now.getMonth() + 1}`.padStart(2, '0');
+    return `${now.getFullYear()}-${month}`;
+  }
 
   isInflow(type: string): boolean {
     return ['DEPOSIT', 'TRANSFER_IN', 'INTEREST'].includes(type);
@@ -1149,6 +1203,9 @@ export class FinancialControlComponent implements OnInit {
       switch (tab) {
         case 'overview':
           this.dashboard.set(await this.service.getDashboard());
+          break;
+        case 'provisional-gross-profit':
+          await this.loadProvisionalGrossProfit();
           break;
         case 'alerts':
           this.alertsData.set(await this.service.getAlerts());
@@ -1192,6 +1249,11 @@ export class FinancialControlComponent implements OnInit {
 
   async loadPnl() {
     this.pnl.set(await this.service.getProfitAndLoss(this.startDate, this.endDate, this.pnlBasis));
+  }
+
+  async loadProvisionalGrossProfit() {
+    const month = (this.provisionalMonth || '').trim();
+    this.provisionalGrossProfit.set(await this.service.getProvisionalGrossProfit(month || undefined));
   }
 
   selectBankAccount(ba: BankAccount) {
@@ -1320,7 +1382,7 @@ export class FinancialControlComponent implements OnInit {
         if (!action.target) break;
         const normalizedTarget = this.normalizeAppTarget(action.target);
         if (normalizedTarget.startsWith('/app/financial-control')) {
-          const tabMatch = normalizedTarget.match(/[?&]tab=(\w+)/);
+          const tabMatch = normalizedTarget.match(/[?&]tab=([\w-]+)/);
           if (tabMatch) {
             this.activeTab = tabMatch[1];
             this.loadTab(tabMatch[1]);

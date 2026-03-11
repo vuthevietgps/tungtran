@@ -13,6 +13,11 @@ export enum FanpageStatus {
   INACTIVE = 'INACTIVE',
 }
 
+export enum FanpageSyncSource {
+  MANUAL = 'MANUAL',
+  FACEBOOK_BM = 'FACEBOOK_BM',
+}
+
 @Schema({ timestamps: true })
 export class Fanpage {
   @Prop({ required: true, trim: true, unique: true })
@@ -32,6 +37,24 @@ export class Fanpage {
 
   @Prop({ type: String, trim: true })
   description?: string;
+
+  @Prop({ type: String, enum: Object.values(FanpageSyncSource), default: FanpageSyncSource.MANUAL })
+  syncSource!: string;
+
+  @Prop({ type: String, trim: true })
+  businessId?: string;
+
+  @Prop({ type: String, trim: true })
+  businessName?: string;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'ApiToken' })
+  syncTokenId?: Types.ObjectId;
+
+  @Prop({ type: String, trim: true })
+  syncTokenLabel?: string;
+
+  @Prop({ type: Date })
+  lastSyncedAt?: Date;
 
   @Prop({ type: SchemaTypes.ObjectId, ref: 'AdAccount' })
   adAccountId?: Types.ObjectId;
@@ -64,5 +87,6 @@ export class Fanpage {
 export const FanpageSchema = SchemaFactory.createForClass(Fanpage);
 FanpageSchema.index({ platform: 1, pageId: 1 }, { unique: true });
 FanpageSchema.index({ status: 1 });
+FanpageSchema.index({ syncSource: 1 });
 FanpageSchema.index({ createdAt: -1 });
 

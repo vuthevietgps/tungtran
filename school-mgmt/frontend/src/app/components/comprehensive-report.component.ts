@@ -28,6 +28,26 @@ import { ClassItem, ClassService } from '../services/class.service';
           </select>
         </div>
 
+        <div class="filter-item">
+          <label>Sale</label>
+          <select [ngModel]="selectedSaleId()" (ngModelChange)="onSaleFilterChange($event)">
+            <option value="">Tat ca sale</option>
+            <option *ngFor="let sale of saleOptions()" [value]="sale.id">
+              {{ sale.name }}
+            </option>
+          </select>
+        </div>
+
+        <div class="filter-item">
+          <label>Tinh trang data</label>
+          <select [ngModel]="selectedDataStatus()" (ngModelChange)="onDataStatusFilterChange($event)">
+            <option value="">Tat ca tinh trang</option>
+            <option *ngFor="let option of dataStatusOptions" [value]="option.value">
+              {{ option.label }}
+            </option>
+          </select>
+        </div>
+
         <div class="filter-item filter-item-search">
           <label>Tim kiem</label>
           <input
@@ -58,7 +78,7 @@ import { ClassItem, ClassService } from '../services/class.service';
         </div>
         <div class="summary-card">
           <h3>Buoi toi da</h3>
-          <p class="summary-number">{{ maxSessions() }}</p>
+          <p class="summary-number">{{ visibleMaxSessions() }}</p>
         </div>
         <div class="summary-card">
           <h3>Tong luot co mat</h3>
@@ -127,13 +147,17 @@ import { ClassItem, ClassService } from '../services/class.service';
                     class="session-cell"
                     [ngClass]="getSessionCellClass(row.sessions[si])"
                   >
-                    <ng-container *ngIf="row.sessions[si] as s">
+                    <ng-container *ngIf="row.sessions[si] as s; else emptySessionCell">
                       <div class="cell-status">{{ getStatusLabel(s.status) }}</div>
-                      <div class="cell-date">{{ formatDateShort(s.date) }}</div>
+                      <div class="cell-meta">{{ formatSessionDateTime(s) }}</div>
+                      <div class="cell-meta">{{ formatSessionDuration(s.duration) }}</div>
+                      <div class="cell-meta cell-teacher" [title]="getSessionTeacher(s)">
+                        {{ getSessionTeacher(s) }}
+                      </div>
                     </ng-container>
-                    <ng-container *ngIf="!row.sessions[si]">
+                    <ng-template #emptySessionCell>
                       <span class="cell-empty">-</span>
-                    </ng-container>
+                    </ng-template>
                   </td>
                 </tr>
               </tbody>
@@ -143,7 +167,7 @@ import { ClassItem, ClassService } from '../services/class.service';
       </ng-container>
 
       <div *ngIf="!loading() && reportRows().length === 0 && !error()" class="no-data">
-        Khong tim thay du lieu phu hop. Hay chon lop hoac thay doi tu khoa tim kiem.
+        Khong tim thay du lieu phu hop. Hay thu thay doi lop, sale, tinh trang data hoac tu khoa tim kiem.
       </div>
     </div>
   `,
@@ -167,7 +191,7 @@ import { ClassItem, ClassService } from '../services/class.service';
       display: flex;
       flex-direction: column;
       gap: 4px;
-      min-width: 200px;
+      min-width: 180px;
       flex: 0 1 auto;
     }
 
@@ -312,20 +336,43 @@ import { ClassItem, ClassService } from '../services/class.service';
     .number-cell { text-align: center; }
 
     .session-col {
-      min-width: 86px;
+      min-width: 150px;
       text-align: center;
       background: #eef2ff;
     }
 
     .session-cell {
-      min-width: 86px;
+      min-width: 150px;
       line-height: 1.25;
-      padding: 4px 6px !important;
+      padding: 6px !important;
+      white-space: normal !important;
+      text-align: left !important;
+      vertical-align: top;
     }
 
-    .cell-status { font-size: 12px; font-weight: 700; }
-    .cell-date { font-size: 11px; color: #6b7280; }
-    .cell-empty { color: #d1d5db; }
+    .cell-status {
+      font-size: 12px;
+      font-weight: 700;
+      text-align: center;
+      margin-bottom: 4px;
+    }
+
+    .cell-meta {
+      display: block;
+      font-size: 11px;
+      color: #374151;
+      margin-top: 2px;
+      word-break: break-word;
+    }
+
+    .cell-teacher { font-weight: 600; }
+    .cell-empty {
+      color: #d1d5db;
+      display: inline-block;
+      width: 100%;
+      text-align: center;
+      padding-top: 12px;
+    }
 
     .sc-present { background: #d1fae5; }
     .sc-absent { background: #fee2e2; }
@@ -341,9 +388,10 @@ import { ClassItem, ClassService } from '../services/class.service';
       display: inline-block;
     }
 
-    .badge-ok { background: #d1fae5; color: #065f46; }
-    .badge-pending { background: #fef3c7; color: #92400e; }
-    .badge-rejected { background: #fee2e2; color: #991b1b; }
+    .badge-active { background: #d1fae5; color: #065f46; }
+    .badge-paused { background: #fef3c7; color: #92400e; }
+    .badge-completed { background: #e5e7eb; color: #374151; }
+    .badge-refund { background: #dbeafe; color: #1d4ed8; }
     .badge-other { background: #e5e7eb; color: #374151; }
   `],
 })
@@ -352,20 +400,67 @@ export class ComprehensiveReportComponent implements OnInit {
   private classService = inject(ClassService);
 
   readonly sessionColumnCount = 20;
+  readonly dataStatusOptions = [
+    { value: 'DANG_HOC', label: 'Dang hoc' },
+    { value: 'BAO_LUU', label: 'Bao luu' },
+    { value: 'KET_THUC', label: 'Ket thuc' },
+    { value: 'HOAN_HOC_PHI', label: 'Hoan hoc phi' },
+  ];
 
-  reportRows = signal<ComprehensiveReportRow[]>([]);
-  maxSessions = signal(0);
+  allRows = signal<ComprehensiveReportRow[]>([]);
   classes = signal<ClassItem[]>([]);
   loading = signal(false);
   error = signal('');
+  selectedSaleId = signal('');
+  selectedDataStatus = signal('');
 
   selectedClassId = '';
   searchTerm = '';
 
   private searchTimeout: any;
 
+  saleOptions = computed(() => {
+    const options = new Map<string, string>();
+    for (const row of this.allRows()) {
+      const key = this.getSaleKey(row);
+      const label = (row.saleName || '').trim();
+      if (!key || !label || options.has(key)) continue;
+      options.set(key, label);
+    }
+
+    return Array.from(options.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'vi', { sensitivity: 'base' }));
+  });
+
+  reportRows = computed(() =>
+    this.allRows().filter((row) => {
+      if (this.selectedSaleId()) {
+        const saleKey = this.getSaleKey(row);
+        if (saleKey !== this.selectedSaleId()) return false;
+      }
+
+      if (this.selectedDataStatus() && row.dataStatus !== this.selectedDataStatus()) {
+        return false;
+      }
+
+      return true;
+    }),
+  );
+
+  visibleMaxSessions = computed(() => {
+    let max = 0;
+    for (const row of this.reportRows()) {
+      max = Math.max(max, this.getRowSessionSpan(row));
+    }
+    return max;
+  });
+
   sessionChunks = computed(() => {
-    const totalSessions = Math.max(this.maxSessions(), this.sessionColumnCount);
+    const rows = this.reportRows();
+    if (rows.length === 0) return [];
+
+    const totalSessions = Math.max(this.visibleMaxSessions(), this.sessionColumnCount);
     const chunks: Array<{ start: number; end: number; indices: number[] }> = [];
 
     for (let start = 0; start < totalSessions; start += this.sessionColumnCount) {
@@ -400,6 +495,14 @@ export class ComprehensiveReportComponent implements OnInit {
     this.searchTimeout = setTimeout(() => this.loadReport(), 400);
   }
 
+  onSaleFilterChange(value: string) {
+    this.selectedSaleId.set(value || '');
+  }
+
+  onDataStatusFilterChange(value: string) {
+    this.selectedDataStatus.set(value || '');
+  }
+
   async loadReport() {
     this.loading.set(true);
     this.error.set('');
@@ -409,28 +512,26 @@ export class ComprehensiveReportComponent implements OnInit {
         this.selectedClassId || undefined,
         this.searchTerm || undefined,
       );
-      this.maxSessions.set(data.maxSessions);
-      this.reportRows.set(data.rows);
+      this.allRows.set(data.rows);
+
+      const availableSales = new Set(data.rows.map((row) => this.getSaleKey(row)).filter(Boolean));
+      if (this.selectedSaleId() && !availableSales.has(this.selectedSaleId())) {
+        this.selectedSaleId.set('');
+      }
     } catch (err: any) {
       this.error.set(err.message || 'Khong the tai bao cao');
+      this.allRows.set([]);
     } finally {
       this.loading.set(false);
     }
   }
 
   uniqueClasses(): number {
-    return new Set(this.reportRows().map((r) => r.classCode)).size;
+    return new Set(this.reportRows().map((row) => row.classCode)).size;
   }
 
   totalAttended(): number {
-    return this.reportRows().reduce((sum, r) => sum + (r.attendedCount || 0), 0);
-  }
-
-  formatDateShort(dateStr: string | null): string {
-    if (!dateStr) return '-';
-    const d = new Date(`${dateStr}T00:00:00`);
-    if (Number.isNaN(d.getTime())) return '-';
-    return `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}`;
+    return this.reportRows().reduce((sum, row) => sum + (row.attendedCount || 0), 0);
   }
 
   formatBirthDate(dateOfBirth?: string | null, birthMonth?: number | null): string {
@@ -451,6 +552,45 @@ export class ComprehensiveReportComponent implements OnInit {
     return `Thang ${month}`;
   }
 
+  formatSessionDateTime(session?: SessionCell): string {
+    if (!session) return '-';
+
+    if (session.attendedAt) {
+      const attendedAt = new Date(session.attendedAt);
+      if (!Number.isNaN(attendedAt.getTime())) {
+        return `${attendedAt.getHours().toString().padStart(2, '0')}:${attendedAt
+          .getMinutes()
+          .toString()
+          .padStart(2, '0')} ${attendedAt.getDate().toString().padStart(2, '0')}/${(
+          attendedAt.getMonth() + 1
+        )
+          .toString()
+          .padStart(2, '0')}/${attendedAt.getFullYear()}`;
+      }
+    }
+
+    if (session.date) {
+      const d = new Date(`${session.date}T00:00:00`);
+      if (!Number.isNaN(d.getTime())) {
+        return `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1)
+          .toString()
+          .padStart(2, '0')}/${d.getFullYear()}`;
+      }
+    }
+
+    return '-';
+  }
+
+  formatSessionDuration(duration?: number): string {
+    const minutes = Number(duration || 0);
+    return minutes > 0 ? `Thoi luong: ${minutes} phut` : 'Thoi luong: -';
+  }
+
+  getSessionTeacher(session?: SessionCell): string {
+    const teacher = session?.teacherDisplay || session?.teacherName || session?.teacherCode || '-';
+    return `GV: ${teacher}`;
+  }
+
   getClassModeLabel(classMode?: string): string {
     return classMode === 'OFFLINE' ? 'Offline' : 'Online';
   }
@@ -464,30 +604,32 @@ export class ComprehensiveReportComponent implements OnInit {
 
   getDataStatusLabel(status?: string): string {
     switch (status) {
-      case 'OK':
-        return 'OK';
-      case 'PAYMENT_PENDING':
-        return 'Payment Pending';
-      case 'PAYMENT_REJECTED':
-        return 'Payment Rejected';
-      case 'NO_PAYMENT':
-        return 'No Payment';
-      case 'APPROVED':
-        return 'Approved';
-      case 'PENDING':
-        return 'Pending';
-      case 'REJECTED':
-        return 'Rejected';
+      case 'DANG_HOC':
+        return 'Dang hoc';
+      case 'BAO_LUU':
+        return 'Bao luu';
+      case 'KET_THUC':
+        return 'Ket thuc';
+      case 'HOAN_HOC_PHI':
+        return 'Hoan hoc phi';
       default:
         return status || '-';
     }
   }
 
   getDataStatusClass(status?: string): string {
-    if (status === 'OK' || status === 'APPROVED') return 'badge-ok';
-    if (status === 'PAYMENT_PENDING' || status === 'PENDING' || status === 'NO_PAYMENT') return 'badge-pending';
-    if (status === 'PAYMENT_REJECTED' || status === 'REJECTED') return 'badge-rejected';
-    return 'badge-other';
+    switch (status) {
+      case 'DANG_HOC':
+        return 'badge-active';
+      case 'BAO_LUU':
+        return 'badge-paused';
+      case 'KET_THUC':
+        return 'badge-completed';
+      case 'HOAN_HOC_PHI':
+        return 'badge-refund';
+      default:
+        return 'badge-other';
+    }
   }
 
   getStatusLabel(status: string | null): string {
@@ -523,7 +665,7 @@ export class ComprehensiveReportComponent implements OnInit {
 
   exportCSV() {
     const rows = this.reportRows();
-    const max = Math.max(this.maxSessions(), this.sessionColumnCount);
+    const max = Math.max(this.visibleMaxSessions(), this.sessionColumnCount);
     if (rows.length === 0) return;
 
     const headers = [
@@ -588,12 +730,24 @@ export class ComprehensiveReportComponent implements OnInit {
     URL.revokeObjectURL(url);
   }
 
+  private getRowSessionSpan(row: ComprehensiveReportRow): number {
+    return Math.max(Number(row.totalSessions || 0), Array.isArray(row.sessions) ? row.sessions.length : 0);
+  }
+
+  private getSaleKey(row: ComprehensiveReportRow): string {
+    return row.saleId || row.saleName || '';
+  }
+
   private formatSessionForExport(session?: SessionCell): string {
     if (!session) return '';
-    const status = this.getStatusLabel(session.status);
-    const date = this.formatDateShort(session.date);
-    if (date === '-') return status;
-    return `${status} ${date}`;
+    return [
+      this.getStatusLabel(session.status),
+      this.formatSessionDateTime(session),
+      this.formatSessionDuration(session.duration),
+      this.getSessionTeacher(session),
+    ]
+      .filter((part) => part && part !== '-')
+      .join(' | ');
   }
 
   private csvEscape(value: string): string {

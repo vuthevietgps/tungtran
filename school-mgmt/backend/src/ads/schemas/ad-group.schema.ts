@@ -10,6 +10,11 @@ export enum AdGroupStatus {
   ARCHIVED = 'ARCHIVED',
 }
 
+export enum AdGroupSyncSource {
+  MANUAL = 'MANUAL',
+  FACEBOOK_BM = 'FACEBOOK_BM',
+}
+
 @Schema({ timestamps: true })
 export class AdGroup {
   @Prop({ required: true, trim: true, unique: true })
@@ -35,6 +40,12 @@ export class AdGroup {
 
   @Prop({ type: Number, min: 0, default: 0 })
   dailyBudget?: number;
+
+  @Prop({ type: String, enum: Object.values(AdGroupSyncSource), default: AdGroupSyncSource.MANUAL })
+  syncSource!: string;
+
+  @Prop({ type: Date })
+  lastSyncedAt?: Date;
 
   @Prop({ type: Date })
   startDate?: Date;

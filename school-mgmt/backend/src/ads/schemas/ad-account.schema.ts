@@ -15,6 +15,11 @@ export enum AdAccountStatus {
   DISABLED = 'DISABLED',
 }
 
+export enum AdAccountSyncSource {
+  MANUAL = 'MANUAL',
+  FACEBOOK_BM = 'FACEBOOK_BM',
+}
+
 @Schema({ timestamps: true })
 export class AdAccount {
   @Prop({ required: true, trim: true, unique: true })
@@ -35,6 +40,21 @@ export class AdAccount {
   @Prop({ type: Number, min: 0, default: 0 })
   monthlyBudget?: number;
 
+  @Prop({ type: String, trim: true, uppercase: true })
+  currency?: string;
+
+  @Prop({ type: String, trim: true })
+  businessId?: string;
+
+  @Prop({ type: String, trim: true })
+  businessName?: string;
+
+  @Prop({ type: String, enum: Object.values(AdAccountSyncSource), default: AdAccountSyncSource.MANUAL })
+  syncSource!: string;
+
+  @Prop({ type: Date })
+  lastSyncedAt?: Date;
+
   @Prop({ type: String, trim: true })
   notes?: string;
 
@@ -48,5 +68,6 @@ export class AdAccount {
 export const AdAccountSchema = SchemaFactory.createForClass(AdAccount);
 AdAccountSchema.index({ platform: 1 });
 AdAccountSchema.index({ status: 1 });
+AdAccountSchema.index({ businessId: 1 }, { sparse: true });
 AdAccountSchema.index({ createdAt: -1 });
 

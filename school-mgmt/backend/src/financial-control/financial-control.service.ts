@@ -32,6 +32,7 @@ import { AdsService } from '../ads/ads.service';
 import { Order, OrderDocument } from '../orders/schemas/order.schema';
 import { Lead, LeadDocument } from '../leads/schemas/lead.schema';
 import { Student, StudentDocument } from '../students/schemas/student.schema';
+import { Attendance, AttendanceDocument, AttendanceStatus } from '../attendance/schemas/attendance.schema';
 
 type FinancialReportBasis = 'cash' | 'accrual';
 
@@ -52,6 +53,7 @@ export class FinancialControlService {
     @InjectModel(Order.name) private orderModel: Model<OrderDocument>,
     @InjectModel(Lead.name) private leadModel: Model<LeadDocument>,
     @InjectModel(Student.name) private studentModel: Model<StudentDocument>,
+    @InjectModel(Attendance.name) private attendanceModel: Model<AttendanceDocument>,
     @InjectConnection() private connection: Connection,
     private readonly payrollAggregate: PayrollFinancialAggregateService,
     private readonly expenseAggregate: ExpenseFinancialAggregateService,
@@ -683,6 +685,116 @@ export class FinancialControlService {
       expenseTotal6m,
       adCostTotal6m: adCostRows[0]?.total || 0,
     };
+  }
+
+  private async getProvisionalGrossProfitInMonth(
+    monthStart: Date,
+    monthEndExclusive: Date,
+  ): Promise<{
+    period: { month: number; year: number; startDate: string; endDate: string };
+    cashInflow: { approvedInvoiceAmount: number; approvedInvoiceCount: number };
+    provisional: { revenueAmount: number; teacherPayoutAmount: number; attendanceCount: number };
+    grossProfitAmount: number;
+  }> {
+    const [approvedInvoices, attendanceFinancials] = await Promise.all([
+      this.invoiceModel.aggregate([
+        {
+          $match: {
+            status: 'APPROVED',
+            paymentDate: { $gte: monthStart, $lt: monthEndExclusive },
+          },
+        },
+        { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } },
+      ]),
+      this.attendanceModel.aggregate([
+        {
+          $match: {
+            date: { $gte: monthStart, $lt: monthEndExclusive },
+            status: AttendanceStatus.PRESENT,
+            sessionId: { $exists: true, $ne: null },
+          },
+        },
+        {
+          $lookup: {
+            from: this.sessionModel.collection.name,
+            localField: 'sessionId',
+            foreignField: '_id',
+            as: 'session',
+          },
+        },
+        { $unwind: '$session' },
+        {
+          $group: {
+            _id: null,
+            provisionalRevenue: { $sum: { $ifNull: ['$session.amountCharged', 0] } },
+            provisionalTeacherPayout: { $sum: { $ifNull: ['$session.teacherPayout', 0] } },
+            attendanceCount: { $sum: 1 },
+          },
+        },
+      ]),
+    ]);
+
+    const invoiceAmount = approvedInvoices[0]?.total || 0;
+    const invoiceCount = approvedInvoices[0]?.count || 0;
+    const provisionalRevenue = attendanceFinancials[0]?.provisionalRevenue || 0;
+    const provisionalTeacherPayout = attendanceFinancials[0]?.provisionalTeacherPayout || 0;
+    const attendanceCount = attendanceFinancials[0]?.attendanceCount || 0;
+
+    return {
+      period: {
+        month: monthStart.getMonth() + 1,
+        year: monthStart.getFullYear(),
+        startDate: monthStart.toISOString(),
+        endDate: new Date(monthEndExclusive.getTime() - 1).toISOString(),
+      },
+      cashInflow: {
+        approvedInvoiceAmount: invoiceAmount,
+        approvedInvoiceCount: invoiceCount,
+      },
+      provisional: {
+        revenueAmount: provisionalRevenue,
+        teacherPayoutAmount: provisionalTeacherPayout,
+        attendanceCount,
+      },
+      grossProfitAmount: provisionalRevenue - provisionalTeacherPayout,
+    };
+  }
+
+  private resolveMonthRange(month?: string): { monthStart: Date; monthEndExclusive: Date } {
+    if (!month) {
+      const now = new Date();
+      return {
+        monthStart: new Date(now.getFullYear(), now.getMonth(), 1),
+        monthEndExclusive: new Date(now.getFullYear(), now.getMonth() + 1, 1),
+      };
+    }
+
+    const normalized = month.trim();
+    const matched = /^(\d{4})-(\d{2})$/.exec(normalized);
+    if (!matched) {
+      throw new BadRequestException('Thang khong hop le, vui long dung dinh dang YYYY-MM');
+    }
+
+    const year = Number(matched[1]);
+    const monthIndex = Number(matched[2]);
+    if (!Number.isFinite(year) || !Number.isFinite(monthIndex) || monthIndex < 1 || monthIndex > 12) {
+      throw new BadRequestException('Thang khong hop le, vui long dung dinh dang YYYY-MM');
+    }
+
+    return {
+      monthStart: new Date(year, monthIndex - 1, 1),
+      monthEndExclusive: new Date(year, monthIndex, 1),
+    };
+  }
+
+  async getProvisionalGrossProfit(month?: string): Promise<{
+    period: { month: number; year: number; startDate: string; endDate: string };
+    cashInflow: { approvedInvoiceAmount: number; approvedInvoiceCount: number };
+    provisional: { revenueAmount: number; teacherPayoutAmount: number; attendanceCount: number };
+    grossProfitAmount: number;
+  }> {
+    const { monthStart, monthEndExclusive } = this.resolveMonthRange(month);
+    return this.getProvisionalGrossProfitInMonth(monthStart, monthEndExclusive);
   }
 
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•

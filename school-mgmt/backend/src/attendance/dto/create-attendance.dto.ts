@@ -31,8 +31,8 @@ class AttendanceItemDto {
   studentId!: string;
 
   @IsEnum(AttendanceStatus)
-  @IsNotEmpty()
-  status!: AttendanceStatus;
+  @IsOptional()
+  status?: AttendanceStatus | null;
 
   @IsString()
   @IsOptional()

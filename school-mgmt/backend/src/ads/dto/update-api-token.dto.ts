@@ -1,7 +1,11 @@
-import { IsString, IsEnum, IsOptional, IsDateString } from 'class-validator';
-import { ApiTokenStatus } from '../schemas/api-token.schema';
+import { IsString, IsEnum, IsOptional, IsDateString, IsMongoId } from 'class-validator';
+import { ApiTokenStatus, ApiTokenType } from '../schemas/api-token.schema';
 
 export class UpdateApiTokenDto {
+  @IsMongoId()
+  @IsOptional()
+  adAccountId?: string;
+
   @IsString()
   @IsOptional()
   accessToken?: string;
@@ -21,4 +25,16 @@ export class UpdateApiTokenDto {
   @IsString()
   @IsOptional()
   label?: string;
+
+  @IsEnum(ApiTokenType)
+  @IsOptional()
+  tokenType?: string;
+
+  @IsString()
+  @IsOptional()
+  businessId?: string;
+
+  @IsString()
+  @IsOptional()
+  businessName?: string;
 }

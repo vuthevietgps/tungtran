@@ -1968,7 +1968,7 @@ export class SessionsService {
     let attendanceQuery = this.attendanceModel
       .find({
         sessionId: { $in: candidateIds },
-        status: { $in: [AttendanceStatus.PRESENT, AttendanceStatus.LATE] },
+        status: AttendanceStatus.PRESENT,
       })
       .select('sessionId checkedBy');
     if (mongoSession) attendanceQuery = attendanceQuery.session(mongoSession);

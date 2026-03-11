@@ -1,44 +1,4 @@
-import { IsInt, IsNotEmpty, IsOptional, IsString, Matches, Max, Min, IsMongoId, IsArray, ValidateNested } from 'class-validator';
-import { Type } from 'class-transformer';
-
-export class PaymentFrameDto {
-  @IsInt()
-  @Min(1)
-  @Max(10)
-  frameIndex!: number; // 1..10
-
-  @IsOptional()
-  @IsString()
-  invoiceCode?: string;
-
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  sessionsRegistered?: number;
-
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  pricePerSession?: number;
-
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  amountCollected?: number;
-
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  sessionsCollected?: number;
-
-  @IsOptional()
-  @IsString()
-  invoiceImage?: string;
-
-  @IsOptional()
-  @IsString()
-  confirmStatus?: 'PENDING' | 'CONFIRMED' | 'REJECTED';
-}
+import { IsInt, IsNotEmpty, IsOptional, IsString, Matches, Max, Min, IsMongoId } from 'class-validator';
 
 export class CreateStudentDto {
   @IsString()
@@ -98,12 +58,5 @@ export class CreateStudentDto {
   @IsString()
   saleName?: string;
 
-  // approvalStatus and approvedBy removed — system-managed only via approve() endpoint
-
-  @IsOptional()
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => PaymentFrameDto)
-  payments?: PaymentFrameDto[];
-
+  // approvalStatus and approvedBy are system-managed via approve() endpoint
 }

@@ -12,6 +12,11 @@ export interface AdAccountItem {
   platformAccountId: string;
   status: string;
   monthlyBudget?: number;
+  currency?: string;
+  businessId?: string;
+  businessName?: string;
+  syncSource?: string;
+  lastSyncedAt?: string;
   notes?: string;
   createdByName?: string;
   createdAt: string;
@@ -39,14 +44,18 @@ export interface AdGroupItem {
 
 export interface ApiTokenItem {
   _id: string;
-  adAccountId: string;
+  adAccountId?: string;
   adAccountName?: string;
   platform: string;
+  tokenType?: string;
+  businessId?: string;
+  businessName?: string;
   accessToken: string;
   refreshToken?: string;
   expiresAt?: string;
   status: string;
   lastUsedAt?: string;
+  lastSyncedAt?: string;
   label?: string;
   createdAt: string;
 }
@@ -257,9 +266,11 @@ export class AdsService {
 
   // â”€â”€â”€ API Tokens â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-  async listTokens(accountId: string): Promise<ApiTokenItem[]> {
+  async listTokens(accountId?: string): Promise<ApiTokenItem[]> {
+    const params = accountId ? new HttpParams().set('accountId', accountId) : undefined;
     return this.http.get<ApiTokenItem[]>(
-      `${this.apiUrl}/tokens/${accountId}`,
+      `${this.apiUrl}/tokens`,
+      { params },
     ).toPromise() as Promise<ApiTokenItem[]>;
   }
 
@@ -287,6 +298,21 @@ export class AdsService {
       return { ok: true };
     } catch (err: any) {
       return { ok: false, message: err.error?.message || 'XÃ³a tháº¥t báº¡i' };
+    }
+  }
+
+  async syncFacebookBusinessToken(tokenId: string, date?: string): Promise<{ ok: boolean; message?: string; data?: any }> {
+    try {
+      let params = new HttpParams();
+      if (date) params = params.set('date', date);
+      const result = await this.http.post<any>(
+        `${this.apiUrl}/tokens/${tokenId}/sync-facebook-business`,
+        {},
+        { params },
+      ).toPromise();
+      return { ok: true, data: result };
+    } catch (err: any) {
+      return { ok: false, message: err.error?.message || 'Đồng bộ BM Facebook thất bại' };
     }
   }
 

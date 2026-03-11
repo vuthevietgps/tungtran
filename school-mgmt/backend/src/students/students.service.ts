@@ -72,7 +72,6 @@ export class StudentsService {
       parentPhone: student.parentPhone,
       faceImage: student.faceImage,
       approvalStatus: (student as any).approvalStatus || 'PENDING',
-      payments: (student as any).payments || [],
       productPackage: productPackage && typeof productPackage === 'object'
         ? {
             _id: productPackage._id?.toString?.() ?? productPackage.toString(),
@@ -152,7 +151,7 @@ export class StudentsService {
     const studentIds = students.map(s => new Types.ObjectId((s as any)._id));
     const attendanceMatch: any = {
       studentId: { $in: studentIds },
-      status: { $in: ['PRESENT', 'LATE'] },
+      status: 'PRESENT',
     };
     if (classId && Types.ObjectId.isValid(classId)) {
       attendanceMatch.classId = new Types.ObjectId(classId);
@@ -204,7 +203,7 @@ export class StudentsService {
   /**
    * Comprehensive report: each row = (student + classCode) pair.
    * Columns = student info + class info + numbered session columns (Buổi 1, 2, ...).
-   * Each session cell: { date, status, attendedAt, duration, teacherCode }.
+   * Each session cell: { date, status, attendedAt, duration, teacherDisplay }.
    */
   async getComprehensiveReport(classId?: string, searchTerm?: string, actor?: JwtPayload) {
     const toSafeNumber = (value: unknown, fallback = 0): number => {
@@ -212,18 +211,25 @@ export class StudentsService {
       return Number.isFinite(num) ? num : fallback;
     };
 
-    const resolveDataStatus = (student: any): string => {
-      const approvalStatus = student?.approvalStatus || 'PENDING';
-      if (approvalStatus !== 'APPROVED') return approvalStatus;
+    const getPairKey = (studentId: any, classId: any): string =>
+      `${studentId?.toString?.() || ''}_${classId?.toString?.() || ''}`;
 
-      const payments = Array.isArray(student?.payments) ? student.payments : [];
-      if (payments.length === 0) return 'NO_PAYMENT';
-      if (payments.some((p: any) => p?.confirmStatus === 'REJECTED')) return 'PAYMENT_REJECTED';
-      if (payments.some((p: any) => (p?.confirmStatus || 'PENDING') === 'PENDING')) return 'PAYMENT_PENDING';
-      return 'OK';
+    const resolveDataStatus = (cls: any, pairInvoices: any[]): string => {
+      const latestInvoice = pairInvoices[0];
+      if (latestInvoice?.status === InvoiceStatus.CANCELLED) {
+        return 'HOAN_HOC_PHI';
+      }
+
+      const classStatus = cls?.status || 'ACTIVE';
+      const totalSessions = toSafeNumber(cls?.totalSessions, 0);
+      const sessionsCompleted = toSafeNumber(cls?.sessionsCompleted, 0);
+
+      if (classStatus === 'INACTIVE') return 'BAO_LUU';
+      if (classStatus === 'COMPLETED' || classStatus === 'CANCELLED') return 'KET_THUC';
+      if (totalSessions > 0 && sessionsCompleted >= totalSessions) return 'KET_THUC';
+      return 'DANG_HOC';
     };
 
-    // 1. Build class filter
     const classFilter: any = {};
     if (classId) {
       if (!Types.ObjectId.isValid(classId)) {
@@ -231,7 +237,6 @@ export class StudentsService {
       }
       classFilter._id = new Types.ObjectId(classId);
     }
-    // SALE can only see their own classes
     if (actor?.role === Role.SALE) {
       const actorId = this.getActorId(actor);
       if (actorId) {
@@ -239,7 +244,6 @@ export class StudentsService {
       }
     }
 
-    // 2. Get classes with populated teacher + students
     const classes = await this.classroomModel
       .find(classFilter)
       .populate('teacher', 'userCode fullName email')
@@ -247,7 +251,7 @@ export class StudentsService {
       .populate('invoiceId', 'invoiceNumber')
       .populate(
         'students',
-        'studentCode fullName age grade dateOfBirth studentBirthMonth parentBirthMonth parentName parentPhone faceImage productPackage saleName approvalStatus payments',
+        'studentCode fullName age grade dateOfBirth studentBirthMonth parentBirthMonth parentName parentPhone faceImage productPackage saleId saleName approvalStatus payments',
       )
       .lean();
 
@@ -255,7 +259,6 @@ export class StudentsService {
       return { maxSessions: 0, rows: [] };
     }
 
-    // 3. Build (student, class) pairs
     type Pair = { student: any; cls: any };
     const pairs: Pair[] = [];
     const normalizedTerm = searchTerm?.trim().toLowerCase() || '';
@@ -280,7 +283,6 @@ export class StudentsService {
       return { maxSessions: 0, rows: [] };
     }
 
-    // 4. Get all attendance records for the queried classes, populate teacher
     const classIds = classes.map((c) => (c as any)._id);
     const classById = new Map(classes.map((c) => [(c as any)._id.toString(), c]));
     const uniqueStudentIds = Array.from(
@@ -296,47 +298,82 @@ export class StudentsService {
       .sort({ date: 1 })
       .lean();
 
-    // 5. Build lookup: key = `studentId_classId` -> ordered array of session info
-    const attendanceLookup = new Map<string, any[]>();
-
+    const rawAttendanceLookup = new Map<string, any[]>();
     for (const att of attendances) {
-      const key = `${att.studentId?.toString()}_${att.classId?.toString()}`;
-      if (!attendanceLookup.has(key)) {
-        attendanceLookup.set(key, []);
+      const key = getPairKey(att.studentId, att.classId);
+      if (!rawAttendanceLookup.has(key)) {
+        rawAttendanceLookup.set(key, []);
       }
-      const cls = classById.get(att.classId?.toString() || '');
-      const attendanceTeacher = att.teacherId as any;
-      const teacherCode =
-        attendanceTeacher?.userCode ||
-        attendanceTeacher?.email ||
-        attendanceTeacher?.fullName ||
-        '';
+      rawAttendanceLookup.get(key)!.push(att);
+    }
 
-      attendanceLookup.get(key)!.push({
-        date: att.date ? new Date(att.date).toISOString().split('T')[0] : null,
-        status: att.status || null,
-        attendedAt: att.attendedAt || null,
-        duration: (cls as any)?.sessionDuration || (cls as any)?.baseDuration || 0,
-        teacherCode,
-      });
+    const attendanceLookup = new Map<string, any[]>();
+    for (const [key, items] of rawAttendanceLookup.entries()) {
+      const sessions: any[] = [];
+      const overflowSessions: any[] = [];
+
+      for (const att of items) {
+        const cls = classById.get(att.classId?.toString() || '');
+        const attendanceTeacher = att.teacherId as any;
+        const teacherCode = attendanceTeacher?.userCode || '';
+        const teacherName = attendanceTeacher?.fullName || '';
+        const teacherDisplay =
+          [teacherCode, teacherName].filter(Boolean).join(' - ') ||
+          attendanceTeacher?.email ||
+          teacherName ||
+          teacherCode ||
+          '';
+        const sessionInfo = {
+          date: att.date ? new Date(att.date).toISOString().split('T')[0] : null,
+          status: att.status || null,
+          attendedAt: att.attendedAt || null,
+          duration: toSafeNumber(
+            att.sessionDuration,
+            toSafeNumber((cls as any)?.sessionDuration, toSafeNumber((cls as any)?.baseDuration, 0)),
+          ),
+          teacherCode: teacherCode || attendanceTeacher?.email || teacherName || '',
+          teacherName,
+          teacherDisplay,
+          sessionIndex: toSafeNumber(att.sessionIndex, 0) || null,
+        };
+        const explicitIndex = toSafeNumber(att.sessionIndex, 0);
+
+        if (explicitIndex > 0) {
+          sessions[explicitIndex - 1] = sessionInfo;
+          continue;
+        }
+
+        overflowSessions.push(sessionInfo);
+      }
+
+      let nextIndex = 0;
+      for (const sessionInfo of overflowSessions) {
+        while (sessions[nextIndex]) {
+          nextIndex += 1;
+        }
+        sessions[nextIndex] = sessionInfo;
+        nextIndex += 1;
+      }
+
+      attendanceLookup.set(key, sessions);
     }
 
     const invoices = await this.invoiceModel
       .find({
         classId: { $in: classIds },
         studentId: { $in: uniqueStudentIds },
-        status: { $nin: [InvoiceStatus.CANCELLED, InvoiceStatus.REJECTED] },
       })
-      .select('invoiceNumber classId studentId createdAt')
+      .select('invoiceNumber classId studentId status createdAt')
       .sort({ createdAt: -1 })
       .lean();
 
-    const invoiceByPair = new Map<string, string>();
+    const invoicesByPair = new Map<string, any[]>();
     for (const inv of invoices) {
-      const key = `${(inv as any).studentId?.toString()}_${(inv as any).classId?.toString()}`;
-      if (!invoiceByPair.has(key)) {
-        invoiceByPair.set(key, (inv as any).invoiceNumber || '');
+      const key = getPairKey((inv as any).studentId, (inv as any).classId);
+      if (!invoicesByPair.has(key)) {
+        invoicesByPair.set(key, []);
       }
+      invoicesByPair.get(key)!.push(inv);
     }
 
     const invoiceByClass = new Map<string, string>();
@@ -347,18 +384,17 @@ export class StudentsService {
       );
     }
 
-    // 6. Find max session count across all pairs
     let maxSessions = 0;
-    for (const sessions of attendanceLookup.values()) {
-      maxSessions = Math.max(maxSessions, sessions.length);
-    }
-
-    // 7. Build rows
     const rows = pairs.map(({ student, cls }) => {
-      const key = `${student._id?.toString()}_${(cls as any)._id?.toString()}`;
+      const key = getPairKey(student._id, (cls as any)._id);
       const sessions = attendanceLookup.get(key) || [];
+      const pairInvoices = invoicesByPair.get(key) || [];
+      const activeInvoice = pairInvoices.find(
+        (invoice) => ![InvoiceStatus.CANCELLED, InvoiceStatus.REJECTED].includes(invoice?.status),
+      );
+      const latestInvoice = pairInvoices[0];
 
-      const attendedCount = sessions.filter((s) => s.status === 'PRESENT' || s.status === 'LATE').length;
+      const attendedCount = sessions.filter((s) => s.status === 'PRESENT').length;
       const absentCount = sessions.filter((s) => s.status === 'ABSENT').length;
 
       const classMode = (cls as any).classMode || 'ONLINE';
@@ -378,6 +414,10 @@ export class StudentsService {
       const classTeacherCode = classTeacher?.userCode || classTeacher?.email || '';
       const classTeacherName = classTeacher?.fullName || '';
       const teacherCodeAndName = [classTeacherCode, classTeacherName].filter(Boolean).join(' - ');
+      const totalSessions = toSafeNumber((cls as any).totalSessions, 0);
+      const sessionsCompleted = toSafeNumber((cls as any).sessionsCompleted, 0);
+
+      maxSessions = Math.max(maxSessions, sessions.length, totalSessions);
 
       return {
         studentId: student._id?.toString(),
@@ -402,15 +442,20 @@ export class StudentsService {
         classMode,
         teacherSalary,
         teacherSalaryType,
-        invoiceNumber: invoiceByPair.get(key) || invoiceByClass.get((cls as any)._id?.toString()) || '',
+        invoiceNumber:
+          activeInvoice?.invoiceNumber ||
+          latestInvoice?.invoiceNumber ||
+          invoiceByClass.get((cls as any)._id?.toString()) ||
+          '',
         pricePerSession: cls.pricePerSession || 0,
-        totalSessions: cls.totalSessions || 0,
-        sessionsCompleted: cls.sessionsCompleted || 0,
+        totalSessions,
+        sessionsCompleted,
+        saleId: student.saleId?.toString?.() || ((cls as any).sale as any)?._id?.toString?.() || '',
         saleName: student.saleName || ((cls as any).sale as any)?.fullName || '',
-        dataStatus: resolveDataStatus(student),
+        dataStatus: resolveDataStatus(cls, pairInvoices),
         attendedCount,
         absentCount,
-        sessions, // array of { date, status, attendedAt, duration, teacherCode }
+        sessions,
       };
     });
 
@@ -418,6 +463,7 @@ export class StudentsService {
   }
 
   async create(createStudentDto: any, actor?: JwtPayload) {
+    delete createStudentDto.payments;
     await this.validateParentUser(createStudentDto.parentUserId);
 
     // SALE ownership is always bound to current actor
@@ -442,6 +488,8 @@ export class StudentsService {
     if (updateStudentDto.parentUserId !== undefined) {
       await this.validateParentUser(updateStudentDto.parentUserId);
     }
+
+    delete updateStudentDto.payments;
 
     if (actor?.role === Role.SALE) {
       const actorId = this.getActorId(actor);

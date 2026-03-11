@@ -40,10 +40,20 @@ import { MessagesModule } from './messages/messages.module';
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     ScheduleModule.forRoot(),
-    ThrottlerModule.forRoot([{
-      ttl: 60000,    // 1 phút
-      limit: 100,    // 100 requests/phút/IP (global, generous)
-    }]),
+    ThrottlerModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: async (config: ConfigService) => {
+        const ttl = Number(config.get<string>('THROTTLE_TTL_MS', '60000'));
+        const limit = Number(config.get<string>('THROTTLE_LIMIT', '100'));
+        return [
+          {
+            ttl: Number.isFinite(ttl) && ttl > 0 ? ttl : 60000,
+            limit: Number.isFinite(limit) && limit > 0 ? limit : 100,
+          },
+        ];
+      },
+    }),
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -94,3 +104,4 @@ export class AppModule implements NestModule {
       .forRoutes('*');
   }
 }
+

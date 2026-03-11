@@ -1,0 +1,427 @@
+<header class="page-header">
+  <div>
+    <h2>Quan ly quang cao</h2>
+    <p>Quan ly tai khoan ads, nhom quang cao, API token va chi phi theo ngay.</p>
+  </div>
+  <p class="error-banner" *ngIf="error()">{{ error() }}</p>
+</header>
+
+<nav class="tabs">
+  <button [class.active]="activeTab === 'accounts'" (click)="switchTab('accounts')">Tai khoan QC</button>
+  <button [class.active]="activeTab === 'groups'" (click)="switchTab('groups')">Nhom QC</button>
+  <button *ngIf="canManageTokens()" [class.active]="activeTab === 'tokens'" (click)="switchTab('tokens')">API Token</button>
+  <button [class.active]="activeTab === 'costs'" (click)="switchTab('costs')">Chi phi Ads</button>
+</nav>
+
+<section *ngIf="activeTab === 'accounts'">
+  <div class="toolbar">
+    <div class="filters">
+      <input placeholder="Tim ten, ma, account id..." [(ngModel)]="accKeyword" (ngModelChange)="loadAccounts()" />
+      <select [(ngModel)]="accFilterPlatform" (ngModelChange)="loadAccounts()">
+        <option value="">Tat ca nen tang</option>
+        <option value="FACEBOOK">Facebook</option>
+        <option value="GOOGLE">Google</option>
+        <option value="TIKTOK">TikTok</option>
+      </select>
+      <select [(ngModel)]="accFilterStatus" (ngModelChange)="loadAccounts()">
+        <option value="">Tat ca trang thai</option>
+        <option value="ACTIVE">Hoat dong</option>
+        <option value="PAUSED">Tam dung</option>
+        <option value="DISABLED">Vo hieu</option>
+      </select>
+    </div>
+    <button *ngIf="canManageAccounts()" class="primary" (click)="openAccountModal()">+ Them tai khoan</button>
+  </div>
+
+  <table class="data-table" *ngIf="accounts().length; else emptyAccounts">
+    <thead>
+      <tr>
+        <th>Ma</th>
+        <th>Ten tai khoan</th>
+        <th>Nen tang</th>
+        <th>Platform ID</th>
+        <th>BM</th>
+        <th>Ngan sach thang</th>
+        <th>Nguon</th>
+        <th>Dong bo cuoi</th>
+        <th>Trang thai</th>
+        <th>Hanh dong</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr *ngFor="let account of accounts()">
+        <td><strong>{{ account.accountCode }}</strong></td>
+        <td>{{ account.name }}</td>
+        <td><span class="badge platform">{{ platformLabel(account.platform) }}</span></td>
+        <td class="mono">{{ account.platformAccountId }}</td>
+        <td>{{ account.businessName || account.businessId || '-' }}</td>
+        <td>{{ currencyAmount(account.monthlyBudget) }}</td>
+        <td>{{ syncSourceLabel(account.syncSource) }}</td>
+        <td>{{ account.lastSyncedAt ? (account.lastSyncedAt | date:'dd/MM/yyyy HH:mm') : '-' }}</td>
+        <td><span class="badge status" [style.background]="statusColor(account.status)">{{ accountStatusLabel(account.status) }}</span></td>
+        <td class="actions">
+          <button *ngIf="canManageAccounts()" class="link-btn" (click)="editAccount(account)">Sua</button>
+          <button *ngIf="canManageAccounts()" class="link-btn danger" (click)="removeAccount(account)">Xoa</button>
+          <span *ngIf="!canManageAccounts()">-</span>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <ng-template #emptyAccounts>
+    <div class="empty-state">Chua co tai khoan quang cao nao.</div>
+  </ng-template>
+</section>
+
+<section *ngIf="activeTab === 'groups'">
+  <div class="toolbar">
+    <div class="filters">
+      <input placeholder="Tim ten, ma, adset id..." [(ngModel)]="grpKeyword" (ngModelChange)="loadGroups()" />
+      <select [(ngModel)]="grpFilterPlatform" (ngModelChange)="loadGroups()">
+        <option value="">Tat ca nen tang</option>
+        <option value="FACEBOOK">Facebook</option>
+        <option value="GOOGLE">Google</option>
+        <option value="TIKTOK">TikTok</option>
+      </select>
+      <select [(ngModel)]="grpFilterStatus" (ngModelChange)="loadGroups()">
+        <option value="">Tat ca trang thai</option>
+        <option value="ACTIVE">Hoat dong</option>
+        <option value="PAUSED">Tam dung</option>
+        <option value="ARCHIVED">Luu tru</option>
+      </select>
+      <select [(ngModel)]="grpFilterAccount" (ngModelChange)="loadGroups()">
+        <option value="">Tat ca tai khoan</option>
+        <option *ngFor="let account of allAccounts()" [value]="account._id">{{ account.name }}</option>
+      </select>
+    </div>
+    <button *ngIf="canManageGroups()" class="primary" (click)="openGroupModal()">+ Them nhom</button>
+  </div>
+
+  <table class="data-table" *ngIf="groups().length; else emptyGroups">
+    <thead>
+      <tr>
+        <th>Ma</th>
+        <th>Ten nhom</th>
+        <th>Tai khoan</th>
+        <th>Nen tang</th>
+        <th>Adset ID</th>
+        <th>Ngan sach/ngay</th>
+        <th>Trang thai</th>
+        <th>Hanh dong</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr *ngFor="let group of groups()">
+        <td><strong>{{ group.groupCode }}</strong></td>
+        <td>{{ group.name }}</td>
+        <td>{{ group.adAccountName || '-' }}</td>
+        <td><span class="badge platform">{{ platformLabel(group.platform) }}</span></td>
+        <td class="mono">{{ group.platformCampaignId }}</td>
+        <td>{{ currencyAmount(group.dailyBudget) }}</td>
+        <td><span class="badge status" [style.background]="statusColor(group.status)">{{ groupStatusLabel(group.status) }}</span></td>
+        <td class="actions">
+          <button *ngIf="canManageGroups()" class="link-btn" (click)="editGroup(group)">Sua</button>
+          <button *ngIf="canDeleteGroups()" class="link-btn danger" (click)="removeGroup(group)">Xoa</button>
+          <span *ngIf="!canManageGroups()">-</span>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <ng-template #emptyGroups>
+    <div class="empty-state">Chua co nhom quang cao nao.</div>
+  </ng-template>
+</section>
+
+<section *ngIf="activeTab === 'tokens' && canManageTokens()">
+  <div class="token-intro">
+    <strong>Luong BM Facebook:</strong>
+    Nhap user system token vao day, bam dong bo de lay ad accounts, fanpages, page access token va ads insight theo ngay.
+    Sau khi dong bo xong, vao <strong>Chatbot &gt; Cai dat Chatbot</strong> de sua mo ta fanpage, gan OpenAI token va bat AI auto-reply.
+  </div>
+
+  <div class="toolbar">
+    <div class="filters">
+      <select [(ngModel)]="tokenFilterType" (ngModelChange)="loadTokens()">
+        <option value="">Tat ca loai token</option>
+        <option value="FACEBOOK_SYSTEM_USER">Facebook BM / System User</option>
+        <option value="ACCOUNT">Token tai khoan quang cao</option>
+      </select>
+      <select [(ngModel)]="tokenFilterPlatform" (ngModelChange)="loadTokens()">
+        <option value="">Tat ca nen tang</option>
+        <option value="FACEBOOK">Facebook</option>
+        <option value="GOOGLE">Google</option>
+        <option value="TIKTOK">TikTok</option>
+      </select>
+    </div>
+    <button class="primary" (click)="openTokenModal()">+ Them token</button>
+  </div>
+
+  <table class="data-table" *ngIf="tokens().length; else emptyTokens">
+    <thead>
+      <tr>
+        <th>Loai</th>
+        <th>Nen tang</th>
+        <th>Muc tieu</th>
+        <th>Label</th>
+        <th>Access token</th>
+        <th>Trang thai</th>
+        <th>Het han</th>
+        <th>Dong bo cuoi</th>
+        <th>Lan dung cuoi</th>
+        <th>Hanh dong</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr *ngFor="let token of tokens()">
+        <td>{{ tokenTypeLabel(token.tokenType) }}</td>
+        <td><span class="badge platform">{{ platformLabel(token.platform) }}</span></td>
+        <td>{{ tokenTargetLabel(token) }}</td>
+        <td>{{ token.label || '-' }}</td>
+        <td class="mono">{{ token.accessToken }}</td>
+        <td><span class="badge status" [style.background]="statusColor(token.status)">{{ tokenStatusLabel(token.status) }}</span></td>
+        <td>{{ token.expiresAt ? (token.expiresAt | date:'dd/MM/yyyy') : '-' }}</td>
+        <td>{{ token.lastSyncedAt ? (token.lastSyncedAt | date:'dd/MM/yyyy HH:mm') : '-' }}</td>
+        <td>{{ token.lastUsedAt ? (token.lastUsedAt | date:'dd/MM/yyyy HH:mm') : '-' }}</td>
+        <td class="actions">
+          <button class="link-btn success" [disabled]="syncing()" (click)="syncToken(token)">
+            {{ syncing() ? 'Dang dong bo...' : 'Dong bo' }}
+          </button>
+          <button class="link-btn" (click)="editToken(token)">Sua</button>
+          <button class="link-btn danger" (click)="removeToken(token)">Xoa</button>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <ng-template #emptyTokens>
+    <div class="empty-state">Chua co token nao.</div>
+  </ng-template>
+</section>
+
+<section *ngIf="activeTab === 'costs'">
+  <div class="toolbar">
+    <div class="filters">
+      <label>
+        Tu ngay
+        <input type="date" [(ngModel)]="costStartDate" (ngModelChange)="loadCosts()" />
+      </label>
+      <label>
+        Den ngay
+        <input type="date" [(ngModel)]="costEndDate" (ngModelChange)="loadCosts()" />
+      </label>
+      <select [(ngModel)]="costFilterPlatform" (ngModelChange)="loadCosts()">
+        <option value="">Tat ca nen tang</option>
+        <option value="FACEBOOK">Facebook</option>
+        <option value="GOOGLE">Google</option>
+        <option value="TIKTOK">TikTok</option>
+      </select>
+      <select [(ngModel)]="costFilterGroup" (ngModelChange)="loadCosts()">
+        <option value="">Tat ca nhom</option>
+        <option *ngFor="let group of allGroupsList()" [value]="group._id">{{ group.name }}</option>
+      </select>
+    </div>
+    <div class="stack-actions">
+      <button *ngIf="canManageCosts()" class="primary" (click)="openCostModal()">+ Nhap chi phi</button>
+      <button *ngIf="canTriggerSync()" class="success-btn" [disabled]="syncing()" (click)="triggerSync()">
+        {{ syncing() ? 'Dang dong bo...' : 'Dong bo toan bo' }}
+      </button>
+    </div>
+  </div>
+
+  <table class="data-table" *ngIf="costs().length; else emptyCosts">
+    <thead>
+      <tr>
+        <th>Ngay</th>
+        <th>Nhom QC</th>
+        <th>Nen tang</th>
+        <th>Chi phi</th>
+        <th>Impressions</th>
+        <th>Clicks</th>
+        <th>Conversions</th>
+        <th>Nguon</th>
+        <th>Hanh dong</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr *ngFor="let cost of costs()">
+        <td>{{ cost.date | date:'dd/MM/yyyy' }}</td>
+        <td>{{ cost.adGroupName || '-' }}</td>
+        <td><span class="badge platform">{{ platformLabel(cost.platform) }}</span></td>
+        <td>{{ currencyAmount(cost.spend) }}</td>
+        <td>{{ cost.impressions | number }}</td>
+        <td>{{ cost.clicks | number }}</td>
+        <td>{{ cost.conversions | number }}</td>
+        <td>{{ cost.source }}</td>
+        <td class="actions">
+          <button *ngIf="canManageCosts()" class="link-btn danger" (click)="removeCost(cost)">Xoa</button>
+          <span *ngIf="!canManageCosts()">-</span>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <ng-template #emptyCosts>
+    <div class="empty-state">Chua co du lieu chi phi.</div>
+  </ng-template>
+</section>
+
+<div class="modal-backdrop" *ngIf="showAccountModal()">
+  <div class="modal">
+    <h3>{{ editingAccount ? 'Sua tai khoan quang cao' : 'Them tai khoan quang cao' }}</h3>
+    <label>Ten tai khoan <input [(ngModel)]="accForm.name" /></label>
+    <label>
+      Nen tang
+      <select [(ngModel)]="accForm.platform" [disabled]="!!editingAccount">
+        <option value="">-- Chon --</option>
+        <option value="FACEBOOK">Facebook</option>
+        <option value="GOOGLE">Google</option>
+        <option value="TIKTOK">TikTok</option>
+      </select>
+    </label>
+    <label>Platform account ID <input [(ngModel)]="accForm.platformAccountId" /></label>
+    <label>Ngan sach thang <input type="number" [(ngModel)]="accForm.monthlyBudget" /></label>
+    <label *ngIf="editingAccount">
+      Trang thai
+      <select [(ngModel)]="accForm.status">
+        <option value="ACTIVE">Hoat dong</option>
+        <option value="PAUSED">Tam dung</option>
+        <option value="DISABLED">Vo hieu</option>
+      </select>
+    </label>
+    <label>Ghi chu <textarea rows="3" [(ngModel)]="accForm.notes"></textarea></label>
+    <div class="modal-actions">
+      <button class="secondary" (click)="showAccountModal.set(false)">Huy</button>
+      <button class="primary" (click)="submitAccount()">Luu</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" *ngIf="showGroupModal()">
+  <div class="modal">
+    <h3>{{ editingGroup ? 'Sua nhom quang cao' : 'Them nhom quang cao' }}</h3>
+    <label>Ten nhom <input [(ngModel)]="grpForm.name" /></label>
+    <label>
+      Tai khoan quang cao
+      <select [(ngModel)]="grpForm.adAccountId" [disabled]="!!editingGroup" (ngModelChange)="onGroupAccountChange()">
+        <option value="">-- Chon --</option>
+        <option *ngFor="let account of allAccounts()" [value]="account._id">{{ account.name }} ({{ platformLabel(account.platform) }})</option>
+      </select>
+    </label>
+    <label>Adset ID / Campaign ID <input [(ngModel)]="grpForm.platformCampaignId" /></label>
+    <label>Ngan sach/ngay <input type="number" [(ngModel)]="grpForm.dailyBudget" /></label>
+    <label>Ngay bat dau <input type="date" [(ngModel)]="grpForm.startDate" /></label>
+    <label>Ngay ket thuc <input type="date" [(ngModel)]="grpForm.endDate" /></label>
+    <label>Doi tuong muc tieu <input [(ngModel)]="grpForm.targetAudience" /></label>
+    <label *ngIf="editingGroup">
+      Trang thai
+      <select [(ngModel)]="grpForm.status">
+        <option value="ACTIVE">Hoat dong</option>
+        <option value="PAUSED">Tam dung</option>
+        <option value="ARCHIVED">Luu tru</option>
+      </select>
+    </label>
+    <label>Ghi chu <textarea rows="3" [(ngModel)]="grpForm.notes"></textarea></label>
+    <div class="modal-actions">
+      <button class="secondary" (click)="showGroupModal.set(false)">Huy</button>
+      <button class="primary" (click)="submitGroup()">Luu</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" *ngIf="showTokenModal()">
+  <div class="modal">
+    <h3>{{ editingToken ? 'Sua API token' : 'Them API token' }}</h3>
+    <label>
+      Loai token
+      <select [(ngModel)]="tokenForm.tokenType" [disabled]="!!editingToken" (ngModelChange)="onTokenTypeChange()">
+        <option value="FACEBOOK_SYSTEM_USER">Facebook BM / System User</option>
+        <option value="ACCOUNT">Token tai khoan quang cao</option>
+      </select>
+    </label>
+    <label *ngIf="!isBusinessTokenForm()">
+      Tai khoan quang cao
+      <select [(ngModel)]="tokenForm.adAccountId" [disabled]="!!editingToken" (ngModelChange)="onTokenAccountChange()">
+        <option value="">-- Chon --</option>
+        <option *ngFor="let account of allAccounts()" [value]="account._id">{{ account.name }} ({{ platformLabel(account.platform) }})</option>
+      </select>
+    </label>
+    <label *ngIf="isBusinessTokenForm()">Business ID <input [(ngModel)]="tokenForm.businessId" placeholder="Co the de trong neu token truy cap nhieu BM" /></label>
+    <label *ngIf="isBusinessTokenForm()">Business name <input [(ngModel)]="tokenForm.businessName" placeholder="Ten Business Manager" /></label>
+    <label>Nen tang <input [value]="platformLabel(tokenForm.platform)" disabled /></label>
+    <label>Label <input [(ngModel)]="tokenForm.label" placeholder="VD: BM chinh" /></label>
+    <label>Access token <input type="password" [(ngModel)]="tokenForm.accessToken" /></label>
+    <label>Refresh token <input type="password" [(ngModel)]="tokenForm.refreshToken" /></label>
+    <label>Ngay het han <input type="date" [(ngModel)]="tokenForm.expiresAt" /></label>
+    <label *ngIf="editingToken">
+      Trang thai
+      <select [(ngModel)]="tokenForm.status">
+        <option value="ACTIVE">Hoat dong</option>
+        <option value="EXPIRED">Het han</option>
+        <option value="REVOKED">Da thu hoi</option>
+      </select>
+    </label>
+    <div class="helper-box" *ngIf="isBusinessTokenForm()">
+      Sau khi luu token BM, bam <strong>Dong bo</strong> o danh sach de keo:
+      danh sach ad account, fanpage, page access token va chi phi ads theo ad set tung ngay.
+    </div>
+    <div class="modal-actions">
+      <button class="secondary" (click)="showTokenModal.set(false)">Huy</button>
+      <button class="primary" (click)="submitToken()">Luu</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" *ngIf="showCostModal()">
+  <div class="modal">
+    <h3>Nhap chi phi thu cong</h3>
+    <label>
+      Nhom quang cao
+      <select [(ngModel)]="costForm.adGroupId" (ngModelChange)="onCostGroupChange()">
+        <option value="">-- Chon --</option>
+        <option *ngFor="let group of allGroupsList()" [value]="group._id">{{ group.name }} ({{ platformLabel(group.platform) }})</option>
+      </select>
+    </label>
+    <label>Ngay <input type="date" [(ngModel)]="costForm.date" /></label>
+    <label>Chi phi <input type="number" [(ngModel)]="costForm.spend" /></label>
+    <label>Impressions <input type="number" [(ngModel)]="costForm.impressions" /></label>
+    <label>Clicks <input type="number" [(ngModel)]="costForm.clicks" /></label>
+    <label>Conversions <input type="number" [(ngModel)]="costForm.conversions" /></label>
+    <div class="modal-actions">
+      <button class="secondary" (click)="showCostModal.set(false)">Huy</button>
+      <button class="primary" (click)="submitCost()">Luu</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" *ngIf="syncResult()">
+  <div class="modal">
+    <h3>Ket qua dong bo</h3>
+    <div class="summary-grid">
+      <div class="summary-card">
+        <span>Chi phi dong bo</span>
+        <strong>{{ syncCount('synced') }}</strong>
+      </div>
+      <div class="summary-card" *ngIf="syncCount('adAccountsSynced')">
+        <span>Tai khoan QC</span>
+        <strong>{{ syncCount('adAccountsSynced') }}</strong>
+      </div>
+      <div class="summary-card" *ngIf="syncCount('adGroupsSynced')">
+        <span>Nhom QC</span>
+        <strong>{{ syncCount('adGroupsSynced') }}</strong>
+      </div>
+      <div class="summary-card" *ngIf="syncCount('fanpagesSynced')">
+        <span>Fanpage</span>
+        <strong>{{ syncCount('fanpagesSynced') }}</strong>
+      </div>
+    </div>
+
+    <div *ngIf="syncErrors().length" class="error-list">
+      <strong>Loi / canh bao</strong>
+      <ul>
+        <li *ngFor="let item of syncErrors()">{{ item }}</li>
+      </ul>
+    </div>
+
+    <div class="modal-actions">
+      <button *ngIf="syncCount('fanpagesSynced')" class="secondary" (click)="openFanpageSettings()">Mo cai dat fanpage</button>
+      <button class="primary" (click)="closeSyncResult()">Dong</button>
+    </div>
+  </div>
+</div>

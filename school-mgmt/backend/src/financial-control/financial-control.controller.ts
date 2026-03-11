@@ -80,6 +80,11 @@ export class FinancialControlController {
     return this.service.getFinancialOverview(startDate, endDate);
   }
 
+  @Get('provisional-gross-profit')
+  getProvisionalGrossProfit(@Query('month') month?: string) {
+    return this.service.getProvisionalGrossProfit(month);
+  }
+
   // ─── Bank Accounts ─────────────────────────────────────────────
   @Get('bank-accounts')
   getBankAccounts() {

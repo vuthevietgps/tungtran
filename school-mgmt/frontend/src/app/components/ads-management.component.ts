@@ -1,7 +1,14 @@
-import { Component, signal, OnInit } from '@angular/core';
+import { Component, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { AdsService, AdAccountItem, AdGroupItem, ApiTokenItem, AdCostItem } from '../services/ads.service';
+import { Router } from '@angular/router';
+import {
+  AdAccountItem,
+  AdCostItem,
+  AdGroupItem,
+  AdsService,
+  ApiTokenItem,
+} from '../services/ads.service';
 import { AuthService } from '../services/auth.service';
 import { Role } from '../models/role.enum';
 
@@ -12,468 +19,52 @@ const PLATFORM_LABELS: Record<string, string> = {
 };
 
 const ACCOUNT_STATUS_LABELS: Record<string, string> = {
-  ACTIVE: 'Hoạt động',
-  PAUSED: 'Tạm dừng',
-  DISABLED: 'Vô hiệu',
+  ACTIVE: 'Hoat dong',
+  PAUSED: 'Tam dung',
+  DISABLED: 'Vo hieu',
 };
 
 const GROUP_STATUS_LABELS: Record<string, string> = {
-  ACTIVE: 'Hoạt động',
-  PAUSED: 'Tạm dừng',
-  ARCHIVED: 'Lưu trữ',
+  ACTIVE: 'Hoat dong',
+  PAUSED: 'Tam dung',
+  ARCHIVED: 'Luu tru',
 };
 
 const TOKEN_STATUS_LABELS: Record<string, string> = {
-  ACTIVE: 'Hoạt động',
-  EXPIRED: 'Hết hạn',
-  REVOKED: 'Đã thu hồi',
+  ACTIVE: 'Hoat dong',
+  EXPIRED: 'Het han',
+  REVOKED: 'Da thu hoi',
+};
+
+const TOKEN_TYPE_LABELS: Record<string, string> = {
+  ACCOUNT: 'Token tai khoan quang cao',
+  FACEBOOK_SYSTEM_USER: 'Facebook BM / System User',
+};
+
+const SYNC_SOURCE_LABELS: Record<string, string> = {
+  MANUAL: 'Nhap tay',
+  FACEBOOK_BM: 'Dong bo BM',
 };
 
 const STATUS_COLORS: Record<string, string> = {
-  ACTIVE: '#10b981',
-  PAUSED: '#f59e0b',
-  DISABLED: '#ef4444',
-  ARCHIVED: '#6b7280',
-  EXPIRED: '#ef4444',
-  REVOKED: '#ef4444',
+  ACTIVE: '#15803d',
+  PAUSED: '#b45309',
+  DISABLED: '#b91c1c',
+  ARCHIVED: '#475569',
+  EXPIRED: '#b91c1c',
+  REVOKED: '#7f1d1d',
 };
 
 @Component({
   selector: 'app-ads-management',
   standalone: true,
   imports: [CommonModule, FormsModule],
-  template: `
-  <header class="page-header">
-    <div>
-      <h2>Quản lý Quảng cáo</h2>
-      <p>Quản lý tài khoản, nhóm QC, token API và chi phí ads.</p>
-    </div>
-  </header>
-
-  <!-- Tabs -->
-  <div class="tabs">
-    <button [class.active]="activeTab === 'accounts'" (click)="switchTab('accounts')">Tài khoản QC</button>
-    <button [class.active]="activeTab === 'groups'" (click)="switchTab('groups')">Nhóm QC</button>
-    <button *ngIf="canManageTokens()" [class.active]="activeTab === 'tokens'" (click)="switchTab('tokens')">API Token</button>
-    <button [class.active]="activeTab === 'costs'" (click)="switchTab('costs')">Chi phí Ads</button>
-  </div>
-
-  <!-- ═══ Tab 1: Ad Accounts ═══ -->
-  <ng-container *ngIf="activeTab === 'accounts'">
-    <section class="tab-header">
-      <div class="filters">
-        <input placeholder="Tìm tên, mã..." [(ngModel)]="accKeyword" (ngModelChange)="loadAccounts()" />
-        <select [(ngModel)]="accFilterPlatform" (ngModelChange)="loadAccounts()">
-          <option value="">Tất cả nền tảng</option>
-          <option value="FACEBOOK">Facebook</option>
-          <option value="GOOGLE">Google</option>
-          <option value="TIKTOK">TikTok</option>
-        </select>
-        <select [(ngModel)]="accFilterStatus" (ngModelChange)="loadAccounts()">
-          <option value="">Tất cả trạng thái</option>
-          <option value="ACTIVE">Hoạt động</option>
-          <option value="PAUSED">Tạm dừng</option>
-          <option value="DISABLED">Vô hiệu</option>
-        </select>
-      </div>
-      <button *ngIf="canManageAccounts()" class="primary" (click)="openAccountModal()">+ Thêm tài khoản</button>
-    </section>
-
-    <table class="data" *ngIf="accounts().length; else emptyAccounts">
-      <thead>
-        <tr>
-          <th>Mã</th>
-          <th>Tên</th>
-          <th>Nền tảng</th>
-          <th>Account ID</th>
-          <th>NS tháng</th>
-          <th>Trạng thái</th>
-          <th>Hành động</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr *ngFor="let acc of accounts()">
-          <td><strong>{{acc.accountCode}}</strong></td>
-          <td>{{acc.name}}</td>
-          <td><span class="badge platform" [attr.data-platform]="acc.platform">{{platformLabel(acc.platform)}}</span></td>
-          <td class="mono">{{acc.platformAccountId}}</td>
-          <td class="amount">{{acc.monthlyBudget ? (acc.monthlyBudget | number) + 'đ' : '-'}}</td>
-          <td><span class="badge" [style.background]="statusColor(acc.status)">{{accountStatusLabel(acc.status)}}</span></td>
-          <td class="actions-cell">
-            <button *ngIf="canManageAccounts()" class="ghost" (click)="editAccount(acc)">Sửa</button>
-            <button *ngIf="canManageAccounts()" class="ghost danger" (click)="removeAccount(acc)">Xóa</button>
-            <span *ngIf="!canManageAccounts()">-</span>
-          </td>
-        </tr>
-      </tbody>
-    </table>
-    <ng-template #emptyAccounts><p class="empty">Chưa có tài khoản quảng cáo nào.</p></ng-template>
-  </ng-container>
-
-  <!-- ═══ Tab 2: Ad Groups ═══ -->
-  <ng-container *ngIf="activeTab === 'groups'">
-    <section class="tab-header">
-      <div class="filters">
-        <input placeholder="Tìm tên, mã..." [(ngModel)]="grpKeyword" (ngModelChange)="loadGroups()" />
-        <select [(ngModel)]="grpFilterPlatform" (ngModelChange)="loadGroups()">
-          <option value="">Tất cả nền tảng</option>
-          <option value="FACEBOOK">Facebook</option>
-          <option value="GOOGLE">Google</option>
-          <option value="TIKTOK">TikTok</option>
-        </select>
-        <select [(ngModel)]="grpFilterStatus" (ngModelChange)="loadGroups()">
-          <option value="">Tất cả trạng thái</option>
-          <option value="ACTIVE">Hoạt động</option>
-          <option value="PAUSED">Tạm dừng</option>
-          <option value="ARCHIVED">Lưu trữ</option>
-        </select>
-        <select [(ngModel)]="grpFilterAccount" (ngModelChange)="loadGroups()">
-          <option value="">Tất cả tài khoản</option>
-          <option *ngFor="let acc of allAccounts()" [value]="acc._id">{{acc.name}}</option>
-        </select>
-      </div>
-      <button *ngIf="canManageGroups()" class="primary" (click)="openGroupModal()">+ Thêm nhóm QC</button>
-    </section>
-
-    <table class="data" *ngIf="groups().length; else emptyGroups">
-      <thead>
-        <tr>
-          <th>Mã</th>
-          <th>Tên</th>
-          <th>Tài khoản</th>
-          <th>Nền tảng</th>
-          <th>Campaign ID</th>
-          <th>NS/ngày</th>
-          <th>Trạng thái</th>
-          <th>Hành động</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr *ngFor="let grp of groups()">
-          <td><strong>{{grp.groupCode}}</strong></td>
-          <td>{{grp.name}}</td>
-          <td>{{grp.adAccountName || '-'}}</td>
-          <td><span class="badge platform" [attr.data-platform]="grp.platform">{{platformLabel(grp.platform)}}</span></td>
-          <td class="mono">{{grp.platformCampaignId}}</td>
-          <td class="amount">{{grp.dailyBudget ? (grp.dailyBudget | number) + 'đ' : '-'}}</td>
-          <td><span class="badge" [style.background]="statusColor(grp.status)">{{groupStatusLabel(grp.status)}}</span></td>
-          <td class="actions-cell">
-            <button *ngIf="canManageGroups()" class="ghost" (click)="editGroup(grp)">Sửa</button>
-            <button *ngIf="canDeleteGroups()" class="ghost danger" (click)="removeGroup(grp)">Xóa</button>
-            <span *ngIf="!canManageGroups()">-</span>
-          </td>
-        </tr>
-      </tbody>
-    </table>
-    <ng-template #emptyGroups><p class="empty">Chưa có nhóm quảng cáo nào.</p></ng-template>
-  </ng-container>
-
-  <!-- ═══ Tab 3: API Tokens ═══ -->
-  <ng-container *ngIf="activeTab === 'tokens' && canManageTokens()">
-    <section class="tab-header">
-      <div class="filters">
-        <select [(ngModel)]="tokenAccountId" (ngModelChange)="loadTokens()">
-          <option value="">-- Chọn tài khoản --</option>
-          <option *ngFor="let acc of allAccounts()" [value]="acc._id">{{acc.name}} ({{platformLabel(acc.platform)}})</option>
-        </select>
-      </div>
-      <button class="primary" (click)="openTokenModal()" [disabled]="!tokenAccountId">+ Thêm Token</button>
-    </section>
-
-    <table class="data" *ngIf="tokens().length; else emptyTokens">
-      <thead>
-        <tr>
-          <th>Tài khoản</th>
-          <th>Nền tảng</th>
-          <th>Label</th>
-          <th>Access Token</th>
-          <th>Trạng thái</th>
-          <th>Hạn sử dụng</th>
-          <th>Lần dùng cuối</th>
-          <th>Hành động</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr *ngFor="let t of tokens()">
-          <td>{{t.adAccountName || '-'}}</td>
-          <td><span class="badge platform" [attr.data-platform]="t.platform">{{platformLabel(t.platform)}}</span></td>
-          <td>{{t.label || '-'}}</td>
-          <td class="mono">{{t.accessToken}}</td>
-          <td><span class="badge" [style.background]="statusColor(t.status)">{{tokenStatusLabel(t.status)}}</span></td>
-          <td>{{t.expiresAt ? (t.expiresAt | date:'dd/MM/yyyy') : '-'}}</td>
-          <td>{{t.lastUsedAt ? (t.lastUsedAt | date:'dd/MM/yyyy HH:mm') : '-'}}</td>
-          <td class="actions-cell">
-            <button class="ghost" (click)="editToken(t)">Sửa</button>
-            <button class="ghost danger" (click)="removeToken(t)">Xóa</button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
-    <ng-template #emptyTokens><p class="empty">{{tokenAccountId ? 'Chưa có token nào cho tài khoản này.' : 'Vui lòng chọn tài khoản.'}}</p></ng-template>
-  </ng-container>
-
-  <!-- ═══ Tab 4: Ad Costs ═══ -->
-  <ng-container *ngIf="activeTab === 'costs'">
-    <section class="tab-header">
-      <div class="filters">
-        <label>Từ <input type="date" [(ngModel)]="costStartDate" (ngModelChange)="loadCosts()" /></label>
-        <label>Đến <input type="date" [(ngModel)]="costEndDate" (ngModelChange)="loadCosts()" /></label>
-        <select [(ngModel)]="costFilterPlatform" (ngModelChange)="loadCosts()">
-          <option value="">Tất cả nền tảng</option>
-          <option value="FACEBOOK">Facebook</option>
-          <option value="GOOGLE">Google</option>
-          <option value="TIKTOK">TikTok</option>
-        </select>
-        <select [(ngModel)]="costFilterGroup" (ngModelChange)="loadCosts()">
-          <option value="">Tất cả nhóm QC</option>
-          <option *ngFor="let g of allGroupsList()" [value]="g._id">{{g.name}}</option>
-        </select>
-      </div>
-      <div class="btn-group">
-        <button *ngIf="canManageCosts()" class="primary" (click)="openCostModal()">+ Nhập chi phí</button>
-        <button *ngIf="canTriggerSync()" class="success" (click)="triggerSync()" [disabled]="syncing()">
-          {{syncing() ? 'Đang đồng bộ...' : 'Đồng bộ API'}}
-        </button>
-      </div>
-    </section>
-
-    <table class="data" *ngIf="costs().length; else emptyCosts">
-      <thead>
-        <tr>
-          <th>Ngày</th>
-          <th>Nhóm QC</th>
-          <th>Nền tảng</th>
-          <th>Chi phí</th>
-          <th>Impressions</th>
-          <th>Clicks</th>
-          <th>Conversions</th>
-          <th>Nguồn</th>
-          <th>Hành động</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr *ngFor="let c of costs()">
-          <td>{{c.date | date:'dd/MM/yyyy'}}</td>
-          <td>{{c.adGroupName || '-'}}</td>
-          <td><span class="badge platform" [attr.data-platform]="c.platform">{{platformLabel(c.platform)}}</span></td>
-          <td class="amount">{{c.spend | number}}đ</td>
-          <td>{{c.impressions | number}}</td>
-          <td>{{c.clicks | number}}</td>
-          <td>{{c.conversions | number}}</td>
-          <td><span class="badge source">{{c.source}}</span></td>
-          <td class="actions-cell">
-            <button *ngIf="canManageCosts()" class="ghost danger" (click)="removeCost(c)">Xóa</button>
-            <span *ngIf="!canManageCosts()">-</span>
-          </td>
-        </tr>
-      </tbody>
-    </table>
-    <ng-template #emptyCosts><p class="empty">Chưa có dữ liệu chi phí.</p></ng-template>
-  </ng-container>
-
-  <!-- ═══ Account Modal ═══ -->
-  <div class="modal-backdrop" *ngIf="showAccountModal()">
-    <div class="modal">
-      <h3>{{editingAccount ? 'Sửa tài khoản QC' : 'Thêm tài khoản QC'}}</h3>
-      <form (ngSubmit)="submitAccount()">
-        <label>Tên tài khoản <input name="name" [(ngModel)]="accForm.name" required /></label>
-        <label>Nền tảng
-          <select name="platform" [(ngModel)]="accForm.platform" required [disabled]="!!editingAccount">
-            <option value="">-- Chọn --</option>
-            <option value="FACEBOOK">Facebook</option>
-            <option value="GOOGLE">Google</option>
-            <option value="TIKTOK">TikTok</option>
-          </select>
-        </label>
-        <label>Platform Account ID <input name="platformAccountId" [(ngModel)]="accForm.platformAccountId" required /></label>
-        <label>Ngân sách tháng (VNĐ) <input name="monthlyBudget" type="number" [(ngModel)]="accForm.monthlyBudget" /></label>
-        <label *ngIf="editingAccount">Trạng thái
-          <select name="status" [(ngModel)]="accForm.status">
-            <option value="ACTIVE">Hoạt động</option>
-            <option value="PAUSED">Tạm dừng</option>
-            <option value="DISABLED">Vô hiệu</option>
-          </select>
-        </label>
-        <label>Ghi chú <textarea name="notes" [(ngModel)]="accForm.notes"></textarea></label>
-        <div class="form-actions">
-          <button type="submit" class="primary">Lưu</button>
-          <button type="button" (click)="showAccountModal.set(false)">Hủy</button>
-        </div>
-        <p class="error" *ngIf="error()">{{error()}}</p>
-      </form>
-    </div>
-  </div>
-
-  <!-- ═══ Group Modal ═══ -->
-  <div class="modal-backdrop" *ngIf="showGroupModal()">
-    <div class="modal">
-      <h3>{{editingGroup ? 'Sửa nhóm QC' : 'Thêm nhóm QC'}}</h3>
-      <form (ngSubmit)="submitGroup()">
-        <label>Tên nhóm <input name="name" [(ngModel)]="grpForm.name" required /></label>
-        <label>Tài khoản QC
-          <select name="adAccountId" [(ngModel)]="grpForm.adAccountId" required [disabled]="!!editingGroup"
-                  (ngModelChange)="onGroupAccountChange()">
-            <option value="">-- Chọn --</option>
-            <option *ngFor="let acc of allAccounts()" [value]="acc._id">{{acc.name}} ({{platformLabel(acc.platform)}})</option>
-          </select>
-        </label>
-        <label>Platform Campaign ID <input name="platformCampaignId" [(ngModel)]="grpForm.platformCampaignId" required /></label>
-        <label>Ngân sách/ngày (VNĐ) <input name="dailyBudget" type="number" [(ngModel)]="grpForm.dailyBudget" /></label>
-        <label>Ngày bắt đầu <input name="startDate" type="date" [(ngModel)]="grpForm.startDate" /></label>
-        <label>Ngày kết thúc <input name="endDate" type="date" [(ngModel)]="grpForm.endDate" /></label>
-        <label>Đối tượng mục tiêu <input name="targetAudience" [(ngModel)]="grpForm.targetAudience" /></label>
-        <label *ngIf="editingGroup">Trạng thái
-          <select name="status" [(ngModel)]="grpForm.status">
-            <option value="ACTIVE">Hoạt động</option>
-            <option value="PAUSED">Tạm dừng</option>
-            <option value="ARCHIVED">Lưu trữ</option>
-          </select>
-        </label>
-        <label>Ghi chú <textarea name="notes" [(ngModel)]="grpForm.notes"></textarea></label>
-        <div class="form-actions">
-          <button type="submit" class="primary">Lưu</button>
-          <button type="button" (click)="showGroupModal.set(false)">Hủy</button>
-        </div>
-        <p class="error" *ngIf="error()">{{error()}}</p>
-      </form>
-    </div>
-  </div>
-
-  <!-- ═══ Token Modal ═══ -->
-  <div class="modal-backdrop" *ngIf="showTokenModal()">
-    <div class="modal">
-      <h3>{{editingToken ? 'Sửa Token' : 'Thêm Token'}}</h3>
-      <form (ngSubmit)="submitToken()">
-        <label *ngIf="!editingToken">Tài khoản QC
-          <select name="adAccountId" [(ngModel)]="tokenForm.adAccountId" required
-                  (ngModelChange)="onTokenAccountChange()">
-            <option value="">-- Chọn --</option>
-            <option *ngFor="let acc of allAccounts()" [value]="acc._id">{{acc.name}} ({{platformLabel(acc.platform)}})</option>
-          </select>
-        </label>
-        <label>Access Token <input name="accessToken" [(ngModel)]="tokenForm.accessToken" [required]="!editingToken" type="password" /></label>
-        <label>Refresh Token <input name="refreshToken" [(ngModel)]="tokenForm.refreshToken" type="password" /></label>
-        <label>Hạn sử dụng <input name="expiresAt" type="date" [(ngModel)]="tokenForm.expiresAt" /></label>
-        <label>Nhãn <input name="label" [(ngModel)]="tokenForm.label" placeholder="VD: Main token" /></label>
-        <label *ngIf="editingToken">Trạng thái
-          <select name="status" [(ngModel)]="tokenForm.status">
-            <option value="ACTIVE">Hoạt động</option>
-            <option value="EXPIRED">Hết hạn</option>
-            <option value="REVOKED">Đã thu hồi</option>
-          </select>
-        </label>
-        <div class="form-actions">
-          <button type="submit" class="primary">Lưu</button>
-          <button type="button" (click)="showTokenModal.set(false)">Hủy</button>
-        </div>
-        <p class="error" *ngIf="error()">{{error()}}</p>
-      </form>
-    </div>
-  </div>
-
-  <!-- ═══ Cost Modal ═══ -->
-  <div class="modal-backdrop" *ngIf="showCostModal()">
-    <div class="modal">
-      <h3>Nhập chi phí thủ công</h3>
-      <form (ngSubmit)="submitCost()">
-        <label>Nhóm QC
-          <select name="adGroupId" [(ngModel)]="costForm.adGroupId" required (ngModelChange)="onCostGroupChange()">
-            <option value="">-- Chọn --</option>
-            <option *ngFor="let g of allGroupsList()" [value]="g._id">{{g.name}} ({{platformLabel(g.platform)}})</option>
-          </select>
-        </label>
-        <label>Ngày <input name="date" type="date" [(ngModel)]="costForm.date" required /></label>
-        <label>Chi phí (VNĐ) <input name="spend" type="number" [(ngModel)]="costForm.spend" required min="0" /></label>
-        <label>Impressions <input name="impressions" type="number" [(ngModel)]="costForm.impressions" min="0" /></label>
-        <label>Clicks <input name="clicks" type="number" [(ngModel)]="costForm.clicks" min="0" /></label>
-        <label>Conversions <input name="conversions" type="number" [(ngModel)]="costForm.conversions" min="0" /></label>
-        <div class="form-actions">
-          <button type="submit" class="primary">Lưu</button>
-          <button type="button" (click)="showCostModal.set(false)">Hủy</button>
-        </div>
-        <p class="error" *ngIf="error()">{{error()}}</p>
-      </form>
-    </div>
-  </div>
-
-  <!-- Sync result -->
-  <div class="modal-backdrop" *ngIf="syncResult()">
-    <div class="modal">
-      <h3>Kết quả đồng bộ</h3>
-      <p><strong>Đã đồng bộ:</strong> {{syncResult().synced || syncResult().data?.synced || 0}} bản ghi</p>
-      <div *ngIf="syncResult().errors?.length || syncResult().data?.errors?.length">
-        <p><strong>Lỗi:</strong></p>
-        <ul>
-          <li *ngFor="let e of (syncResult().errors || syncResult().data?.errors || [])">{{e}}</li>
-        </ul>
-      </div>
-      <div class="form-actions">
-        <button class="primary" (click)="syncResult.set(null); loadCosts()">Đóng</button>
-      </div>
-    </div>
-  </div>
-  `,
-  styles: [`
-    .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }
-    .page-header h2 { margin: 0; font-size: 20px; }
-    .page-header p { margin: 4px 0 0; color: #64748b; font-size: 13px; }
-
-    .tabs { display: flex; gap: 0; border-bottom: 2px solid #e2e8f0; margin-bottom: 20px; }
-    .tabs button {
-      padding: 10px 20px; background: none; border: none; border-bottom: 2px solid transparent;
-      cursor: pointer; font-size: 14px; font-weight: 500; color: #64748b; margin-bottom: -2px;
-    }
-    .tabs button.active { color: #3b82f6; border-bottom-color: #3b82f6; }
-    .tabs button:hover { color: #1e40af; }
-
-    .tab-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px; }
-    .filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-    .filters input, .filters select { padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; }
-    .filters label { display: flex; align-items: center; gap: 4px; font-size: 13px; color: #475569; }
-
-    .btn-group { display: flex; gap: 8px; }
-
-    table.data { width: 100%; border-collapse: collapse; font-size: 13px; }
-    table.data th { text-align: left; padding: 8px 10px; background: #f8fafc; border-bottom: 2px solid #e2e8f0; font-weight: 600; color: #475569; font-size: 12px; }
-    table.data td { padding: 8px 10px; border-bottom: 1px solid #f1f5f9; }
-    table.data tr:hover { background: #f8fafc; }
-    td.mono { font-family: monospace; font-size: 12px; }
-    td.amount { font-weight: 600; }
-    .actions-cell { white-space: nowrap; }
-
-    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; color: #fff; }
-    .badge.source { background: #6366f1; }
-    .badge.platform { background: #3b82f6; }
-    .badge.platform[data-platform="FACEBOOK"] { background: #1877f2; }
-    .badge.platform[data-platform="GOOGLE"] { background: #ea4335; }
-    .badge.platform[data-platform="TIKTOK"] { background: #000; }
-
-    button.primary { padding: 8px 16px; background: #3b82f6; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; }
-    button.primary:hover { background: #2563eb; }
-    button.primary:disabled { background: #93c5fd; cursor: not-allowed; }
-    button.success { padding: 8px 16px; background: #10b981; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; }
-    button.success:hover { background: #059669; }
-    button.success:disabled { background: #6ee7b7; cursor: not-allowed; }
-    button.ghost { background: none; border: none; color: #3b82f6; cursor: pointer; font-size: 13px; padding: 4px 8px; }
-    button.ghost:hover { text-decoration: underline; }
-    button.ghost.danger { color: #ef4444; }
-
-    .empty { text-align: center; color: #94a3b8; padding: 40px; }
-
-    .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; justify-content: center; align-items: center; z-index: 1000; }
-    .modal { background: #fff; border-radius: 12px; padding: 24px; width: 480px; max-width: 90vw; max-height: 90vh; overflow-y: auto; }
-    .modal h3 { margin: 0 0 16px; font-size: 16px; }
-    .modal label { display: block; margin-bottom: 12px; font-size: 13px; color: #475569; font-weight: 500; }
-    .modal input, .modal select, .modal textarea { width: 100%; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; margin-top: 4px; box-sizing: border-box; }
-    .modal textarea { min-height: 60px; resize: vertical; }
-    .form-actions { display: flex; gap: 8px; margin-top: 16px; }
-    .error { color: #ef4444; font-size: 13px; margin-top: 8px; }
-  `],
+  templateUrl: './ads-management.component.html',
+  styleUrls: ['./ads-management.component.css'],
 })
 export class AdsManagementComponent implements OnInit {
   activeTab = 'accounts';
 
-  // Signals
   accounts = signal<AdAccountItem[]>([]);
   allAccounts = signal<AdAccountItem[]>([]);
   groups = signal<AdGroupItem[]>([]);
@@ -482,60 +73,56 @@ export class AdsManagementComponent implements OnInit {
   costs = signal<AdCostItem[]>([]);
   error = signal('');
   syncing = signal(false);
-  syncResult = signal<any>(null);
+  syncResult = signal<any | null>(null);
 
-  // Modals
   showAccountModal = signal(false);
   showGroupModal = signal(false);
   showTokenModal = signal(false);
   showCostModal = signal(false);
 
-  // Editing references
   editingAccount: AdAccountItem | null = null;
   editingGroup: AdGroupItem | null = null;
   editingToken: ApiTokenItem | null = null;
 
-  // Account filters
   accKeyword = '';
   accFilterPlatform = '';
   accFilterStatus = '';
 
-  // Group filters
   grpKeyword = '';
   grpFilterPlatform = '';
   grpFilterStatus = '';
   grpFilterAccount = '';
 
-  // Token filter
-  tokenAccountId = '';
+  tokenFilterType = '';
+  tokenFilterPlatform = '';
 
-  // Cost filters
   costStartDate = '';
   costEndDate = '';
   costFilterPlatform = '';
   costFilterGroup = '';
 
-  // Forms
   accForm: any = {};
   grpForm: any = {};
   tokenForm: any = {};
   costForm: any = {};
 
   constructor(
-    private adsService: AdsService,
-    private authService: AuthService,
+    private readonly adsService: AdsService,
+    private readonly authService: AuthService,
+    private readonly router: Router,
   ) {}
 
   ngOnInit() {
-    // Set default date range for costs (last 30 days)
     const now = new Date();
-    this.costEndDate = now.toISOString().split('T')[0];
-    const past = new Date(now.getTime() - 30 * 86400000);
-    this.costStartDate = past.toISOString().split('T')[0];
+    this.costEndDate = this.toDateInput(now);
+    this.costStartDate = this.toDateInput(new Date(now.getTime() - 30 * 86400000));
 
     this.loadAccounts();
     this.loadAllAccounts();
     this.loadAllGroups();
+    if (this.canManageTokens()) {
+      this.loadTokens();
+    }
   }
 
   switchTab(tab: string) {
@@ -543,46 +130,150 @@ export class AdsManagementComponent implements OnInit {
     this.activeTab = tab;
     if (tab === 'accounts') this.loadAccounts();
     if (tab === 'groups') this.loadGroups();
-    if (tab === 'tokens' && this.tokenAccountId) this.loadTokens();
+    if (tab === 'tokens') this.loadTokens();
     if (tab === 'costs') this.loadCosts();
   }
 
-  // ─── Labels ─────────────────────────────────────────────
+  platformLabel(value?: string) {
+    return PLATFORM_LABELS[value || ''] || value || '-';
+  }
 
-  platformLabel(p: string) { return PLATFORM_LABELS[p] || p; }
-  accountStatusLabel(s: string) { return ACCOUNT_STATUS_LABELS[s] || s; }
-  groupStatusLabel(s: string) { return GROUP_STATUS_LABELS[s] || s; }
-  tokenStatusLabel(s: string) { return TOKEN_STATUS_LABELS[s] || s; }
-  statusColor(s: string) { return STATUS_COLORS[s] || '#6b7280'; }
+  accountStatusLabel(value?: string) {
+    return ACCOUNT_STATUS_LABELS[value || ''] || value || '-';
+  }
 
-  isDirector() { return this.authService.hasRole([Role.DIRECTOR]); }
-  canManageAccounts() { return this.isDirector(); }
-  canManageGroups() { return this.authService.hasRole([Role.DIRECTOR, Role.OPS]); }
-  canDeleteGroups() { return this.isDirector(); }
-  canManageTokens() { return this.isDirector(); }
-  canManageCosts() { return this.isDirector(); }
-  canTriggerSync() { return this.isDirector(); }
+  groupStatusLabel(value?: string) {
+    return GROUP_STATUS_LABELS[value || ''] || value || '-';
+  }
 
-  // ─── Load data ──────────────────────────────────────────
+  tokenStatusLabel(value?: string) {
+    return TOKEN_STATUS_LABELS[value || ''] || value || '-';
+  }
+
+  tokenTypeLabel(value?: string) {
+    return TOKEN_TYPE_LABELS[value || ''] || value || 'Token';
+  }
+
+  syncSourceLabel(value?: string) {
+    return SYNC_SOURCE_LABELS[value || ''] || value || 'Nhap tay';
+  }
+
+  statusColor(value?: string) {
+    return STATUS_COLORS[value || ''] || '#475569';
+  }
+
+  isDirector() {
+    return this.authService.hasRole([Role.DIRECTOR]);
+  }
+
+  canManageAccounts() {
+    return this.isDirector();
+  }
+
+  canManageGroups() {
+    return this.authService.hasRole([Role.DIRECTOR, Role.OPS]);
+  }
+
+  canDeleteGroups() {
+    return this.isDirector();
+  }
+
+  canManageTokens() {
+    return this.isDirector();
+  }
+
+  canManageCosts() {
+    return this.isDirector();
+  }
+
+  canTriggerSync() {
+    return this.isDirector();
+  }
+
+  toDateInput(value?: string | Date | null) {
+    if (!value) return '';
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toISOString().split('T')[0];
+  }
+
+  currencyAmount(amount?: number | null) {
+    if (amount === undefined || amount === null) return '-';
+    return `${Number(amount).toLocaleString('vi-VN')}đ`;
+  }
+
+  syncErrors() {
+    const result = this.syncResult();
+    if (!result) return [];
+    return result.errors || result.data?.errors || [];
+  }
+
+  syncCount(key: string) {
+    const result = this.syncResult();
+    if (!result) return 0;
+    return result[key] ?? result.data?.[key] ?? 0;
+  }
+
+  tokenTargetLabel(token: ApiTokenItem) {
+    if (token.tokenType === 'FACEBOOK_SYSTEM_USER') {
+      if (token.businessName || token.businessId) {
+        return `${token.businessName || 'Business Manager'}${token.businessId ? ` (${token.businessId})` : ''}`;
+      }
+      return 'Tat ca BM token truy cap duoc';
+    }
+    return token.adAccountName || token.adAccountId || '-';
+  }
+
+  isBusinessTokenForm() {
+    return this.tokenForm.tokenType === 'FACEBOOK_SYSTEM_USER';
+  }
+
+  onTokenTypeChange() {
+    if (this.isBusinessTokenForm()) {
+      this.tokenForm.platform = 'FACEBOOK';
+      this.tokenForm.adAccountId = '';
+    } else {
+      this.tokenForm.businessId = '';
+      this.tokenForm.businessName = '';
+      this.onTokenAccountChange();
+    }
+  }
+
+  onTokenAccountChange() {
+    const account = this.allAccounts().find((item) => item._id === this.tokenForm.adAccountId);
+    this.tokenForm.platform = account?.platform || '';
+  }
+
+  onGroupAccountChange() {
+    const account = this.allAccounts().find((item) => item._id === this.grpForm.adAccountId);
+    this.grpForm.platform = account?.platform || '';
+  }
+
+  onCostGroupChange() {
+    const group = this.allGroupsList().find((item) => item._id === this.costForm.adGroupId);
+    this.costForm.adAccountId = group?.adAccountId || '';
+    this.costForm.platform = group?.platform || '';
+  }
 
   async loadAccounts() {
     try {
+      this.error.set('');
       const params: Record<string, string> = {};
       if (this.accKeyword) params['search'] = this.accKeyword;
       if (this.accFilterPlatform) params['platform'] = this.accFilterPlatform;
       if (this.accFilterStatus) params['status'] = this.accFilterStatus;
-      const res = await this.adsService.listAccounts(params);
-      this.accounts.set(res.data);
+      const result = await this.adsService.listAccounts(params);
+      this.accounts.set(result.data);
     } catch {
       this.accounts.set([]);
-      this.error.set('Không tải được danh sách tài khoản quảng cáo.');
+      this.error.set('Khong tai duoc danh sach tai khoan quang cao.');
     }
   }
 
   async loadAllAccounts() {
     try {
-      const res = await this.adsService.listAccounts({ limit: '200' });
-      this.allAccounts.set(res.data);
+      const result = await this.adsService.listAccounts({ limit: '300' });
+      this.allAccounts.set(result.data);
     } catch {
       this.allAccounts.set([]);
     }
@@ -590,68 +281,88 @@ export class AdsManagementComponent implements OnInit {
 
   async loadGroups() {
     try {
+      this.error.set('');
       const params: Record<string, string> = {};
       if (this.grpKeyword) params['search'] = this.grpKeyword;
       if (this.grpFilterPlatform) params['platform'] = this.grpFilterPlatform;
       if (this.grpFilterStatus) params['status'] = this.grpFilterStatus;
       if (this.grpFilterAccount) params['adAccountId'] = this.grpFilterAccount;
-      const res = await this.adsService.listGroups(params);
-      this.groups.set(res.data);
+      const result = await this.adsService.listGroups(params);
+      this.groups.set(result.data);
     } catch {
       this.groups.set([]);
-      this.error.set('Không tải được danh sách nhóm quảng cáo.');
+      this.error.set('Khong tai duoc danh sach nhom quang cao.');
     }
   }
 
   async loadAllGroups() {
     try {
-      const groups = await this.adsService.getAllGroups();
-      this.allGroupsList.set(groups);
+      const result = await this.adsService.getAllGroups();
+      this.allGroupsList.set(result);
     } catch {
       this.allGroupsList.set([]);
     }
   }
 
   async loadTokens() {
-    if (!this.canManageTokens() || !this.tokenAccountId) { this.tokens.set([]); return; }
+    if (!this.canManageTokens()) return;
     try {
-      const res = await this.adsService.listTokens(this.tokenAccountId);
-      this.tokens.set(res);
+      this.error.set('');
+      let result = await this.adsService.listTokens();
+      if (this.tokenFilterType) {
+        result = result.filter((item) => item.tokenType === this.tokenFilterType);
+      }
+      if (this.tokenFilterPlatform) {
+        result = result.filter((item) => item.platform === this.tokenFilterPlatform);
+      }
+      this.tokens.set(result);
     } catch {
       this.tokens.set([]);
-      this.error.set('Không tải được danh sách token.');
+      this.error.set('Khong tai duoc danh sach API token.');
     }
   }
 
   async loadCosts() {
     try {
+      this.error.set('');
       const params: Record<string, string> = {};
       if (this.costStartDate) params['startDate'] = this.costStartDate;
       if (this.costEndDate) params['endDate'] = this.costEndDate;
       if (this.costFilterPlatform) params['platform'] = this.costFilterPlatform;
       if (this.costFilterGroup) params['adGroupId'] = this.costFilterGroup;
-      const res = await this.adsService.listCosts(params);
-      this.costs.set(res.data);
+      const result = await this.adsService.listCosts(params);
+      this.costs.set(result.data);
     } catch {
       this.costs.set([]);
-      this.error.set('Không tải được dữ liệu chi phí quảng cáo.');
+      this.error.set('Khong tai duoc du lieu chi phi ads.');
     }
   }
-
-  // ─── Account CRUD ───────────────────────────────────────
 
   openAccountModal() {
     if (!this.canManageAccounts()) return;
     this.editingAccount = null;
-    this.accForm = { name: '', platform: '', platformAccountId: '', monthlyBudget: 0, notes: '' };
+    this.accForm = {
+      name: '',
+      platform: '',
+      platformAccountId: '',
+      monthlyBudget: 0,
+      notes: '',
+    };
     this.error.set('');
     this.showAccountModal.set(true);
   }
 
-  editAccount(acc: AdAccountItem) {
+  editAccount(account: AdAccountItem) {
     if (!this.canManageAccounts()) return;
-    this.editingAccount = acc;
-    this.accForm = { name: acc.name, platform: acc.platform, platformAccountId: acc.platformAccountId, monthlyBudget: acc.monthlyBudget || 0, status: acc.status, notes: acc.notes || '' };
+    this.editingAccount = account;
+    this.accForm = {
+      name: account.name,
+      platform: account.platform,
+      platformAccountId: account.platformAccountId,
+      monthlyBudget: account.monthlyBudget || 0,
+      status: account.status,
+      notes: account.notes || '',
+    };
     this.error.set('');
     this.showAccountModal.set(true);
   }
@@ -659,176 +370,269 @@ export class AdsManagementComponent implements OnInit {
   async submitAccount() {
     if (!this.canManageAccounts()) return;
     this.error.set('');
-    let result;
-    if (this.editingAccount) {
-      result = await this.adsService.updateAccount(this.editingAccount._id, this.accForm);
-    } else {
-      result = await this.adsService.createAccount(this.accForm);
+    const result = this.editingAccount
+      ? await this.adsService.updateAccount(this.editingAccount._id, this.accForm)
+      : await this.adsService.createAccount(this.accForm);
+    if (!result.ok) {
+      this.error.set(result.message || 'Khong luu duoc tai khoan.');
+      return;
     }
-    if (!result.ok) { this.error.set(result.message || 'Lỗi'); return; }
     this.showAccountModal.set(false);
-    this.loadAccounts();
-    this.loadAllAccounts();
+    await Promise.all([this.loadAccounts(), this.loadAllAccounts()]);
   }
 
-  async removeAccount(acc: AdAccountItem) {
+  async removeAccount(account: AdAccountItem) {
     if (!this.canManageAccounts()) return;
-    if (!confirm(`Xóa tài khoản "${acc.name}"?`)) return;
-    const result = await this.adsService.deleteAccount(acc._id);
-    if (!result.ok) { alert(result.message); return; }
-    this.loadAccounts();
-    this.loadAllAccounts();
+    if (!confirm(`Xoa tai khoan "${account.name}"?`)) return;
+    const result = await this.adsService.deleteAccount(account._id);
+    if (!result.ok) {
+      alert(result.message || 'Khong xoa duoc tai khoan.');
+      return;
+    }
+    await Promise.all([this.loadAccounts(), this.loadAllAccounts(), this.loadTokens()]);
   }
-
-  // ─── Group CRUD ─────────────────────────────────────────
 
   openGroupModal() {
     if (!this.canManageGroups()) return;
     this.editingGroup = null;
-    this.grpForm = { name: '', adAccountId: '', platform: '', platformCampaignId: '', dailyBudget: 0, startDate: '', endDate: '', targetAudience: '', notes: '' };
-    this.error.set('');
-    this.showGroupModal.set(true);
-  }
-
-  editGroup(grp: AdGroupItem) {
-    if (!this.canManageGroups()) return;
-    this.editingGroup = grp;
     this.grpForm = {
-      name: grp.name, adAccountId: grp.adAccountId, platform: grp.platform,
-      platformCampaignId: grp.platformCampaignId, dailyBudget: grp.dailyBudget || 0,
-      startDate: grp.startDate?.split('T')[0] || '', endDate: grp.endDate?.split('T')[0] || '',
-      targetAudience: grp.targetAudience || '', status: grp.status, notes: grp.notes || '',
+      name: '',
+      adAccountId: '',
+      platform: '',
+      platformCampaignId: '',
+      dailyBudget: 0,
+      startDate: '',
+      endDate: '',
+      targetAudience: '',
+      notes: '',
     };
     this.error.set('');
     this.showGroupModal.set(true);
   }
 
-  onGroupAccountChange() {
-    const acc = this.allAccounts().find(a => a._id === this.grpForm.adAccountId);
-    if (acc) this.grpForm.platform = acc.platform;
+  editGroup(group: AdGroupItem) {
+    if (!this.canManageGroups()) return;
+    this.editingGroup = group;
+    this.grpForm = {
+      name: group.name,
+      adAccountId: group.adAccountId,
+      platform: group.platform,
+      platformCampaignId: group.platformCampaignId,
+      dailyBudget: group.dailyBudget || 0,
+      startDate: this.toDateInput(group.startDate),
+      endDate: this.toDateInput(group.endDate),
+      targetAudience: group.targetAudience || '',
+      status: group.status,
+      notes: group.notes || '',
+    };
+    this.error.set('');
+    this.showGroupModal.set(true);
   }
 
   async submitGroup() {
     if (!this.canManageGroups()) return;
     this.error.set('');
-    let result;
-    if (this.editingGroup) {
-      result = await this.adsService.updateGroup(this.editingGroup._id, this.grpForm);
-    } else {
-      result = await this.adsService.createGroup(this.grpForm);
+    const result = this.editingGroup
+      ? await this.adsService.updateGroup(this.editingGroup._id, this.grpForm)
+      : await this.adsService.createGroup(this.grpForm);
+    if (!result.ok) {
+      this.error.set(result.message || 'Khong luu duoc nhom quang cao.');
+      return;
     }
-    if (!result.ok) { this.error.set(result.message || 'Lỗi'); return; }
     this.showGroupModal.set(false);
-    this.loadGroups();
-    this.loadAllGroups();
+    await Promise.all([this.loadGroups(), this.loadAllGroups()]);
   }
 
-  async removeGroup(grp: AdGroupItem) {
+  async removeGroup(group: AdGroupItem) {
     if (!this.canDeleteGroups()) return;
-    if (!confirm(`Xóa nhóm QC "${grp.name}"?`)) return;
-    const result = await this.adsService.deleteGroup(grp._id);
-    if (!result.ok) { alert(result.message); return; }
-    this.loadGroups();
-    this.loadAllGroups();
+    if (!confirm(`Xoa nhom "${group.name}"?`)) return;
+    const result = await this.adsService.deleteGroup(group._id);
+    if (!result.ok) {
+      alert(result.message || 'Khong xoa duoc nhom quang cao.');
+      return;
+    }
+    await Promise.all([this.loadGroups(), this.loadAllGroups(), this.loadCosts()]);
   }
-
-  // ─── Token CRUD ─────────────────────────────────────────
 
   openTokenModal() {
     if (!this.canManageTokens()) return;
     this.editingToken = null;
-    const acc = this.allAccounts().find(a => a._id === this.tokenAccountId);
-    this.tokenForm = { adAccountId: this.tokenAccountId, platform: acc?.platform || '', accessToken: '', refreshToken: '', expiresAt: '', label: '' };
+    this.tokenForm = {
+      tokenType: 'FACEBOOK_SYSTEM_USER',
+      platform: 'FACEBOOK',
+      adAccountId: '',
+      businessId: '',
+      businessName: '',
+      accessToken: '',
+      refreshToken: '',
+      expiresAt: '',
+      label: '',
+      status: 'ACTIVE',
+    };
     this.error.set('');
     this.showTokenModal.set(true);
   }
 
-  editToken(t: ApiTokenItem) {
+  editToken(token: ApiTokenItem) {
     if (!this.canManageTokens()) return;
-    this.editingToken = t;
-    this.tokenForm = { accessToken: '', refreshToken: '', expiresAt: t.expiresAt?.split('T')[0] || '', label: t.label || '', status: t.status };
+    this.editingToken = token;
+    this.tokenForm = {
+      tokenType: token.tokenType || 'ACCOUNT',
+      platform: token.platform,
+      adAccountId: token.adAccountId || '',
+      businessId: token.businessId || '',
+      businessName: token.businessName || '',
+      accessToken: '',
+      refreshToken: '',
+      expiresAt: this.toDateInput(token.expiresAt),
+      label: token.label || '',
+      status: token.status,
+    };
     this.error.set('');
     this.showTokenModal.set(true);
-  }
-
-  onTokenAccountChange() {
-    const acc = this.allAccounts().find(a => a._id === this.tokenForm.adAccountId);
-    if (acc) this.tokenForm.platform = acc.platform;
   }
 
   async submitToken() {
     if (!this.canManageTokens()) return;
     this.error.set('');
-    let result;
-    if (this.editingToken) {
-      const data: any = {};
-      if (this.tokenForm.accessToken) data.accessToken = this.tokenForm.accessToken;
-      if (this.tokenForm.refreshToken) data.refreshToken = this.tokenForm.refreshToken;
-      if (this.tokenForm.expiresAt) data.expiresAt = this.tokenForm.expiresAt;
-      if (this.tokenForm.label) data.label = this.tokenForm.label;
-      if (this.tokenForm.status) data.status = this.tokenForm.status;
-      result = await this.adsService.updateToken(this.editingToken._id, data);
-    } else {
-      result = await this.adsService.createToken(this.tokenForm);
+
+    const payload: any = {
+      tokenType: this.tokenForm.tokenType,
+      platform: this.tokenForm.platform,
+      label: this.tokenForm.label || undefined,
+      status: this.tokenForm.status || undefined,
+      businessId: this.tokenForm.businessId || undefined,
+      businessName: this.tokenForm.businessName || undefined,
+      expiresAt: this.tokenForm.expiresAt || undefined,
+      refreshToken: this.tokenForm.refreshToken || undefined,
+      adAccountId: this.tokenForm.adAccountId || undefined,
+    };
+
+    if (this.tokenForm.accessToken) {
+      payload.accessToken = this.tokenForm.accessToken;
     }
-    if (!result.ok) { this.error.set(result.message || 'Lỗi'); return; }
+
+    if (payload.tokenType === 'FACEBOOK_SYSTEM_USER') {
+      payload.platform = 'FACEBOOK';
+      delete payload.adAccountId;
+    } else {
+      delete payload.businessId;
+      delete payload.businessName;
+    }
+
+    const result = this.editingToken
+      ? await this.adsService.updateToken(this.editingToken._id, payload)
+      : await this.adsService.createToken(payload);
+    if (!result.ok) {
+      this.error.set(result.message || 'Khong luu duoc token.');
+      return;
+    }
     this.showTokenModal.set(false);
-    this.loadTokens();
+    await this.loadTokens();
   }
 
-  async removeToken(t: ApiTokenItem) {
+  async removeToken(token: ApiTokenItem) {
     if (!this.canManageTokens()) return;
-    if (!confirm('Xóa token này?')) return;
-    const result = await this.adsService.deleteToken(t._id);
-    if (!result.ok) { alert(result.message); return; }
-    this.loadTokens();
+    if (!confirm('Xoa token nay?')) return;
+    const result = await this.adsService.deleteToken(token._id);
+    if (!result.ok) {
+      alert(result.message || 'Khong xoa duoc token.');
+      return;
+    }
+    await this.loadTokens();
   }
-
-  // ─── Cost entry ─────────────────────────────────────────
 
   openCostModal() {
     if (!this.canManageCosts()) return;
-    this.costForm = { adGroupId: '', adAccountId: '', platform: '', date: new Date().toISOString().split('T')[0], spend: 0, impressions: 0, clicks: 0, conversions: 0 };
+    this.costForm = {
+      adGroupId: '',
+      adAccountId: '',
+      platform: '',
+      date: this.toDateInput(new Date()),
+      spend: 0,
+      impressions: 0,
+      clicks: 0,
+      conversions: 0,
+    };
     this.error.set('');
     this.showCostModal.set(true);
-  }
-
-  onCostGroupChange() {
-    const grp = this.allGroupsList().find(g => g._id === this.costForm.adGroupId);
-    if (grp) {
-      this.costForm.adAccountId = grp.adAccountId;
-      this.costForm.platform = grp.platform;
-    }
   }
 
   async submitCost() {
     if (!this.canManageCosts()) return;
     this.error.set('');
-    const result = await this.adsService.createCost({ ...this.costForm, source: 'MANUAL' });
-    if (!result.ok) { this.error.set(result.message || 'Lỗi'); return; }
+    const result = await this.adsService.createCost({
+      ...this.costForm,
+      source: 'MANUAL',
+    });
+    if (!result.ok) {
+      this.error.set(result.message || 'Khong luu duoc chi phi.');
+      return;
+    }
     this.showCostModal.set(false);
-    this.loadCosts();
+    await this.loadCosts();
   }
 
-  async removeCost(c: AdCostItem) {
+  async removeCost(cost: AdCostItem) {
     if (!this.canManageCosts()) return;
-    if (!confirm('Xóa bản ghi chi phí này?')) return;
-    const result = await this.adsService.deleteCost(c._id);
-    if (!result.ok) { alert(result.message); return; }
-    this.loadCosts();
+    if (!confirm('Xoa ban ghi chi phi nay?')) return;
+    const result = await this.adsService.deleteCost(cost._id);
+    if (!result.ok) {
+      alert(result.message || 'Khong xoa duoc ban ghi chi phi.');
+      return;
+    }
+    await this.loadCosts();
   }
 
-  // ─── Sync ───────────────────────────────────────────────
+  async syncToken(token: ApiTokenItem) {
+    if (!this.canManageTokens()) return;
+    if (token.tokenType !== 'FACEBOOK_SYSTEM_USER' && !token.adAccountId) {
+      alert('Token nay chua gan voi tai khoan quang cao.');
+      return;
+    }
+    this.syncing.set(true);
+    this.error.set('');
+
+    const result = token.tokenType === 'FACEBOOK_SYSTEM_USER'
+      ? await this.adsService.syncFacebookBusinessToken(token._id)
+      : await this.adsService.triggerSync(token.adAccountId);
+
+    this.syncing.set(false);
+    if (!result.ok) {
+      alert(result.message || 'Dong bo that bai.');
+      return;
+    }
+
+    this.syncResult.set(result.data || result);
+    await Promise.all([
+      this.loadTokens(),
+      this.loadAccounts(),
+      this.loadAllAccounts(),
+      this.loadGroups(),
+      this.loadAllGroups(),
+      this.loadCosts(),
+    ]);
+  }
 
   async triggerSync() {
     if (!this.canTriggerSync()) return;
     this.syncing.set(true);
     const result = await this.adsService.triggerSync();
     this.syncing.set(false);
-    if (result.ok) {
-      this.syncResult.set(result.data || result);
-    } else {
-      alert(result.message || 'Đồng bộ thất bại');
+    if (!result.ok) {
+      alert(result.message || 'Dong bo that bai.');
+      return;
     }
+    this.syncResult.set(result.data || result);
+    await this.loadCosts();
+  }
+
+  closeSyncResult() {
+    this.syncResult.set(null);
+  }
+
+  async openFanpageSettings() {
+    this.closeSyncResult();
+    await this.router.navigate(['/app/chatbot-settings']);
   }
 }

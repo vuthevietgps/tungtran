@@ -27,8 +27,8 @@ export class Attendance {
   @Prop({ type: Date, required: true })
   date!: Date;
 
-  @Prop({ type: String, enum: Object.values(AttendanceStatus), default: AttendanceStatus.PRESENT })
-  status!: AttendanceStatus;
+  @Prop({ type: String, enum: Object.values(AttendanceStatus), required: false })
+  status?: AttendanceStatus;
 
   @Prop({ type: String, trim: true })
   notes?: string; // Ghi chú (lý do vắng, đi muộn, etc.)

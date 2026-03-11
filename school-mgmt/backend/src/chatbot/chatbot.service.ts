@@ -4,7 +4,7 @@ import { Model, Types, FilterQuery } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 
-import { Fanpage, FanpageDocument } from './schemas/fanpage.schema';
+import { Fanpage, FanpageDocument, FanpagePlatform, FanpageSyncSource } from './schemas/fanpage.schema';
 import { OpenAIToken, OpenAITokenDocument, OpenAITokenStatus } from './schemas/openai-token.schema';
 import { Conversation, ConversationDocument, ConversationStatus } from './schemas/conversation.schema';
 import { Message, MessageDocument, SenderType, MessageStatus } from './schemas/message.schema';
@@ -81,6 +81,21 @@ export class ChatbotService {
     return '****' + token.slice(-6);
   }
 
+  private mapFanpageForResponse(fp: any) {
+    const openAIToken = fp?.openaiTokenId && typeof fp.openaiTokenId === 'object'
+      ? fp.openaiTokenId
+      : null;
+
+    return {
+      ...fp,
+      openaiTokenId: openAIToken?._id ? openAIToken._id.toString() : fp.openaiTokenId,
+      openaiTokenLabel: openAIToken?.label,
+      openaiModel: openAIToken?.model,
+      pageAccessToken: fp.pageAccessToken ? this.maskToken(fp.pageAccessToken) : undefined,
+      appSecret: fp.appSecret ? this.maskToken(fp.appSecret) : undefined,
+    };
+  }
+
   // ─── Fanpage CRUD ───────────────────────────────────────────
 
   private async generateFanpageCode(): Promise<string> {
@@ -149,39 +164,101 @@ export class ChatbotService {
     const limit = parseInt(query.limit || '20', 10);
     const skip = (page - 1) * limit;
     const total = await this.fanpageModel.countDocuments(filter);
-    const data = await this.fanpageModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean();
+    const data = await this.fanpageModel.find(filter)
+      .populate({ path: 'openaiTokenId', select: 'label model' })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
 
-    // Mask sensitive fields
-    const masked = data.map(fp => ({
-      ...fp,
-      pageAccessToken: fp.pageAccessToken ? this.maskToken(fp.pageAccessToken) : undefined,
-      appSecret: fp.appSecret ? this.maskToken(fp.appSecret) : undefined,
-    }));
+    const masked = data.map((fp) => this.mapFanpageForResponse(fp));
 
     return { data: masked, total, page, limit };
   }
 
   async findOneFanpage(id: string) {
-    const fp = await this.fanpageModel.findById(id).lean();
+    const fp = await this.fanpageModel.findById(id)
+      .populate({ path: 'openaiTokenId', select: 'label model' })
+      .lean();
     if (!fp) throw new NotFoundException('Fanpage không tồn tại');
-    return {
-      ...fp,
-      pageAccessToken: fp.pageAccessToken ? this.maskToken(fp.pageAccessToken) : undefined,
-      appSecret: fp.appSecret ? this.maskToken(fp.appSecret) : undefined,
-    };
+    return this.mapFanpageForResponse(fp);
   }
 
   async updateFanpage(id: string, dto: UpdateFanpageDto) {
-    const update: any = { ...dto };
-    if (dto.pageAccessToken) update.pageAccessToken = this.encrypt(dto.pageAccessToken);
-    if (dto.appSecret) update.appSecret = this.encrypt(dto.appSecret);
+    const current = await this.fanpageModel.findById(id).lean();
+    if (!current) throw new NotFoundException('Fanpage khÃ´ng tá»“n táº¡i');
 
-    if (dto.adAccountId) {
-      const acc = await this.adGroupModel.db.model('AdAccount').findById(dto.adAccountId).lean() as any;
-      update.adAccountName = acc?.name;
+    const isSyncedFacebookFanpage = current.syncSource === FanpageSyncSource.FACEBOOK_BM
+      && current.platform === FanpagePlatform.FACEBOOK;
+
+    const update: any = {};
+    const unset: Record<string, 1> = {};
+
+    if (!isSyncedFacebookFanpage && dto.name !== undefined) {
+      const name = dto.name.trim();
+      if (name) update.name = name;
     }
 
-    const doc = await this.fanpageModel.findByIdAndUpdate(id, update, { new: true });
+    if (!isSyncedFacebookFanpage && dto.pageId !== undefined) {
+      const pageId = dto.pageId.trim();
+      if (pageId) update.pageId = pageId;
+    }
+
+    if (!isSyncedFacebookFanpage && dto.pageAccessToken !== undefined) {
+      const pageAccessToken = dto.pageAccessToken.trim();
+      if (pageAccessToken) update.pageAccessToken = this.encrypt(pageAccessToken);
+      else unset.pageAccessToken = 1;
+    }
+
+    if (dto.description !== undefined) {
+      const description = dto.description.trim();
+      if (description) update.description = description;
+      else unset.description = 1;
+    }
+
+    if (dto.adAccountId !== undefined) {
+      const adAccountId = dto.adAccountId.trim();
+      if (adAccountId) {
+        update.adAccountId = adAccountId;
+        const acc = await this.adGroupModel.db.model('AdAccount').findById(adAccountId).lean() as any;
+        update.adAccountName = acc?.name;
+      } else {
+        unset.adAccountId = 1;
+        unset.adAccountName = 1;
+      }
+    }
+
+    if (dto.webhookVerifyToken !== undefined) {
+      const webhookVerifyToken = dto.webhookVerifyToken.trim();
+      if (webhookVerifyToken) update.webhookVerifyToken = webhookVerifyToken;
+      else unset.webhookVerifyToken = 1;
+    }
+
+    if (dto.appSecret !== undefined) {
+      const appSecret = dto.appSecret.trim();
+      if (appSecret) update.appSecret = this.encrypt(appSecret);
+      else unset.appSecret = 1;
+    }
+
+    if (dto.openaiTokenId !== undefined) {
+      const openaiTokenId = dto.openaiTokenId.trim();
+      if (openaiTokenId) update.openaiTokenId = openaiTokenId;
+      else unset.openaiTokenId = 1;
+    }
+
+    if (dto.aiAutoReplyEnabled !== undefined) {
+      update.aiAutoReplyEnabled = dto.aiAutoReplyEnabled;
+    }
+
+    if (dto.status !== undefined) {
+      update.status = dto.status;
+    }
+
+    const updateDoc: any = {};
+    if (Object.keys(update).length) updateDoc.$set = update;
+    if (Object.keys(unset).length) updateDoc.$unset = unset;
+
+    const doc = await this.fanpageModel.findByIdAndUpdate(id, updateDoc, { new: true });
     if (!doc) throw new NotFoundException('Fanpage không tồn tại');
     return doc;
   }
@@ -537,16 +614,17 @@ export class ChatbotService {
       .lean();
 
     // Build system prompt
-    let systemPrompt = '';
-    if (tokenData.systemPromptPrefix) {
-      systemPrompt += tokenData.systemPromptPrefix + '\n\n';
+    const systemPromptParts: string[] = [];
+    if (tokenData.systemPromptPrefix?.trim()) {
+      systemPromptParts.push(tokenData.systemPromptPrefix.trim());
     }
-    if (fanpage.description) {
-      systemPrompt += fanpage.description;
+    systemPromptParts.push(
+      `Ban la tu van vien cua fanpage "${fanpage.name}". Hay doc mo ta fanpage va lich su hoi thoai de tra loi khach hang mot cach than thien, chuyen nghiep, dung ngu canh va khong tu suy doan qua muc.`,
+    );
+    if (fanpage.description?.trim()) {
+      systemPromptParts.push(`Mo ta fanpage va quy tac tu van:\n${fanpage.description.trim()}`);
     }
-    if (!systemPrompt) {
-      systemPrompt = `Bạn là tư vấn viên của fanpage "${fanpage.name}". Hãy trả lời khách hàng một cách thân thiện và chuyên nghiệp.`;
-    }
+    const systemPrompt = systemPromptParts.join('\n\n');
 
     // Build messages array for OpenAI
     const messages: Array<{ role: string; content: string }> = [

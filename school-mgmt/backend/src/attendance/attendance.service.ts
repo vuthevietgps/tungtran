@@ -52,6 +52,25 @@ export class AttendanceService {
     return user?.sub ?? user?._id;
   }
 
+  private isCountedAttendanceStatus(status?: AttendanceStatus | null): boolean {
+    return status === AttendanceStatus.PRESENT;
+  }
+
+  private normalizeInteractiveAttendanceStatus(
+    status?: AttendanceStatus | null,
+  ): AttendanceStatus | null {
+    if (status === undefined) {
+      return AttendanceStatus.PRESENT;
+    }
+    return this.isCountedAttendanceStatus(status) ? AttendanceStatus.PRESENT : null;
+  }
+
+  private normalizeBulkAttendanceStatus(
+    status?: AttendanceStatus | null,
+  ): AttendanceStatus | null {
+    return this.isCountedAttendanceStatus(status) ? AttendanceStatus.PRESENT : null;
+  }
+
   /**
    * TÃƒÆ’Ã‚Â­nh amountCharged cho 1 buÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢i hÃƒÂ¡Ã‚Â»Ã‚Âc dÃƒÂ¡Ã‚Â»Ã‚Â±a trÃƒÆ’Ã‚Âªn per-minute rate tÃƒÂ¡Ã‚Â»Ã‚Â« Invoice.
    * Fallback sang class-level pricing nÃƒÂ¡Ã‚ÂºÃ‚Â¿u khÃƒÆ’Ã‚Â´ng cÃƒÆ’Ã‚Â³ invoice.
@@ -250,7 +269,7 @@ export class AttendanceService {
       .find({
         classId: classObjectId,
         date,
-        status: { $in: [AttendanceStatus.PRESENT, AttendanceStatus.LATE] },
+        status: AttendanceStatus.PRESENT,
         sessionId: { $exists: true, $ne: null },
       })
       .select('sessionId')
@@ -650,6 +669,64 @@ export class AttendanceService {
     await session.save(mongoSession ? { session: mongoSession } : undefined);
   }
 
+  private async clearAttendanceRecord(params: {
+    classId: string | Types.ObjectId;
+    studentId: string | Types.ObjectId;
+    date: Date;
+  }): Promise<boolean> {
+    const classObjectId =
+      typeof params.classId === 'string' ? new Types.ObjectId(params.classId) : params.classId;
+    const studentObjectId =
+      typeof params.studentId === 'string'
+        ? new Types.ObjectId(params.studentId)
+        : params.studentId;
+    const mongoSession = await this.connection.startSession();
+
+    try {
+      mongoSession.startTransaction();
+
+      const existingFinalized = await this.findFinalizedSessionForAttendance(
+        classObjectId,
+        studentObjectId,
+        params.date,
+        mongoSession,
+      );
+      if (existingFinalized) {
+        throw new BadRequestException(
+          'Buoi hoc da duoc xac nhan hoan thanh (FINALIZED). Khong the thay doi diem danh.',
+        );
+      }
+
+      const attendance = await this.attendanceModel
+        .findOne({
+          classId: classObjectId,
+          studentId: studentObjectId,
+          date: params.date,
+        })
+        .session(mongoSession);
+
+      if (!attendance) {
+        await mongoSession.commitTransaction();
+        return false;
+      }
+
+      if (attendance.sessionId) {
+        await this.cancelLinkedSession(attendance.sessionId, mongoSession);
+      }
+
+      await attendance.deleteOne({ session: mongoSession });
+      await mongoSession.commitTransaction();
+      return true;
+    } catch (err) {
+      if (mongoSession.inTransaction()) {
+        await mongoSession.abortTransaction();
+      }
+      throw err;
+    } finally {
+      await mongoSession.endSession();
+    }
+  }
+
   // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
   // LOAD STUDENTS FOR A CLASS (from class.students)
   // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
@@ -720,11 +797,11 @@ export class AttendanceService {
         .lean();
 
       let sessionCreated = false;
-      const isPresent = status === AttendanceStatus.PRESENT || status === AttendanceStatus.LATE;
+      const isPresent = this.isCountedAttendanceStatus(status);
       let sessionId: Types.ObjectId | null = null;
 
       if (isPresent) {
-        // PRESENT / LATE -> ensure Session exists (TEACHER_COMPLETED)
+        // PRESENT -> ensure Session exists (TEACHER_COMPLETED)
         sessionId = await this.syncSessionForAttendance({
           classId: classObjectId,
           studentId: studentObjectId,
@@ -741,7 +818,6 @@ export class AttendanceService {
         }
         sessionCreated = true;
       } else if (existingAttendance?.sessionId) {
-        // ABSENT / EXCUSED -> cancel linked session (if not yet finalized)
         await this.cancelLinkedSession(existingAttendance.sessionId as Types.ObjectId, mongoSession);
       }
 
@@ -800,6 +876,7 @@ export class AttendanceService {
     const date = normalizeDate(dto.date);
     const classroom = await this.classModel.findById(dto.classId).lean<ClassLean>();
     this.assertClassAccess(classroom, user, date);
+    const normalizedStatus = this.normalizeInteractiveAttendanceStatus(dto.status);
 
     // Validate student belongs to this class
     const studentInClass = classroom.students?.some(
@@ -814,17 +891,27 @@ export class AttendanceService {
     const attendanceTeacherId = this.resolveAttendanceTeacherId(classroom, user, date);
     const opsCheckerId = this.getOpsCheckerId(user);
 
-    const result = await this.processOneStudent({
-      classId: dto.classId,
-      studentId: dto.studentId,
-      date,
-      status: dto.status || AttendanceStatus.PRESENT,
-      notes: dto.notes || '',
-      teacherId: attendanceTeacherId,
-      classroom,
-      substitutePayRate: subInfo?.payRate,
-      checkedBy: opsCheckerId,
-    });
+    const result =
+      normalizedStatus === AttendanceStatus.PRESENT
+        ? await this.processOneStudent({
+            classId: dto.classId,
+            studentId: dto.studentId,
+            date,
+            status: AttendanceStatus.PRESENT,
+            notes: dto.notes || '',
+            teacherId: attendanceTeacherId,
+            classroom,
+            substitutePayRate: subInfo?.payRate,
+            checkedBy: opsCheckerId,
+          })
+        : {
+            attendance: null,
+            sessionCreated: await this.clearAttendanceRecord({
+              classId: dto.classId,
+              studentId: dto.studentId,
+              date,
+            }),
+          };
 
     let offlineSummary:
       | { attendedCount: number; perStudentTeacherPay: number; totalTeacherPayout: number; minimumApplied: boolean }
@@ -837,14 +924,16 @@ export class AttendanceService {
       });
     }
 
-    const populated = await this.attendanceModel
-      .findById(result.attendance._id)
-      .populate('studentId', 'fullName age parentName')
-      .populate('classId', 'name code')
-      .lean();
+    const populated = result.attendance?._id
+      ? await this.attendanceModel
+          .findById(result.attendance._id)
+          .populate('studentId', 'fullName age parentName')
+          .populate('classId', 'name code')
+          .lean()
+      : null;
 
     return {
-      ...populated,
+      ...(populated || {}),
       sessionCreated: result.sessionCreated,
       ...(offlineSummary
         ? {
@@ -883,10 +972,9 @@ export class AttendanceService {
     const results: any[] = [];
     const errors: Array<{ studentId: string; message: string }> = [];
     let sessionsCreated = 0;
+    const submittedIds = allowedIds;
 
     // ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Collect submitted student IDs ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
-    const submittedIds = new Set(dto.attendances.map(a => a.studentId));
-
     for (const item of dto.attendances) {
       if (!allowedIds.has(item.studentId)) {
         errors.push({
@@ -897,19 +985,28 @@ export class AttendanceService {
       }
 
       try {
-        const result = await this.processOneStudent({
-          classId: dto.classId,
-          studentId: item.studentId,
-          date,
-          status: item.status,
-          notes: item.notes || '',
-          teacherId: attendanceTeacherId,
-          classroom,
-          substitutePayRate: subInfo?.payRate,
-          checkedBy: opsCheckerId,
-        });
-        results.push(result.attendance);
-        if (result.sessionCreated) sessionsCreated++;
+        const normalizedStatus = this.normalizeBulkAttendanceStatus(item.status);
+        if (normalizedStatus === AttendanceStatus.PRESENT) {
+          const result = await this.processOneStudent({
+            classId: dto.classId,
+            studentId: item.studentId,
+            date,
+            status: AttendanceStatus.PRESENT,
+            notes: item.notes || '',
+            teacherId: attendanceTeacherId,
+            classroom,
+            substitutePayRate: subInfo?.payRate,
+            checkedBy: opsCheckerId,
+          });
+          results.push(result.attendance);
+          if (result.sessionCreated) sessionsCreated++;
+        } else {
+          await this.clearAttendanceRecord({
+            classId: dto.classId,
+            studentId: item.studentId,
+            date,
+          });
+        }
       } catch (err: any) {
         errors.push({
           studentId: item.studentId,
@@ -1100,12 +1197,8 @@ export class AttendanceService {
       const newStatus = dto.status || prevStatus;
 
       // Session sync on status change
-      const wasCounted = [AttendanceStatus.PRESENT, AttendanceStatus.LATE].includes(
-        prevStatus,
-      );
-      const isCounted = [AttendanceStatus.PRESENT, AttendanceStatus.LATE].includes(
-        newStatus,
-      );
+      const wasCounted = this.isCountedAttendanceStatus(prevStatus);
+      const isCounted = this.isCountedAttendanceStatus(newStatus);
 
       if (!wasCounted && isCounted) {
         // ABSENT/EXCUSED -> PRESENT/LATE: create session
@@ -1191,7 +1284,7 @@ export class AttendanceService {
     }
 
     return this.attendanceModel
-      .find(filter)
+      .find({ ...filter, status: { $exists: true, $ne: null } })
       .populate('classId', 'name code')
       .populate('teacherId', 'fullName email')
       .sort({ date: -1 })
@@ -1217,6 +1310,7 @@ export class AttendanceService {
         $match: {
           classId: new Types.ObjectId(classId),
           date: { $gte: start, $lte: end },
+          status: { $exists: true, $ne: null },
         },
       },
       { $group: { _id: '$status', count: { $sum: 1 } } },
@@ -1279,7 +1373,7 @@ export class AttendanceService {
     if (existingAttendance) {
       const alreadyMarkedPresent =
         existingAttendance.attendedAt ||
-        [AttendanceStatus.PRESENT, AttendanceStatus.LATE].includes(existingAttendance.status);
+        this.isCountedAttendanceStatus(existingAttendance.status);
       if (alreadyMarkedPresent) {
         throw new BadRequestException(
           'HÃƒÂ¡Ã‚Â»Ã‚Âc sinh Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Â£ Ãƒâ€žÃ¢â‚¬ËœÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Â£c Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh cho ngÃƒÆ’Ã‚Â y nÃƒÆ’Ã‚Â y. KhÃƒÆ’Ã‚Â´ng thÃƒÂ¡Ã‚Â»Ã†â€™ tÃƒÂ¡Ã‚ÂºÃ‚Â¡o lÃƒÂ¡Ã‚ÂºÃ‚Â¡i link.',
@@ -1302,7 +1396,9 @@ export class AttendanceService {
       }
 
       existingAttendance.teacherId = attendanceTeacherId;
-      existingAttendance.status = AttendanceStatus.ABSENT;
+      existingAttendance.status = undefined as any;
+      existingAttendance.notes = '';
+      existingAttendance.sessionId = undefined;
       existingAttendance.attendanceToken = token;
       existingAttendance.tokenExpiresAt = tokenExpiresAt;
       existingAttendance.imageUrl = undefined;
@@ -1314,7 +1410,6 @@ export class AttendanceService {
         studentId: dto.studentId,
         teacherId: attendanceTeacherId,
         date,
-        status: AttendanceStatus.ABSENT,
         attendanceToken: token,
         tokenExpiresAt,
         imageUrl: null,
@@ -1432,7 +1527,7 @@ export class AttendanceService {
 
     const filter: any = {
       date: { $gte: start, $lte: end },
-      status: { $in: [AttendanceStatus.PRESENT, AttendanceStatus.LATE] },
+      status: AttendanceStatus.PRESENT,
     };
     if (classId) {
       if (!Types.ObjectId.isValid(classId)) {
@@ -1510,7 +1605,10 @@ export class AttendanceService {
     if (!children.length) return { children: [] };
 
     const childIds = children.map((c) => c._id);
-    const filter: any = { studentId: { $in: childIds } };
+    const filter: any = {
+      studentId: { $in: childIds },
+      status: { $exists: true, $ne: null },
+    };
     const dateFilter = buildDateFilter(fromDate, toDate);
     if (dateFilter) filter.date = dateFilter;
 
@@ -1554,7 +1652,10 @@ export class AttendanceService {
 
     const childIds = children.map((c) => c._id);
 
-    const match: any = { studentId: { $in: childIds } };
+    const match: any = {
+      studentId: { $in: childIds },
+      status: { $exists: true, $ne: null },
+    };
     const dateFilter = buildDateFilter(fromDate, toDate);
     if (dateFilter) {
       match.date = dateFilter;

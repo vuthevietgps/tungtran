@@ -169,6 +169,25 @@ export interface FinancialDashboard {
   fundWarnings: any[];
 }
 
+export interface ProvisionalGrossProfit {
+  period: {
+    month: number;
+    year: number;
+    startDate: string;
+    endDate: string;
+  };
+  cashInflow: {
+    approvedInvoiceAmount: number;
+    approvedInvoiceCount: number;
+  };
+  provisional: {
+    revenueAmount: number;
+    teacherPayoutAmount: number;
+    attendanceCount: number;
+  };
+  grossProfitAmount: number;
+}
+
 export interface FinancialAlert {
   id: string;
   severity: 'CRITICAL' | 'WARNING' | 'INFO';
@@ -209,6 +228,12 @@ export class FinancialControlService {
   // ─── Dashboard ─────────────────────────────────────────────────
   async getDashboard(): Promise<FinancialDashboard> {
     return this.http.get<FinancialDashboard>(`${this.apiUrl}/dashboard`).toPromise() as Promise<FinancialDashboard>;
+  }
+
+  async getProvisionalGrossProfit(month?: string): Promise<ProvisionalGrossProfit> {
+    let params = new HttpParams();
+    if (month) params = params.set('month', month);
+    return this.http.get<ProvisionalGrossProfit>(`${this.apiUrl}/provisional-gross-profit`, { params }).toPromise() as Promise<ProvisionalGrossProfit>;
   }
 
   // ─── Alerts ────────────────────────────────────────────────────

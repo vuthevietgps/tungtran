@@ -124,7 +124,7 @@ import { Role, ROLE_LABELS } from '../models/role.enum';
             <a routerLink="/app/conversations" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.SALE])" title="Hội thoại">
               <span class="icon">&#128172;</span><span class="label">Hội thoại</span>
             </a>
-            <a routerLink="/app/chatbot-settings" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Cài đặt Chatbot">
+            <a routerLink="/app/chatbot-settings" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS])" title="Cài đặt Chatbot">
               <span class="icon">&#9881;</span><span class="label">Cài đặt Chatbot</span>
             </a>
           </div>
@@ -170,7 +170,7 @@ import { Role, ROLE_LABELS } from '../models/role.enum';
             <a routerLink="/app/teaching-materials" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.TEACHER])" title="Tài liệu giảng dạy">
               <span class="icon">&#128194;</span><span class="label">Tài liệu GD</span>
             </a>
-            <a routerLink="/app/teaching-report" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.TEACHER])" title="BC Giảng dạy">
+            <a routerLink="/app/teaching-report" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.TEACHER, Role.ACCOUNTING])" title="BC Giảng dạy">
               <span class="icon">&#128221;</span><span class="label">BC Giảng dạy</span>
             </a>
             <a routerLink="/app/teacher-kpi" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="KPI Giáo viên">
@@ -179,8 +179,8 @@ import { Role, ROLE_LABELS } from '../models/role.enum';
             <a routerLink="/app/calendar-overview" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Lịch tổng quan">
               <span class="icon">&#128197;</span><span class="label">Lịch tổng quan</span>
             </a>
-            <a routerLink="/app/teacher-profiles" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Hồ sơ giáo viên">
-              <span class="icon">&#128101;</span><span class="label">Hồ sơ giáo viên</span>
+            <a routerLink="/app/teacher-profiles" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING])" title="Quản lý giáo viên">
+              <span class="icon">&#128101;</span><span class="label">Quản lý giáo viên</span>
             </a>
             <a routerLink="/app/teacher-profile" routerLinkActive="active" *ngIf="hasRole([Role.TEACHER])" title="Hồ sơ giảng dạy">
               <span class="icon">&#128100;</span><span class="label">Hồ sơ cá nhân</span>

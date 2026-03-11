@@ -14,10 +14,6 @@ export interface StudentItem {
   parentName: string;
   parentPhone: string;
   faceImage: string;
-  payments?: Array<{
-    frameIndex: number;
-    confirmStatus?: 'PENDING' | 'CONFIRMED' | 'REJECTED';
-  }>;
   productPackage?: {
     _id: string;
     name: string;
@@ -47,6 +43,9 @@ export interface SessionCell {
   attendedAt: string | null;
   duration: number;
   teacherCode: string;
+  teacherName?: string;
+  teacherDisplay?: string;
+  sessionIndex?: number | null;
 }
 
 export interface ComprehensiveReportRow {
@@ -73,6 +72,7 @@ export interface ComprehensiveReportRow {
   teacherSalary?: number;
   teacherSalaryType?: 'PER_SESSION' | 'PER_STUDENT';
   invoiceNumber?: string;
+  saleId?: string;
   saleName?: string;
   dataStatus?: string;
   pricePerSession: number;

@@ -74,7 +74,7 @@ export interface BulkAttendancePayload {
   date: string;
   attendances: Array<{
     studentId: string;
-    status: AttendanceStatus;
+    status: AttendanceStatus | null;
     notes?: string;
   }>;
 }

@@ -27,7 +27,7 @@ export class UsersController {
   }
 
   @Get('teachers')
-  @Roles(Role.DIRECTOR, Role.SALE)
+  @Roles(Role.DIRECTOR, Role.SALE, Role.OPS, Role.ACCOUNTING)
   findTeachers() {
     return this.usersService.findByRole(Role.TEACHER);
   }

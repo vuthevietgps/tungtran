@@ -14,7 +14,6 @@ interface StudentForm {
   parentUserId: string;
   parentName: string;
   parentPhone: string;
-  paymentCount: number;
   faceImage: string;
 }
 
@@ -36,45 +35,45 @@ interface StudentForm {
       <button (click)="reload()">Lam moi</button>
     </section>
 
-    <table class="data" *ngIf="filtered().length; else empty">
-      <thead>
-        <tr>
-          <th>Anh</th>
-          <th>Ma hoc sinh</th>
-          <th>Ho va ten</th>
-          <th>Tuoi</th>
-          <th>Thang sinh HS</th>
-          <th>Ten phu huynh</th>
-          <th>Thang sinh PH</th>
-          <th>Dien thoai</th>
-          <th>So lan TT</th>
-          <th>Hanh dong</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr *ngFor="let s of filtered()">
-          <td><img [src]="s.faceImage" alt="{{s.fullName}}" /></td>
-          <td><strong>{{s.studentCode}}</strong></td>
-          <td>{{s.fullName}}</td>
-          <td>{{s.age}}</td>
-          <td>{{ s.studentBirthMonth ? 'T' + s.studentBirthMonth : '-' }}</td>
-          <td>{{s.parentName}}</td>
-          <td>{{ s.parentBirthMonth ? 'T' + s.parentBirthMonth : '-' }}</td>
-          <td>{{s.parentPhone}}</td>
-          <td>{{ s.payments?.length || 0 }}</td>
-          <td class="actions-cell">
-            <button class="ghost" (click)="edit(s)">Sua</button>
-            <button class="ghost" (click)="remove(s)" *ngIf="canDeleteStudents">Xoa</button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+    <div class="table-wrap" *ngIf="filtered().length; else empty">
+      <table class="data">
+        <thead>
+          <tr>
+            <th>Anh</th>
+            <th>Ma hoc sinh</th>
+            <th>Ho va ten</th>
+            <th>Tuoi</th>
+            <th>Thang sinh HS</th>
+            <th>Ten phu huynh</th>
+            <th>Thang sinh PH</th>
+            <th>Dien thoai</th>
+            <th>Hanh dong</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let s of filtered()">
+            <td><img [src]="s.faceImage" alt="{{s.fullName}}" /></td>
+            <td><strong>{{s.studentCode}}</strong></td>
+            <td>{{s.fullName}}</td>
+            <td>{{s.age}}</td>
+            <td>{{ s.studentBirthMonth ? 'T' + s.studentBirthMonth : '-' }}</td>
+            <td>{{s.parentName}}</td>
+            <td>{{ s.parentBirthMonth ? 'T' + s.parentBirthMonth : '-' }}</td>
+            <td>{{s.parentPhone}}</td>
+            <td class="actions-cell">
+              <button class="ghost" (click)="edit(s)">Sua</button>
+              <button class="ghost" (click)="remove(s)" *ngIf="canDeleteStudents">Xoa</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
     <ng-template #empty><p>Chua co hoc sinh.</p></ng-template>
 
     <div class="modal-backdrop" *ngIf="showModal()">
       <div class="modal">
         <h3>{{ editingStudent ? 'Sua hoc sinh' : 'Them hoc sinh' }}</h3>
-        <form (ngSubmit)="submit()">
+        <form novalidate (ngSubmit)="submit()">
           <label>Ma hoc sinh
             <input name="studentCode" [(ngModel)]="form.studentCode" placeholder="Vi du: HS001" required />
           </label>
@@ -116,17 +115,6 @@ interface StudentForm {
               [(ngModel)]="form.parentPhone"
               required />
           </label>
-          <label>So lan thanh toan
-            <input
-              name="paymentCount"
-              type="number"
-              min="0"
-              max="10"
-              [(ngModel)]="form.paymentCount"
-              [disabled]="!!editingStudent"
-              required />
-          </label>
-          <small *ngIf="editingStudent">So lan thanh toan chi ap dung khi tao moi hoc sinh.</small>
           <label>Anh nhan dien
             <input type="file" accept="image/*" (change)="handleFileChange($event)" />
           </label>
@@ -136,7 +124,7 @@ interface StudentForm {
             <img *ngIf="form.faceImage && !uploading()" [src]="form.faceImage" alt="Xem truoc" class="preview" />
           </div>
           <div class="actions">
-            <button type="submit" class="primary" [disabled]="uploading() || !form.faceImage">Luu</button>
+            <button type="submit" class="primary" [disabled]="uploading()">Luu</button>
             <button type="button" (click)="closeModal()">Huy</button>
           </div>
           <p class="error" *ngIf="error()">{{error()}}</p>
@@ -149,21 +137,27 @@ interface StudentForm {
     .filters { display:flex; gap:10px; margin-bottom:16px; }
     input { padding:6px 8px; border:1px solid #cbd5f5; border-radius:4px; width:100%; }
     select { padding:6px 8px; border:1px solid #cbd5f5; border-radius:4px; width:100%; background:#fff; }
-    .data { width:100%; border-collapse:collapse; background:#fff; }
+    .table-wrap { width:100%; overflow:auto; border:1px solid #e2e8f0; border-radius:6px; background:#fff; }
+    .data { width:100%; min-width:900px; border-collapse:collapse; background:#fff; }
     th, td { padding:8px; border:1px solid #e2e8f0; vertical-align:middle; }
     thead { background:#f1f5f9; }
     img { width:44px; height:44px; object-fit:cover; border-radius:4px; border:1px solid #cbd5f5; }
     .primary { background:#2563eb; color:#fff; border:none; padding:8px 12px; border-radius:4px; cursor:pointer; }
     .ghost { border:1px solid #94a3b8; background:transparent; padding:6px 10px; border-radius:4px; cursor:pointer; }
-    .modal-backdrop { position:fixed; inset:0; background:rgba(15,23,42,.55); display:flex; align-items:center; justify-content:center; }
-    .modal { background:#fff; padding:20px; border-radius:8px; width:360px; box-shadow:0 8px 24px rgba(15,23,42,.2); }
-    .modal form { display:flex; flex-direction:column; gap:12px; }
-    .actions { display:flex; gap:8px; justify-content:flex-end; }
+    .modal-backdrop { position:fixed; inset:0; z-index:1000; background:rgba(15,23,42,.55); display:flex; align-items:flex-start; justify-content:center; padding:16px; overflow:auto; }
+    .modal { background:#fff; padding:20px; border-radius:8px; width:min(460px, calc(100vw - 32px)); max-height:calc(100vh - 32px); box-shadow:0 8px 24px rgba(15,23,42,.2); display:flex; flex-direction:column; }
+    .modal h3 { margin:0 0 12px; }
+    .modal form { display:flex; flex-direction:column; gap:12px; overflow:auto; padding-right:4px; }
+    .actions { display:flex; gap:8px; justify-content:flex-end; position:sticky; bottom:0; background:#fff; padding-top:8px; }
     .actions-cell { width:120px; text-align:right; }
     .actions-cell button { margin-left:4px; }
     .error { color:#dc2626; }
     .upload-status { display:flex; flex-direction:column; gap:6px; font-size:13px; }
     .preview { width:120px; height:120px; object-fit:cover; border-radius:8px; border:1px solid #cbd5f5; }
+    @media (max-width: 768px) {
+      .modal-backdrop { padding:8px; }
+      .modal { width:calc(100vw - 16px); max-height:calc(100vh - 16px); padding:14px; }
+    }
   `]
 })
 export class StudentsComponent {
@@ -250,7 +244,6 @@ export class StudentsComponent {
       parentUserId: student.parentUserId || '',
       parentName: student.parentName,
       parentPhone: student.parentPhone,
-      paymentCount: student.payments?.length || 0,
       faceImage: student.faceImage,
     };
     this.error.set('');
@@ -264,13 +257,51 @@ export class StudentsComponent {
   }
 
   async submit() {
+    this.error.set('');
+
+    const studentCode = this.form.studentCode.trim();
+    const fullName = this.form.fullName.trim();
+    const parentName = this.form.parentName.trim();
+    const parentPhone = this.form.parentPhone.trim();
+    const faceImage = this.form.faceImage.trim() || this.editingStudent?.faceImage?.trim() || '';
+    const age = Number(this.form.age);
+
+    if (!studentCode) {
+      this.error.set('Vui long nhap ma hoc sinh');
+      return;
+    }
+    if (!fullName) {
+      this.error.set('Vui long nhap ho va ten');
+      return;
+    }
+    if (!Number.isFinite(age) || age < 3 || age > 25) {
+      this.error.set('Tuoi phai trong khoang 3 den 25');
+      return;
+    }
+    if (!parentName) {
+      this.error.set('Vui long nhap ten phu huynh');
+      return;
+    }
+    if (!parentPhone) {
+      this.error.set('Vui long nhap dien thoai phu huynh');
+      return;
+    }
+    if (!/^[0-9+\-()\s]{6,20}$/.test(parentPhone)) {
+      this.error.set('Dien thoai phu huynh khong hop le');
+      return;
+    }
+    if (!faceImage) {
+      this.error.set('Vui long tai anh nhan dien');
+      return;
+    }
+
     const payload: any = {
-      studentCode: this.form.studentCode.trim(),
-      fullName: this.form.fullName.trim(),
-      age: Number(this.form.age),
-      parentName: this.form.parentName.trim(),
-      parentPhone: this.form.parentPhone.trim(),
-      faceImage: this.form.faceImage.trim(),
+      studentCode,
+      fullName,
+      age,
+      parentName,
+      parentPhone,
+      faceImage,
     };
 
     if (this.form.parentUserId) {
@@ -281,16 +312,6 @@ export class StudentsComponent {
     }
     if (this.form.parentBirthMonth) {
       payload.parentBirthMonth = Number(this.form.parentBirthMonth);
-    }
-
-    if (!this.editingStudent) {
-      const paymentCount = Number(this.form.paymentCount || 0);
-      if (paymentCount > 0) {
-        payload.payments = Array.from({ length: paymentCount }, (_, i) => ({
-          frameIndex: i + 1,
-          confirmStatus: 'PENDING',
-        }));
-      }
     }
 
     try {
@@ -348,7 +369,6 @@ export class StudentsComponent {
       parentUserId: '',
       parentName: '',
       parentPhone: '',
-      paymentCount: 0,
       faceImage: '',
     };
   }

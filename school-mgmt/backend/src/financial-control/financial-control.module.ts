@@ -22,6 +22,7 @@ import { Lead, LeadSchema } from '../leads/schemas/lead.schema';
 import { Loan, LoanSchema } from '../loans/schemas/loan.schema';
 import { LoanPayment, LoanPaymentSchema } from '../loans/schemas/loan-payment.schema';
 import { Student, StudentSchema } from '../students/schemas/student.schema';
+import { Attendance, AttendanceSchema } from '../attendance/schemas/attendance.schema';
 import { PayrollFinancialAggregateService } from './aggregates/payroll-financial.aggregate';
 import { ExpenseFinancialAggregateService } from './aggregates/expense-financial.aggregate';
 import { LoanFinancialAggregateService } from './aggregates/loan-financial.aggregate';
@@ -50,6 +51,7 @@ import { AdsModule } from '../ads/ads.module';
       { name: Loan.name, schema: LoanSchema },
       { name: LoanPayment.name, schema: LoanPaymentSchema },
       { name: Student.name, schema: StudentSchema },
+      { name: Attendance.name, schema: AttendanceSchema },
     ]),
   ],
   controllers: [FinancialControlController],

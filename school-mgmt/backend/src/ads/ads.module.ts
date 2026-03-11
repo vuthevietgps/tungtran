@@ -11,6 +11,7 @@ import { Lead, LeadSchema } from '../leads/schemas/lead.schema';
 import { Session, SessionSchema } from '../sessions/schemas/session.schema';
 import { Expense, ExpenseSchema } from '../expenses/schemas/expense.schema';
 import { Student, StudentSchema } from '../students/schemas/student.schema';
+import { Fanpage, FanpageSchema } from '../chatbot/schemas/fanpage.schema';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { Student, StudentSchema } from '../students/schemas/student.schema';
       { name: Session.name, schema: SessionSchema },
       { name: Expense.name, schema: ExpenseSchema },
       { name: Student.name, schema: StudentSchema },
+      { name: Fanpage.name, schema: FanpageSchema },
     ]),
   ],
   controllers: [AdsController],

@@ -1,4 +1,4 @@
-import { Component, computed, signal } from '@angular/core';
+import { Component, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
@@ -31,32 +31,79 @@ interface RoleOption {
   </section>
 
   <section class="filters">
-    <input placeholder="Tim theo ma, email hoac ho ten" [(ngModel)]="search" />
-    <select [(ngModel)]="roleFilter">
+    <input
+      placeholder="Tim theo ma, email hoac ho ten"
+      [(ngModel)]="search"
+      (ngModelChange)="onFilterChange()" />
+    <select [(ngModel)]="roleFilter" (ngModelChange)="onFilterChange()">
       <option value="">Tat ca role</option>
       <option *ngFor="let r of roleOptions" [value]="r.value">{{ r.label }}</option>
     </select>
     <button (click)="reload()">Lam moi</button>
   </section>
 
-  <table class="data" *ngIf="filtered().length; else empty">
-    <thead>
-      <tr><th>Ma TK</th><th>Email</th><th>Ho ten</th><th>Role</th><th>Trang thai</th><th>Hanh dong</th></tr>
-    </thead>
-    <tbody>
-      <tr *ngFor="let u of filtered()">
-        <td><strong>{{ u.userCode || '-' }}</strong></td>
-        <td>{{ u.email }}</td>
-        <td>{{ u.fullName }}</td>
-        <td>{{ translateRole(u.role) }}</td>
-        <td>{{ u.status || 'N/A' }}</td>
-        <td class="actions-cell">
-          <button class="ghost" (click)="edit(u)" [disabled]="isSelf(u)">Sua</button>
-          <button class="danger" (click)="remove(u)" [disabled]="isSelf(u)">Xoa</button>
-        </td>
-      </tr>
-    </tbody>
-  </table>
+  <section class="table-wrapper" *ngIf="filteredUsers.length; else empty">
+    <div class="table-scroll">
+      <table class="data">
+        <thead>
+          <tr><th>Ma TK</th><th>Email</th><th>Ho ten</th><th>Role</th><th>Trang thai</th><th>Hanh dong</th></tr>
+        </thead>
+        <tbody>
+          <tr
+            *ngFor="let u of pagedUsers"
+            [class.selected]="parentMode() && selectedParentId === u._id"
+            (click)="selectParent(u)">
+            <td><strong>{{ u.userCode || '-' }}</strong></td>
+            <td>{{ u.email }}</td>
+            <td>{{ u.fullName }}</td>
+            <td>{{ translateRole(u.role) }}</td>
+            <td>{{ u.status || 'N/A' }}</td>
+            <td class="actions-cell">
+              <button class="ghost" (click)="onEdit(u, $event)" [disabled]="isSelf(u)">Sua</button>
+              <button class="danger" (click)="onRemove(u, $event)" [disabled]="isSelf(u)">Xoa</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="table-footer">
+      <label class="page-size-control">
+        So dong/trang
+        <select [(ngModel)]="pageSize" (ngModelChange)="onPageSizeChange($event)">
+          <option *ngFor="let size of pageSizeOptions" [ngValue]="size">{{ size }}</option>
+        </select>
+      </label>
+
+      <div class="pager">
+        <button type="button" (click)="goPrevPage()" [disabled]="safeCurrentPage <= 1">Truoc</button>
+        <span>Trang {{ safeCurrentPage }}/{{ totalPages }} ({{ pageStart }}-{{ pageEnd }} / {{ filteredUsers.length }})</span>
+        <button type="button" (click)="goNextPage()" [disabled]="safeCurrentPage >= totalPages">Sau</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="parent-contact" *ngIf="parentMode() && selectedParentDetail as parentDetail">
+    <h4>Thong tin lien he phu huynh</h4>
+    <div class="parent-contact-grid">
+      <div>
+        <strong>Link Facebook</strong>
+        <a
+          *ngIf="parentDetail.facebookLink; else noFacebook"
+          [href]="parentDetail.facebookLink"
+          target="_blank"
+          rel="noopener noreferrer">
+          {{ parentDetail.facebookLink }}
+        </a>
+        <ng-template #noFacebook><p>-</p></ng-template>
+      </div>
+      <div>
+        <strong>Dia chi</strong>
+        <p>{{ parentDetail.address || '-' }}</p>
+      </div>
+    </div>
+  </section>
+
   <ng-template #empty><p>Khong co du lieu hoac khong trung bo loc.</p></ng-template>
 
   <div class="modal-backdrop" *ngIf="showModal()">
@@ -117,11 +164,27 @@ interface RoleOption {
     .scope-tabs { display:flex; gap:8px; margin-bottom:12px; }
     .scope-tabs button { border:1px solid #cbd5e1; background:#fff; padding:6px 10px; border-radius:999px; cursor:pointer; font-weight:500; }
     .scope-tabs button.active { border-color:#2563eb; color:#1d4ed8; background:#eff6ff; }
-    .filters { display:flex; gap:10px; margin-bottom:16px; }
+    .filters { display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap; }
     input, select, textarea { padding:6px 8px; border:1px solid #cbd5e1; border-radius:4px; }
-    .data { width:100%; border-collapse:collapse; background:#fff; }
-    th, td { padding:8px; border:1px solid #e2e8f0; text-align:left; }
-    thead { background:#f1f5f9; }
+    .table-wrapper { border:1px solid #e2e8f0; border-radius:8px; background:#fff; overflow:hidden; }
+    .table-scroll { max-height:calc(100vh - 320px); overflow:auto; }
+    .data { width:100%; border-collapse:separate; border-spacing:0; background:#fff; }
+    th, td { padding:8px; border-bottom:1px solid #e2e8f0; border-left:1px solid #e2e8f0; text-align:left; }
+    th:first-child, td:first-child { border-left:none; }
+    thead th { position:sticky; top:0; z-index:2; background:#f1f5f9; }
+    tbody tr:hover { background:#f8fafc; }
+    tbody tr.selected { background:#eff6ff; }
+    .table-footer { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 12px; border-top:1px solid #e2e8f0; flex-wrap:wrap; }
+    .page-size-control { display:flex; align-items:center; gap:8px; color:#334155; font-size:13px; }
+    .pager { display:flex; align-items:center; gap:8px; color:#334155; font-size:13px; }
+    .pager button { border:1px solid #cbd5e1; background:#fff; color:#0f172a; padding:4px 10px; border-radius:4px; cursor:pointer; }
+    .pager button:disabled { opacity:.5; cursor:not-allowed; }
+    .parent-contact { margin-top:12px; border:1px solid #e2e8f0; border-radius:8px; padding:12px; background:#fff; }
+    .parent-contact h4 { margin:0 0 10px; color:#1e293b; }
+    .parent-contact-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .parent-contact strong { display:block; margin-bottom:4px; color:#334155; font-size:13px; }
+    .parent-contact a { color:#2563eb; word-break:break-all; text-decoration:none; }
+    .parent-contact p { margin:0; color:#334155; word-break:break-word; }
     .primary { background:#2563eb; color:#fff; border:none; padding:8px 12px; border-radius:4px; cursor:pointer; }
     .ghost { border:1px solid #94a3b8; background:transparent; padding:4px 10px; border-radius:4px; cursor:pointer; margin-right:6px; }
     .danger { border:1px solid #dc2626; background:#dc2626; color:#fff; padding:4px 10px; border-radius:4px; cursor:pointer; }
@@ -133,6 +196,9 @@ interface RoleOption {
     .actions { display:flex; gap:8px; justify-content:flex-end; }
     .hint { color:#64748b; font-size:12px; }
     .error { color:#dc2626; margin:0; }
+    @media (max-width: 900px) {
+      .parent-contact-grid { grid-template-columns:1fr; }
+    }
   `]
 })
 export class UsersManagementComponent {
@@ -145,6 +211,10 @@ export class UsersManagementComponent {
 
   search = '';
   roleFilter = '';
+  pageSizeOptions: number[] = [50, 100, 200];
+  pageSize = 50;
+  currentPage = 1;
+  selectedParentId: string | null = null;
   form = {
     userCode: '',
     email: '',
@@ -182,11 +252,15 @@ export class UsersManagementComponent {
 
       if (isParentMode) this.roleFilter = this.parentRole;
       if (!isParentMode && wasParentMode && this.roleFilter === this.parentRole) this.roleFilter = '';
+      if (!isParentMode) this.selectedParentId = null;
+
+      this.currentPage = 1;
+      this.syncParentSelection();
     });
     this.reload();
   }
 
-  filtered = computed(() => {
+  get filteredUsers(): UserItem[] {
     const term = this.search.trim().toLowerCase();
     return this.users().filter((u) =>
       (!this.roleFilter || u.role === this.roleFilter) &&
@@ -195,7 +269,35 @@ export class UsersManagementComponent {
         u.email.toLowerCase().includes(term) ||
         (u.fullName || '').toLowerCase().includes(term))
     );
-  });
+  }
+
+  get totalPages(): number {
+    return Math.max(1, Math.ceil(this.filteredUsers.length / this.pageSize));
+  }
+
+  get safeCurrentPage(): number {
+    return Math.min(Math.max(this.currentPage, 1), this.totalPages);
+  }
+
+  get pagedUsers(): UserItem[] {
+    const start = (this.safeCurrentPage - 1) * this.pageSize;
+    return this.filteredUsers.slice(start, start + this.pageSize);
+  }
+
+  get pageStart(): number {
+    if (!this.filteredUsers.length) return 0;
+    return (this.safeCurrentPage - 1) * this.pageSize + 1;
+  }
+
+  get pageEnd(): number {
+    if (!this.filteredUsers.length) return 0;
+    return Math.min(this.pageStart + this.pageSize - 1, this.filteredUsers.length);
+  }
+
+  get selectedParentDetail(): UserItem | null {
+    if (!this.parentMode() || !this.selectedParentId) return null;
+    return this.filteredUsers.find((u) => u._id === this.selectedParentId) || null;
+  }
 
   translateRole(role: string) {
     return this.roleOptions.find((r) => r.value === role)?.label || role;
@@ -219,9 +321,67 @@ export class UsersManagementComponent {
     return role === this.parentRole;
   }
 
+  onFilterChange() {
+    this.currentPage = 1;
+    this.syncParentSelection();
+  }
+
+  onPageSizeChange(value: number) {
+    this.pageSize = Number(value) || this.pageSizeOptions[0];
+    this.currentPage = 1;
+    this.syncParentSelection();
+  }
+
+  goPrevPage() {
+    if (this.safeCurrentPage <= 1) return;
+    this.currentPage = this.safeCurrentPage - 1;
+    this.syncParentSelection();
+  }
+
+  goNextPage() {
+    if (this.safeCurrentPage >= this.totalPages) return;
+    this.currentPage = this.safeCurrentPage + 1;
+    this.syncParentSelection();
+  }
+
+  selectParent(user: UserItem) {
+    if (!this.parentMode()) return;
+    this.selectedParentId = user._id;
+  }
+
+  onEdit(user: UserItem, event: Event) {
+    event.stopPropagation();
+    this.edit(user);
+  }
+
+  onRemove(user: UserItem, event: Event) {
+    event.stopPropagation();
+    this.remove(user);
+  }
+
+  private syncParentSelection() {
+    if (!this.parentMode()) {
+      this.selectedParentId = null;
+      return;
+    }
+
+    const currentRows = this.pagedUsers;
+    if (!currentRows.length) {
+      this.selectedParentId = null;
+      return;
+    }
+
+    this.currentPage = this.safeCurrentPage;
+    if (!this.selectedParentId || !currentRows.some((u) => u._id === this.selectedParentId)) {
+      this.selectedParentId = currentRows[0]._id;
+    }
+  }
+
   async reload() {
     const data = await this.userService.list();
     this.users.set(data);
+    this.currentPage = this.safeCurrentPage;
+    this.syncParentSelection();
   }
 
   async showAllAccounts() {
@@ -318,6 +478,7 @@ export class UsersManagementComponent {
       facebookLink: user.facebookLink || '',
       address: user.address || '',
     };
+    if (this.parentMode()) this.selectedParentId = user._id;
     this.error.set('');
     this.showModal.set(true);
   }

@@ -34,7 +34,7 @@ import { AuthService } from '../services/auth.service';
         <th>TL buoi hoc</th>
         <th>Gia thuc/buoi</th>
         <th>Luong thuc/buoi</th>
-        <th>Loi nhuan/buoi</th>
+        <th *ngIf="!isTeacher()">Loi nhuan/buoi</th>
         <th>Hanh dong</th>
       </tr>
     </thead>
@@ -58,7 +58,7 @@ import { AuthService } from '../services/auth.service';
         <td>{{c.sessionDuration || 60}}p</td>
         <td><strong>{{formatCurrency(c.actualPricePerSession ?? c.pricePerSession)}}</strong></td>
         <td>{{formatTeacherActual(c)}}</td>
-        <td [class]="getProfitClass(getProfit(c))">{{formatCurrency(getProfit(c))}}</td>
+        <td *ngIf="!isTeacher()" [class]="getProfitClass(getProfit(c))">{{formatCurrency(getProfit(c))}}</td>
         <td class="actions-cell">
           <ng-container *ngIf="canManage()">
             <button class="ghost" (click)="edit(c)">Sua</button>
@@ -549,6 +549,10 @@ export class ClassesComponent {
 
   isSale() {
     return this.auth.userSignal()?.role === 'SALE';
+  }
+
+  isTeacher() {
+    return this.auth.userSignal()?.role === 'TEACHER';
   }
 
   canManage() {

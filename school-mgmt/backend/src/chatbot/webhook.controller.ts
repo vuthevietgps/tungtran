@@ -55,7 +55,13 @@ export class WebhookController {
 
       // Verify signature if appSecret is configured
       const signature = req.headers['x-hub-signature-256'] as string;
-      if (fanpage.appSecret && signature) {
+      if (fanpage.appSecret) {
+        if (!signature) {
+          this.logger.warn(
+            `Facebook webhook: missing signature while appSecret is configured for pageId ${pageId}`,
+          );
+          return;
+        }
         const appSecret = this.chatbotService.getDecryptedAppSecret(fanpage);
         const rawBody = req.rawBody || Buffer.from(JSON.stringify(req.body));
         if (!this.webhookService.verifyFacebookSignature(rawBody, signature, appSecret)) {
@@ -99,7 +105,13 @@ export class WebhookController {
 
       // Verify signature if appSecret is configured
       const signature = req.headers['x-tiktok-signature'] as string;
-      if (fanpage.appSecret && signature) {
+      if (fanpage.appSecret) {
+        if (!signature) {
+          this.logger.warn(
+            `TikTok webhook: missing signature while appSecret is configured for pageId ${pageId}`,
+          );
+          return;
+        }
         const appSecret = this.chatbotService.getDecryptedAppSecret(fanpage);
         const rawBody = req.rawBody || Buffer.from(JSON.stringify(req.body));
         if (!this.webhookService.verifyTikTokSignature(rawBody, signature, appSecret)) {

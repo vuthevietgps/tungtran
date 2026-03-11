@@ -1,7 +1,10 @@
 import { Component, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { AuthService } from '../services/auth.service';
+import { PayrollItem, PayrollPreview, PayrollService } from '../services/payroll.service';
 import { SessionService, SessionItem } from '../services/session.service';
+import { UserItem, UserService } from '../services/user.service';
 
 @Component({
   selector: 'app-teaching-report',
@@ -25,6 +28,81 @@ import { SessionService, SessionItem } from '../services/session.service';
       </button>
     </div>
 
+    <section class="filter-panel">
+      <div class="filter-row">
+        <div class="filter-group">
+          <label>Tháng</label>
+          <input type="month" [(ngModel)]="selectedMonth" (change)="onMonthChange()" />
+        </div>
+        <div class="filter-group">
+          <label>Từ ngày</label>
+          <input type="date" [(ngModel)]="fromDate" />
+        </div>
+        <div class="filter-group">
+          <label>Đến ngày</label>
+          <input type="date" [(ngModel)]="toDate" />
+        </div>
+        <div class="filter-group" *ngIf="!isTeacher()">
+          <label>Mã giáo viên</label>
+          <input
+            type="text"
+            [(ngModel)]="teacherCodeSearch"
+            list="teacher-code-options"
+            placeholder="VD: GV001"
+          />
+          <small class="teacher-hint" *ngIf="matchedTeacherByCode()">
+            {{ matchedTeacherByCode()!.fullName }}
+          </small>
+          <datalist id="teacher-code-options">
+            <option *ngFor="let teacher of teachers()" [value]="teacher.userCode || ''">
+              {{ teacher.fullName }}
+            </option>
+          </datalist>
+        </div>
+        <button class="btn-filter" type="button" (click)="applyFilters()" [disabled]="loading()">Lọc báo cáo</button>
+        <button class="btn-ghost" type="button" (click)="resetToCurrentMonth()" [disabled]="loading()">Tháng này</button>
+      </div>
+
+      <div class="salary-summary" *ngIf="payrollPreview()">
+        <article class="summary-card">
+          <strong>{{ payrollPreview()!.summary.totalAttended }}</strong>
+          <span>Buổi đã dạy trong kỳ</span>
+        </article>
+        <article class="summary-card">
+          <strong>{{ payrollPreview()!.summary.eligibleForPayroll }}</strong>
+          <span>Buổi đủ điều kiện lương</span>
+        </article>
+        <article class="summary-card emphasis">
+          <strong>{{ formatCurrency(payrollPreview()!.amounts.totalAttendedPayout) }}</strong>
+          <span>Tổng lương buổi dạy</span>
+        </article>
+        <article class="summary-card emphasis success">
+          <strong>{{ formatCurrency(getPaidPayrollTotal()) }}</strong>
+          <span>Đã nhận lương trong kỳ</span>
+        </article>
+      </div>
+
+      <ng-container *ngIf="payrollPreview()">
+        <div class="accounting-note" *ngIf="accountingNotes().length; else emptyAccountingNote">
+          <h3>Note kế toán</h3>
+          <div class="note-item" *ngFor="let payroll of accountingNotes()">
+            <div class="note-meta">
+              <strong>{{ payroll.payrollCode }}</strong>
+              <span>{{ payroll.periodStart | date:'dd/MM/yyyy' }} - {{ payroll.periodEnd | date:'dd/MM/yyyy' }}</span>
+              <span class="note-status">{{ payrollStatusLabel(payroll.status) }}</span>
+            </div>
+            <p>{{ payroll.notes }}</p>
+          </div>
+        </div>
+        <ng-template #emptyAccountingNote>
+          <div class="accounting-note empty-note">
+            <h3>Note kế toán</h3>
+            <p>Chưa có ghi chú kế toán trong kỳ đang lọc.</p>
+          </div>
+        </ng-template>
+      </ng-container>
+    </section>
+
     <div *ngIf="loading()" class="loading">Đang tải...</div>
     <div *ngIf="error()" class="alert alert-error">❌ {{ error() }}</div>
     <div *ngIf="success()" class="alert alert-success">{{ success() }}</div>
@@ -36,14 +114,15 @@ import { SessionService, SessionItem } from '../services/session.service';
       </div>
 
       <div *ngFor="let s of pendingSessions(); trackBy: trackById" class="session-card" [class.editing]="editingId === s._id">
-        <div class="session-header" (click)="toggleEdit(s)">
-          <div class="session-info">
-            <span class="badge warning">Chưa có báo cáo</span>
-            <strong>{{ s.classId.name || 'N/A' }}</strong>
+        <div class="session-header" (click)="handlePendingClick(s)">
+          <div class="session-info" *ngIf="isTeacher(); else pendingDefaultInfo">
+            <span>Ngày: {{ s.scheduledDate | date:'dd/MM/yyyy' }}</span>
             <span class="divider">|</span>
             <span>HS: {{ s.studentId.fullName || 'N/A' }}</span>
             <span class="divider">|</span>
-            <span>{{ s.scheduledDate | date:'dd/MM/yyyy' }}</span>
+            <span>Lớp: {{ s.classId.name || 'N/A' }}</span>
+            <span class="divider">|</span>
+            <span>Lương GV: {{ formatCurrency(s.teacherPayout) }}</span>
             <span class="divider">|</span>
             <span class="deadline-badge" [class.overdue]="isOverDeadline(s)" [class.near-deadline]="isNearDeadline(s)">
               {{ isOverDeadline(s) ? 'Trễ ' + getOverdueHours(s) + 'h' : 'Còn ' + getRemainingHours(s) + 'h' }}
@@ -51,13 +130,35 @@ import { SessionService, SessionItem } from '../services/session.service';
             <span class="divider">|</span>
             <span>{{ s.durationMinutes || 60 }} phút</span>
             <span class="divider">|</span>
+            <span class="badge warning">Chưa có báo cáo</span>
+            <span class="divider">|</span>
             <span class="badge" [attr.data-status]="s.status">{{ statusLabel(s.status) }}</span>
           </div>
-          <button class="btn-expand">{{ editingId === s._id ? '▲ Thu gọn' : '▼ Điền báo cáo' }}</button>
+          <ng-template #pendingDefaultInfo>
+            <div class="session-info">
+              <span class="badge warning">Chưa có báo cáo</span>
+              <span>GV: {{ s.teacherId.fullName || 'N/A' }}</span>
+              <span class="divider">|</span>
+              <strong>{{ s.classId.name || 'N/A' }}</strong>
+              <span class="divider">|</span>
+              <span>HS: {{ s.studentId.fullName || 'N/A' }}</span>
+              <span class="divider">|</span>
+              <span>{{ s.scheduledDate | date:'dd/MM/yyyy' }}</span>
+              <span class="divider">|</span>
+              <span class="deadline-badge" [class.overdue]="isOverDeadline(s)" [class.near-deadline]="isNearDeadline(s)">
+                {{ isOverDeadline(s) ? 'Trễ ' + getOverdueHours(s) + 'h' : 'Còn ' + getRemainingHours(s) + 'h' }}
+              </span>
+              <span class="divider">|</span>
+              <span>{{ s.durationMinutes || 60 }} phút</span>
+              <span class="divider">|</span>
+              <span class="badge" [attr.data-status]="s.status">{{ statusLabel(s.status) }}</span>
+            </div>
+          </ng-template>
+          <button *ngIf="canEditReports()" class="btn-expand">{{ editingId === s._id ? '▲ Thu gọn' : '▼ Điền báo cáo' }}</button>
         </div>
 
         <!-- Inline edit form -->
-        <div *ngIf="editingId === s._id" class="report-form">
+        <div *ngIf="canEditReports() && editingId === s._id" class="report-form">
           <div class="form-grid">
             <div class="form-group full" [class.has-error]="validationErrors()['lessonContent']">
               <label>Nội dung học <span class="required">*</span> <span class="char-count">{{ reportForm.lessonContent.length || 0 }}/2000</span></label>
@@ -115,16 +216,33 @@ import { SessionService, SessionItem } from '../services/session.service';
 
       <div *ngFor="let s of completedSessions(); trackBy: trackById" class="session-card completed">
         <div class="session-header" (click)="toggleView(s)">
-          <div class="session-info">
-            <span class="badge success">Đã có báo cáo</span>
-            <strong>{{ s.classId.name || 'N/A' }}</strong>
+          <div class="session-info" *ngIf="isTeacher(); else completedDefaultInfo">
+            <span>Ngày: {{ s.scheduledDate | date:'dd/MM/yyyy' }}</span>
             <span class="divider">|</span>
             <span>HS: {{ s.studentId.fullName || 'N/A' }}</span>
             <span class="divider">|</span>
-            <span>{{ s.scheduledDate | date:'dd/MM/yyyy' }}</span>
+            <span>Lớp: {{ s.classId.name || 'N/A' }}</span>
+            <span class="divider">|</span>
+            <span>Lương GV: {{ formatCurrency(s.teacherPayout) }}</span>
             <span class="divider">|</span>
             <span>{{ s.durationMinutes || 60 }} phút</span>
+            <span class="divider">|</span>
+            <span class="badge success">Đã có báo cáo</span>
           </div>
+          <ng-template #completedDefaultInfo>
+            <div class="session-info">
+              <span class="badge success">Đã có báo cáo</span>
+              <span>GV: {{ s.teacherId.fullName || 'N/A' }}</span>
+              <span class="divider">|</span>
+              <strong>{{ s.classId.name || 'N/A' }}</strong>
+              <span class="divider">|</span>
+              <span>HS: {{ s.studentId.fullName || 'N/A' }}</span>
+              <span class="divider">|</span>
+              <span>{{ s.scheduledDate | date:'dd/MM/yyyy' }}</span>
+              <span class="divider">|</span>
+              <span>{{ s.durationMinutes || 60 }} phút</span>
+            </div>
+          </ng-template>
           <button class="btn-expand">{{ viewingId === s._id ? '▲ Thu gọn' : '▼ Xem' }}</button>
         </div>
 
@@ -148,12 +266,12 @@ import { SessionService, SessionItem } from '../services/session.service';
               </tr>
             </table>
             <div class="form-actions">
-              <button class="btn secondary" (click)="startEdit(s)">Sửa báo cáo</button>
+              <button *ngIf="canEditReports()" class="btn secondary" (click)="startEdit(s)">Sửa báo cáo</button>
             </div>
           </div>
 
           <!-- Edit mode for completed -->
-          <div *ngIf="editingId === s._id" class="report-form">
+          <div *ngIf="canEditReports() && editingId === s._id" class="report-form">
             <div class="form-grid">
               <div class="form-group full">
                 <label>Nội dung học <span class="required">*</span></label>
@@ -218,6 +336,73 @@ import { SessionService, SessionItem } from '../services/session.service';
       background: #ef4444; color: #fff; font-size: 11px; font-weight: 700;
       margin-left: 6px; line-height: 1;
     }
+    .filter-panel {
+      margin-bottom: 16px; padding: 16px; border: 1px solid #e2e8f0;
+      border-radius: 10px; background: #f8fafc;
+    }
+    .filter-row {
+      display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .filter-group { display: flex; flex-direction: column; gap: 4px; }
+    .filter-group label { font-size: 12px; font-weight: 600; color: #64748b; }
+    .filter-group input {
+      min-width: 150px; padding: 8px 10px; border: 1px solid #cbd5e1;
+      border-radius: 6px; font-size: 13px; background: #fff;
+    }
+    .teacher-hint { color: #475569; font-size: 11px; }
+    .btn-filter, .btn-ghost {
+      height: 38px; padding: 0 16px; border-radius: 6px;
+      font-size: 13px; font-weight: 600; cursor: pointer;
+    }
+    .btn-filter {
+      border: none; background: #2563eb; color: #fff;
+    }
+    .btn-filter:disabled, .btn-ghost:disabled { cursor: not-allowed; opacity: 0.7; }
+    .btn-ghost {
+      border: 1px solid #cbd5e1; background: #fff; color: #475569;
+    }
+    .salary-summary {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px; margin-bottom: 14px;
+    }
+    .summary-card {
+      display: flex; flex-direction: column; gap: 4px; padding: 14px;
+      border-radius: 10px; background: #fff; border: 1px solid #e2e8f0;
+    }
+    .summary-card strong { color: #0f172a; font-size: 20px; }
+    .summary-card span { color: #64748b; font-size: 12px; font-weight: 600; }
+    .summary-card.emphasis { background: #eff6ff; border-color: #bfdbfe; }
+    .summary-card.emphasis strong { color: #1d4ed8; }
+    .summary-card.success { background: #ecfdf5; border-color: #bbf7d0; }
+    .summary-card.success strong { color: #15803d; }
+    .accounting-note {
+      padding: 14px; border-radius: 10px; background: #fff;
+      border: 1px solid #e2e8f0;
+    }
+    .accounting-note h3 {
+      margin: 0 0 10px; color: #1e293b; font-size: 15px;
+    }
+    .note-item {
+      padding-top: 10px; margin-top: 10px; border-top: 1px solid #e2e8f0;
+    }
+    .note-item:first-of-type {
+      padding-top: 0; margin-top: 0; border-top: none;
+    }
+    .note-meta {
+      display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+      margin-bottom: 6px; font-size: 12px; color: #64748b;
+    }
+    .note-meta strong { color: #0f172a; }
+    .note-status {
+      display: inline-flex; align-items: center; padding: 3px 8px;
+      border-radius: 999px; background: #e2e8f0; color: #475569;
+      font-weight: 700; font-size: 11px;
+    }
+    .accounting-note p {
+      margin: 0; color: #334155; font-size: 13px; line-height: 1.5;
+    }
+    .empty-note p { color: #64748b; }
     .loading { text-align: center; padding: 40px; color: #64748b; }
     
     /* Alert styles */
@@ -317,14 +502,22 @@ import { SessionService, SessionItem } from '../services/session.service';
     .pagination button:disabled { opacity: 0.5; cursor: not-allowed; }
     .pagination span { font-size: 13px; color: #64748b; }
 
-    @media (max-width: 768px) { .form-grid { grid-template-columns: 1fr; } }
+    @media (max-width: 768px) {
+      .form-grid { grid-template-columns: 1fr; }
+      .filter-row { align-items: stretch; }
+      .filter-group, .filter-group input, .btn-filter, .btn-ghost { width: 100%; }
+      .session-header { flex-direction: column; align-items: flex-start; gap: 10px; }
+      .btn-expand { width: 100%; }
+    }
   `]
 })
 export class TeachingReportComponent implements OnInit {
+  teachers = signal<UserItem[]>([]);
   pendingSessions = signal<SessionItem[]>([]);
   completedSessions = signal<SessionItem[]>([]);
   pendingCount = signal(0);
   completedMeta = signal<any>({});
+  payrollPreview = signal<PayrollPreview | null>(null);
   loading = signal(false);
   submitting = signal(false);
   error = signal('');
@@ -333,6 +526,11 @@ export class TeachingReportComponent implements OnInit {
   editingId = '';
   viewingId = '';
   completedPage = 1;
+  selectedMonth = '';
+  fromDate = '';
+  toDate = '';
+  teacherCodeSearch = '';
+  selectedTeacherId = '';
   validationErrors = signal<Record<string, string>>({});
 
   reportForm = {
@@ -346,19 +544,23 @@ export class TeachingReportComponent implements OnInit {
 
   constructor(
     private sessionService: SessionService,
+    private auth: AuthService,
+    private payrollService: PayrollService,
+    private userService: UserService,
   ) {}
 
   ngOnInit() {
-    this.loadPending();
+    if (!this.isTeacher()) {
+      this.loadTeacherOptions();
+    }
+    this.resetToCurrentMonth();
   }
 
   async loadPending() {
     this.loading.set(true);
     this.error.set('');
     try {
-      const result = await this.sessionService.getSessionsPendingReport({ limit: 100 });
-      this.pendingSessions.set(result.data);
-      this.pendingCount.set(result.meta?.total || result.data.length);
+      await Promise.all([this.fetchPending(), this.fetchPayrollPreview()]);
     } catch (e: any) {
       this.error.set(e?.message || 'Lỗi tải dữ liệu');
     } finally {
@@ -370,17 +572,149 @@ export class TeachingReportComponent implements OnInit {
     this.loading.set(true);
     this.error.set('');
     try {
-      const result = await this.sessionService.getSessionsCompletedReport({
-        page: this.completedPage,
-        limit: 20,
-      });
-      this.completedSessions.set(result.data);
-      this.completedMeta.set(result.meta || {});
+      await Promise.all([this.fetchCompleted(), this.fetchPayrollPreview()]);
     } catch (e: any) {
       this.error.set(e?.message || 'Lỗi tải dữ liệu');
     } finally {
       this.loading.set(false);
     }
+  }
+
+  onMonthChange() {
+    if (!this.selectedMonth) return;
+    const [year, month] = this.selectedMonth.split('-').map(Number);
+    if (!year || !month) return;
+    const lastDay = new Date(year, month, 0).getDate();
+    this.fromDate = `${year}-${String(month).padStart(2, '0')}-01`;
+    this.toDate = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    this.applyFilters();
+  }
+
+  resetToCurrentMonth() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+    this.selectedMonth = `${year}-${String(month).padStart(2, '0')}`;
+    const lastDay = new Date(year, month, 0).getDate();
+    this.fromDate = `${year}-${String(month).padStart(2, '0')}-01`;
+    this.toDate = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    this.applyFilters();
+  }
+
+  async applyFilters(resetPage = true) {
+    if (this.fromDate && this.toDate && this.fromDate > this.toDate) {
+      this.error.set('Khoảng ngày không hợp lệ');
+      return;
+    }
+
+    if (!this.syncTeacherSelection()) {
+      return;
+    }
+
+    if (resetPage) this.completedPage = 1;
+    this.loading.set(true);
+    this.error.set('');
+    this.editingId = '';
+    this.viewingId = '';
+
+    try {
+      await Promise.all([
+        this.fetchPending(),
+        this.fetchCompleted(),
+        this.fetchPayrollPreview(),
+      ]);
+    } catch (e: any) {
+      this.error.set(e?.message || 'Lỗi tải dữ liệu');
+    } finally {
+      this.loading.set(false);
+    }
+  }
+
+  private async fetchPending() {
+    const result = await this.sessionService.list({
+      limit: 100,
+      hasReport: 'false',
+      teacherId: this.getSelectedTeacherId() || undefined,
+      fromDate: this.fromDate || undefined,
+      toDate: this.toDate || undefined,
+    });
+    this.pendingSessions.set(result.data);
+    this.pendingCount.set(result.meta?.total || result.data.length);
+  }
+
+  private async fetchCompleted() {
+    const result = await this.sessionService.list({
+      page: this.completedPage,
+      limit: 20,
+      hasReport: 'true',
+      teacherId: this.getSelectedTeacherId() || undefined,
+      fromDate: this.fromDate || undefined,
+      toDate: this.toDate || undefined,
+    });
+    this.completedSessions.set(result.data);
+    this.completedMeta.set(result.meta || {});
+  }
+
+  private async fetchPayrollPreview() {
+    const teacherId = this.getSelectedTeacherId();
+    if (!teacherId || !this.fromDate || !this.toDate) {
+      this.payrollPreview.set(null);
+      return;
+    }
+
+    const preview = await this.payrollService.getTeacherPreview(teacherId, this.fromDate, this.toDate);
+    this.payrollPreview.set(preview);
+  }
+
+  private async loadTeacherOptions() {
+    const teachers = await this.userService.listTeachers();
+    this.teachers.set(teachers);
+  }
+
+  private syncTeacherSelection(): boolean {
+    if (this.isTeacher()) {
+      this.selectedTeacherId = this.auth.userSignal()?.sub || '';
+      return true;
+    }
+
+    const teacherCode = this.teacherCodeSearch.trim().toLowerCase();
+    if (!teacherCode) {
+      this.selectedTeacherId = '';
+      return true;
+    }
+
+    const exactMatch = this.teachers().find(
+      (teacher) => (teacher.userCode || '').trim().toLowerCase() === teacherCode,
+    );
+    if (exactMatch) {
+      this.selectedTeacherId = exactMatch._id;
+      return true;
+    }
+
+    this.selectedTeacherId = '';
+    this.error.set('Không tìm thấy giáo viên theo mã đã nhập');
+    return false;
+  }
+
+  private getSelectedTeacherId(): string {
+    return this.isTeacher() ? (this.auth.userSignal()?.sub || '') : this.selectedTeacherId;
+  }
+
+  matchedTeacherByCode(): UserItem | null {
+    if (!this.teacherCodeSearch.trim()) return null;
+    return this.teachers().find(
+      (teacher) =>
+        (teacher.userCode || '').trim().toLowerCase() === this.teacherCodeSearch.trim().toLowerCase(),
+    ) || null;
+  }
+
+  canEditReports(): boolean {
+    return this.isTeacher();
+  }
+
+  handlePendingClick(session: SessionItem) {
+    if (!this.canEditReports()) return;
+    this.toggleEdit(session);
   }
 
   toggleEdit(session: SessionItem) {
@@ -403,6 +737,7 @@ export class TeachingReportComponent implements OnInit {
   }
 
   startEdit(session: SessionItem) {
+    if (!this.canEditReports()) return;
     this.editingId = session._id;
     this.reportForm = {
       lessonContent: session.teachingReport?.lessonContent || '',
@@ -465,6 +800,8 @@ export class TeachingReportComponent implements OnInit {
   }
 
   async submitReport(sessionId: string) {
+    if (!this.canEditReports()) return;
+
     // Validate form
     if (!this.validateForm()) {
       this.error.set('Vui lòng kiểm tra lại thông tin đã nhập');
@@ -485,11 +822,7 @@ export class TeachingReportComponent implements OnInit {
       // Clear success message after 3s
       setTimeout(() => this.success.set(''), 3000);
       
-      // Reload both tabs
-      await this.loadPending();
-      if (this.activeTab === 'completed') {
-        await this.loadCompleted();
-      }
+      await this.applyFilters(false);
     } catch (e: any) {
       // Parse detailed error from backend
       if (e?.error?.message) {
@@ -497,7 +830,7 @@ export class TeachingReportComponent implements OnInit {
       } else if (e?.message) {
         this.error.set(e.message);
       } else {
-        this.error.set('Lỗi gửi báo cáo. Vui lòng kiể tra kết nối mạng và thử lại.');
+        this.error.set('Lỗi gửi báo cáo. Vui lòng kiểm tra kết nối mạng và thử lại.');
       }
       
       // Auto-hide error after 5s
@@ -518,6 +851,41 @@ export class TeachingReportComponent implements OnInit {
       CANCELLED: 'Đã hủy', NO_SHOW: 'Vắng',
     };
     return map[s] || s;
+  }
+
+  isTeacher() {
+    return this.auth.userSignal()?.role === 'TEACHER';
+  }
+
+  formatCurrency(amount?: number): string {
+    if (!amount && amount !== 0) return '-';
+    return new Intl.NumberFormat('vi-VN', {
+      style: 'currency',
+      currency: 'VND',
+    }).format(amount);
+  }
+
+  getPaidPayrollTotal(): number {
+    return (this.payrollPreview()?.existingPayrolls || [])
+      .filter((payroll) => payroll.status === 'PAID')
+      .reduce((total, payroll) => total + (payroll.netAmount || 0), 0);
+  }
+
+  accountingNotes(): PayrollItem[] {
+    return (this.payrollPreview()?.existingPayrolls || []).filter(
+      (payroll) => !!payroll.notes?.trim(),
+    );
+  }
+
+  payrollStatusLabel(status?: string): string {
+    const map: Record<string, string> = {
+      DRAFT: 'Nháp',
+      PENDING_REVIEW: 'Chờ duyệt',
+      APPROVED: 'Đã duyệt',
+      PAID: 'Đã chi',
+      REJECTED: 'Từ chối',
+    };
+    return map[status || ''] || status || 'Khác';
   }
 
   // ─── Deadline helpers (24h window after scheduledDate) ───────────────

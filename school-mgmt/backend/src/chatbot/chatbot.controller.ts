@@ -46,7 +46,7 @@ export class ChatbotController {
   }
 
   @Patch('fanpages/:id')
-  @Roles(Role.DIRECTOR)
+  @Roles(Role.DIRECTOR, Role.OPS)
   async updateFanpage(@Param('id') id: string, @Body() dto: UpdateFanpageDto) {
     return this.chatbotService.updateFanpage(id, dto);
   }
@@ -61,7 +61,7 @@ export class ChatbotController {
   // ─── OpenAI Tokens ──────────────────────────────────────────
 
   @Get('openai-tokens')
-  @Roles(Role.DIRECTOR)
+  @Roles(Role.DIRECTOR, Role.OPS)
   async findAllOpenAITokens() {
     return this.chatbotService.findAllOpenAITokens();
   }

@@ -108,6 +108,14 @@ export class AdsController {
 
   // ─── API Tokens ─────────────────────────────────────────
 
+  @Get('tokens')
+  @Roles(Role.DIRECTOR)
+  async findAllTokens(@Query('accountId') accountId?: string) {
+    return accountId
+      ? this.adsService.findTokensByAccount(accountId)
+      : this.adsService.findAllTokens();
+  }
+
   @Get('tokens/:accountId')
   @Roles(Role.DIRECTOR)
   async findTokens(@Param('accountId', ParseMongoIdPipe) accountId: string) {
@@ -134,6 +142,15 @@ export class AdsController {
   }
 
   // ─── Ad Costs ───────────────────────────────────────────
+
+  @Post('tokens/:id/sync-facebook-business')
+  @Roles(Role.DIRECTOR)
+  async syncFacebookBusinessToken(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Query('date') date?: string,
+  ) {
+    return this.adsService.syncFacebookBusinessToken(id, date);
+  }
 
   @Get('costs')
   @Roles(Role.DIRECTOR, Role.OPS, Role.ACCOUNTING)
